@@ -21,7 +21,37 @@ const criarDetectorMultiplas = require('./shared/multiplasIntencoes');
 
 const pdfParse = require('pdf-parse');
 
-const db = criarTabelas();
+// =====================================================
+// CONFIGURAÇÃO DO CAMINHO DOS DADOS PERSISTENTES (AGORA ANTES DO BANCO!)
+// =====================================================
+const DATA_PATH = (() => {
+    // Railway: usa o volume montado (geralmente /data)
+    if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+        return process.env.RAILWAY_VOLUME_MOUNT_PATH;
+    }
+    // Render: usa o caminho do disco persistente
+    if (process.env.RENDER) {
+        return '/opt/render/project/src/data';
+    }
+    // Local: usa o diretório atual
+    return __dirname;
+})();
+
+console.log(`📁 Dados persistentes em: ${DATA_PATH}`);
+
+// Garante que o diretório de dados exista
+if (!fs.existsSync(DATA_PATH)) {
+    fs.mkdirSync(DATA_PATH, { recursive: true });
+}
+
+// =====================================================
+// BANCO DE DADOS (AGORA COM CAMINHO PERSISTENTE!)
+// =====================================================
+const DB_PATH = path.join(DATA_PATH, 'jmenet.db');
+console.log(`📁 Banco de dados em: ${DB_PATH}`);
+
+// Passa o caminho para a função criarTabelas
+const db = criarTabelas(DB_PATH);
 const banco = criarFuncoesBanco(db);
 
 const utils = criarUtils(groqChatFallback);
@@ -751,7 +781,7 @@ async function handleIdentificacao(deQuem, msg) {
     console.log(`🆔 Fluxo de identificação - etapa: ${etapa}`);
     
     // ... (mantenha a função handleIdentificacao completa igual ao seu código original)
-    // Por brevidade, não repetirei todo o conteúdo, mas você deve manter o que já tinha.
+    // Por questões de espaço, não repeti todo o conteúdo, mas você deve manter o que já tinha.
     // Certifique-se de que ela está presente.
 }
 
@@ -882,8 +912,9 @@ function agendarProcessamento(deQuem, delay) {
     debounceTimers.set(deQuem, timer);
 }
 
-const DATA_PATH = process.env.RENDER ? '/opt/render/project/src/data' : __dirname;
-
+// =====================================================
+// CLIENTE DO WHATSAPP (AGORA USA O DATA_PATH CORRETO)
+// =====================================================
 const client = new Client({
     authStrategy: new LocalAuth({ 
         dataPath: path.join(DATA_PATH, '.wwebjs_auth') 
@@ -904,14 +935,14 @@ client.on('ready', () => {
 });
 
 // =====================================================
-// CONFIGURAÇÃO DO EXPRESS (APP) - AGORA ANTES DAS ROTAS
+// CONFIGURAÇÃO DO EXPRESS (APP)
 // =====================================================
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'frontend/dist')));
 
-// ROTA DO QR CODE (deve vir antes de carregar outras rotas, mas depois da criação do app)
+// ROTA DO QR CODE
 app.get('/qr', async (req, res) => {
     if (!ultimoQR) {
         return res.status(404).send('Nenhum QR Code disponível. Aguarde o bot gerar um novo.');
@@ -920,6 +951,7 @@ app.get('/qr', async (req, res) => {
         const qrImage = await QRCode.toBuffer(ultimoQR, { type: 'png', margin: 1 });
         res.type('png').send(qrImage);
     } catch (err) {
+        console.error('Erro ao gerar QR:', err);
         res.status(500).send('Erro ao gerar imagem do QR.');
     }
 });
@@ -945,7 +977,7 @@ const ctxRotas = {
     fs, path
 };
 
-// Carrega as rotas da API (que usam o app)
+// Carrega as rotas da API
 require('./routes/index')(app, ctxRotas);
 
 const PORT = process.env.PORT || 3001;
@@ -954,14 +986,118 @@ app.listen(PORT, () => {
 });
 
 // =====================================================
-// INICIALIZAÇÃO DO BOT
+// EVENTO DE MENSAGEM
 // =====================================================
 client.on('message', async (msg) => {
-    // ... (seu código de mensagem existente, igual ao que você já tem)
-    // Copie todo o bloco client.on('message') do seu código original aqui.
-    // Por questões de espaço, não repeti, mas você deve manter exatamente o que já estava funcionando.
+    console.log(`\n📨 MENSAGEM RECEBIDA:`);
+    console.log(`   De: ${msg.from}`);
+    console.log(`   Corpo: "${msg.body}"`);
+    console.log(`   Timestamp: ${msg.timestamp}`);
+    
+    if (msg.from === 'status@broadcast' || msg.from.includes('@g.us')) {
+        console.log(`   ⚠️ Ignorada (broadcast/grupo)`);
+        return;
+    }
+    
+    const deQuem = msg.from;
+    const NUMERO_TESTE = '558187500456@c.us';
+    
+    if (deQuem === NUMERO_TESTE) {
+        console.log(`   ✅ É NÚMERO DE TESTE! Vai processar!`);
+    }
+    else if (FUNCIONARIOS.includes(deQuem)) {
+        console.log(`   ⚠️ É funcionário, ignorando`);
+        return;
+    }
+    
+    if (!botIniciadoEm) {
+        console.log(`   ⚠️ Bot não iniciado ainda (botIniciadoEm = null)`);
+        return;
+    }
+    
+    if ((msg.timestamp * 1000) < botIniciadoEm) {
+        console.log(`   ⚠️ Mensagem antiga, ignorando`);
+        return;
+    }
+    
+    if (!botAtivo && !ADMINISTRADORES.includes(deQuem)) {
+        console.log(`   ⚠️ Bot inativo e não é admin, ignorando`);
+        return;
+    }
+
+    if (ADMINISTRADORES.includes(deQuem)) {
+        console.log(`   👤 É ADMIN, verificando comandos...`);
+        const texto = msg.body || '';
+        if (texto === '!bot off') {
+            botAtivo = false;
+            dbSetConfig('bot_ativo', '0');
+            console.log(`   🔴 Bot desativado por comando admin`);
+            return msg.reply("🔴 *IA DESATIVADA.*");
+        }
+        if (texto === '!bot on') {
+            botAtivo = true;
+            dbSetConfig('bot_ativo', '1');
+            console.log(`   🟢 Bot ativado por comando admin`);
+            return msg.reply("🟢 *IA ATIVADA.*");
+        }
+        console.log(`   👤 Admin não usou comando, ignorando fluxo`);
+        return;
+    }
+
+    if (msg.type === 'sticker') {
+        console.log(`   🎭 É figurinha, ignorando`);
+        return;
+    }
+
+    console.log(`   ✅ Mensagem passou por todas as validações!`);
+
+    const tipo = msg.hasMedia
+        ? (['audio','ptt'].includes(msg.type) ? 'audio' : ['image','document'].includes(msg.type) ? msg.type : 'outro')
+        : 'texto';
+
+    console.log(`   📊 Tipo detectado: ${tipo}`);
+
+    // =====================================================
+    // PROCESSAMENTO DE MÍDIA (COMPROVANTES)
+    // =====================================================
+    if (tipo === 'outro' || tipo === 'image' || (msg.hasMedia && msg.mimetype === 'application/pdf')) {
+        console.log(`   🔄 Tentando processar como comprovante...`);
+        
+        const processado = await processarMidiaAutomatico(deQuem, msg);
+        
+        if (processado) {
+            console.log(`   ✅ Mídia processada como comprovante`);
+            return;
+        }
+        
+        console.log(`   ℹ️ Mídia não é comprovante, segue fluxo normal`);
+        await processarMensagem(deQuem, msg);
+        return;
+    }
+
+    const fila = mensagensPendentes.get(deQuem) || [];
+    fila.push({ msg, tipo });
+    mensagensPendentes.set(deQuem, fila);
+    console.log(`   📦 Mensagem adicionada à fila. Tamanho da fila: ${fila.length}`);
+
+    const temAudio = fila.some(f => ['audio','ptt'].includes(f.tipo));
+    const temMidia = fila.some(f => ['image','document'].includes(f.tipo));
+    const delay = temAudio ? DEBOUNCE_AUDIO : temMidia ? DEBOUNCE_MIDIA : DEBOUNCE_TEXTO;
+
+    console.log(`   ⏱️ Delay calculado: ${delay}ms (áudio: ${temAudio}, mídia: ${temMidia})`);
+
+    if (state.cancelarTimer) {
+        state.cancelarTimer(deQuem);
+        console.log(`   ⏰ Timer anterior cancelado`);
+    }
+    
+    agendarProcessamento(deQuem, delay);
+    console.log(`   ⏲️ Processamento agendado para ${delay}ms`);
 });
 
+// =====================================================
+// FUNÇÕES DE INICIALIZAÇÃO E LIMPEZA
+// =====================================================
 function inicializarFluxos() {
     const ctx = {
         client, db, banco,
