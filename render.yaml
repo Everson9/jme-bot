@@ -1,21 +1,15 @@
 services:
   - type: web
     name: jme-bot
-    runtime: node
+    runtime: image
     plan: free
-    buildCommand: |
-      apt-get update && apt-get install -y wget gnupg
-      wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add -
-      sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
-      apt-get update && apt-get install -y google-chrome-stable
-      npm install && cd frontend && npm install && npm run build
-    startCommand: node index.js
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: GROQ_API_KEY
-        sync: false  # ← Não salva no arquivo, você configura manualmente
+        sync: false
       - key: PORT
         value: 3001
       - key: VITE_API_URL
-        value: https://jme-bot.onrender.com  # Placeholder
+        value: https://jme-bot.onrender.com
       - key: PLANILHA_ID
-        sync: false  # ← Também configura manualmente
+        sync: false
