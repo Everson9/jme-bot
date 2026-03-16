@@ -137,6 +137,20 @@ function criarTabelas(caminhoBanco = 'jmenet.db') {
             confirmado_em DATETIME
         );
 
+
+        CREATE TABLE IF NOT EXISTS agendamentos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data TEXT NOT NULL,
+            periodo TEXT NOT NULL,
+            cliente_id INTEGER,
+            cliente_nome TEXT NOT NULL,
+            numero TEXT NOT NULL,
+            endereco TEXT NOT NULL,
+            status TEXT DEFAULT 'agendado',
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(data, periodo, numero)
+        );
+
         CREATE TABLE IF NOT EXISTS promessas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             numero TEXT,
@@ -240,6 +254,7 @@ function criarTabelas(caminhoBanco = 'jmenet.db') {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_hp_cliente ON historico_pagamentos(cliente_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_hp_ref ON historico_pagamentos(referencia)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_promessas_status ON promessas(status)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_agendamentos_data ON agendamentos(data)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_agendamentos_data ON agendamentos(data)`);
 
     // Cria a base JME se não existir
