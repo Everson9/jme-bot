@@ -8,7 +8,8 @@ const criarFluxoCancelamento = require('./fluxos/cancelamento');
 const StateManager          = require('./stateManager');
 const fs = require('fs');
 const path = require('path');
-const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
+
 const Groq = require('groq-sdk');
 const express = require('express');
 const cors = require('cors');
@@ -39,6 +40,7 @@ let previsaoRetorno = dbGetConfig('previsao_retorno', 'sem previsão');
 let horarioFuncionamento = { inicio: 8, fim: 20, ativo: true };
 let horarioCobranca = { inicio: 8, fim: 17 };
 let botIniciadoEm = null;
+let ultimoQR = null;
 
 const state = new StateManager(db);
 
@@ -1040,17 +1042,21 @@ const client = new Client({
     }
 });
 
-client.on('qr', async (qr) => {
-    console.log('\n📱 ESCANEIE O QR CODE DO WHATSAPP:');
+client.on('qr', (qr) => {
+    ultimoQR = qr;
+    console.log('📱 QR Code gerado. Acesse /qr para escanear.');
+});
+
+app.get('/qr', async (req, res) => {
+    if (!ultimoQR) {
+        return res.status(404).send('Nenhum QR Code disponível. Aguarde o bot gerar um novo.');
+    }
     try {
-        // Gera o QR como texto ANSI para exibir nos logs
-        const qrText = await QRCode.toString(qr, { type: 'terminal', small: true });
-        console.log(qrText);
-        console.log('\n👉 Se não conseguir escanear, use o código bruto:');
-        console.log(qr);
+        // Gera a imagem PNG do QR e envia como resposta
+        const qrImage = await QRCode.toBuffer(ultimoQR, { type: 'png', margin: 1 });
+        res.type('png').send(qrImage);
     } catch (err) {
-        console.error('Erro ao gerar QR Code:', err);
-        console.log('Código bruto:', qr);
+        res.status(500).send('Erro ao gerar imagem do QR.');
     }
 });
 
