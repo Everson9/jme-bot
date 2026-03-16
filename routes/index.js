@@ -1523,102 +1523,13 @@ app.get('/api/metricas/fila', (req, res) => {
     }
 });
 
-// Backup manual do banco
-app.post('/api/admin/backup', (req, res) => {
-    try {
-        const backupDir = path.join(__dirname, '../backups');
-        if (!fs.existsSync(backupDir)) {
-            fs.mkdirSync(backupDir, { recursive: true });
-        }
-
-        const data = new Date();
-        const nomeArquivo = `backup-${data.getFullYear()}-${String(data.getMonth()+1).padStart(2,'0')}-${String(data.getDate()).padStart(2,'0')}.db`;
-        const caminhoBackup = path.join(backupDir, nomeArquivo);
-
-        fs.copyFileSync('./jmenet.db', caminhoBackup);
-
-        // Limpar backups antigos (manter últimos 7)
-        const arquivos = fs.readdirSync(backupDir)
-            .filter(f => f.startsWith('backup-'))
-            .map(f => ({ nome: f, path: path.join(backupDir, f), time: fs.statSync(path.join(backupDir, f)).mtime.getTime() }))
-            .sort((a, b) => b.time - a.time);
-
-        if (arquivos.length > 7) {
-            arquivos.slice(7).forEach(f => fs.unlinkSync(f.path));
-        }
-
-        res.json({ 
-            ok: true, 
-            mensagem: `Backup criado: ${nomeArquivo}`,
-            arquivo: nomeArquivo,
-            tamanho: fs.statSync(caminhoBackup).size
-        });
-    } catch (error) {
-        console.error('Erro ao criar backup:', error);
-        res.status(500).json({ erro: error.message });
-    }
-});
-
-// Listar backups disponíveis
-app.get('/api/admin/backups', (req, res) => {
-    try {
-        const backupDir = path.join(__dirname, '../backups');
-        if (!fs.existsSync(backupDir)) {
-            return res.json([]);
-        }
-
-        const backups = fs.readdirSync(backupDir)
-            .filter(f => f.startsWith('backup-') && f.endsWith('.db'))
-            .map(f => {
-                const stats = fs.statSync(path.join(backupDir, f));
-                return {
-                    nome: f,
-                    tamanho: stats.size,
-                    criadoEm: stats.mtime,
-                    data: stats.mtime.toISOString().split('T')[0]
-                };
-            })
-            .sort((a, b) => b.criadoEm - a.criadoEm);
-
-        res.json(backups);
-    } catch (error) {
-        res.status(500).json({ erro: error.message });
-    }
-});
-
-// Restaurar backup (cuidado!)
-app.post('/api/admin/restaurar/:arquivo', (req, res) => {
-    try {
-        const { arquivo } = req.params;
-        const backupPath = path.join(__dirname, '../backups', arquivo);
-        
-        if (!fs.existsSync(backupPath)) {
-            return res.status(404).json({ erro: 'Backup não encontrado' });
-        }
-
-        // Fazer backup automático antes de restaurar
-        const data = new Date();
-        const backupAntes = path.join(__dirname, '../backups', `pre-restore-${data.getFullYear()}-${String(data.getMonth()+1).padStart(2,'0')}-${String(data.getDate()).padStart(2,'0')}.db`);
-        fs.copyFileSync('./jmenet.db', backupAntes);
-
-        // Restaurar
-        fs.copyFileSync(backupPath, './jmenet.db');
-
-        res.json({ 
-            ok: true, 
-            mensagem: `Banco restaurado de ${arquivo}`,
-            backupAutomatico: path.basename(backupAntes)
-        });
-    } catch (error) {
-        console.error('Erro ao restaurar backup:', error);
-        res.status(500).json({ erro: error.message });
-    }
-});
 
     require('./agendamentos')(app, ctx);
     require('./instalacoes-agendadas')(app, ctx);
     require('./paginacao')(app, ctx);
     require('./alertas')(app, ctx);
+    require('./backup')(app, ctx);
+
     // =====================================================
     // FALLBACK PARA REACT ROUTER
     // =====================================================
