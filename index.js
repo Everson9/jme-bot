@@ -1028,12 +1028,36 @@ function agendarProcessamento(deQuem, delay) {
     debounceTimers.set(deQuem, timer);
 }
 
+const DATA_PATH = process.env.RENDER ? '/opt/render/project/src/data' : __dirname;
+
 const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: { args: ['--no-sandbox', '--disable-setuid-sandbox'], headless: true }
+    authStrategy: new LocalAuth({ 
+        dataPath: path.join(DATA_PATH, '.wwebjs_auth') 
+    }),
+    puppeteer: { 
+        args: ['--no-sandbox', '--disable-setuid-sandbox'], 
+        headless: true 
+    }
 });
 
-client.on('qr', qr => qrcode.generate(qr, { small: true }));
+client.on('qr', async (qr) => {
+    console.log('\n📱 ESCANEIE O QR CODE DO WHATSAPP:');
+    try {
+        // Gera o QR como texto ANSI para exibir nos logs
+        const qrText = await QRCode.toString(qr, { type: 'terminal', small: true });
+        console.log(qrText);
+        console.log('\n👉 Se não conseguir escanear, use o código bruto:');
+        console.log(qr);
+    } catch (err) {
+        console.error('Erro ao gerar QR Code:', err);
+        console.log('Código bruto:', qr);
+    }
+});
+
+client.on('ready', () => {
+    console.log('✅ WhatsApp conectado e pronto!');
+});
+
 
 client.on('message', async (msg) => {
     console.log(`\n📨 MENSAGEM RECEBIDA:`);
