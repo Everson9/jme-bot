@@ -2,9 +2,16 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const db = new Database('jmenet.db');
+// Variável para armazenar a conexão global (opcional, mas útil)
+let db = null;
 
-function criarTabelas() {
+function criarTabelas(caminhoBanco = 'jmenet.db') {
+    // Se já existe uma conexão, use-a
+    if (db) return db;
+    
+    // Cria nova conexão com o caminho especificado
+    db = new Database(caminhoBanco);
+    
     db.exec(`
         CREATE TABLE IF NOT EXISTS historico_conversa (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -203,13 +210,39 @@ function criarTabelas() {
             FOREIGN KEY (cliente_id) REFERENCES clientes_base(id) ON DELETE CASCADE,
             UNIQUE(cliente_id, referencia)
         );
+
+        CREATE TABLE IF NOT EXISTS instalacoes_agendadas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero TEXT NOT NULL,
+            nome TEXT NOT NULL,
+            data TEXT NOT NULL,
+            endereco TEXT NOT NULL,
+            observacao TEXT,
+            status TEXT DEFAULT 'agendado',
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            confirmado_em DATETIME,
+            concluido_em DATETIME
+        );
+
+        CREATE TABLE IF NOT EXISTS notificacoes_rede (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero TEXT NOT NULL,
+            situacao_rede TEXT,
+            notificado INTEGER DEFAULT 0,
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(numero, situacao_rede)
+        );
     `);
 
+    // Índices para performance
     db.exec(`CREATE INDEX IF NOT EXISTS idx_log_bot_numero ON log_bot(numero)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_log_bot_criado ON log_bot(criado_em)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_hp_cliente ON historico_pagamentos(cliente_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_hp_ref ON historico_pagamentos(referencia)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_promessas_status ON promessas(status)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_agendamentos_data ON agendamentos(data)`);
 
+    // Cria a base JME se não existir
     const baseJME = db.prepare('SELECT id FROM bases WHERE nome = ?').get('JME');
     if (!baseJME) {
         const r = db.prepare('INSERT INTO bases (nome, descricao) VALUES (?, ?)').run('JME', 'Base principal');
@@ -224,11 +257,20 @@ function criarTabelas() {
 }
 
 function dbGetConfig(chave, padrao = '') {
+    // Usa a conexão global 'db' (certifique-se de que criarTabelas já foi chamada)
+    if (!db) {
+        console.error('❌ Banco não inicializado. Chame criarTabelas primeiro.');
+        return padrao;
+    }
     const row = db.prepare('SELECT valor FROM configuracoes WHERE chave = ?').get(chave);
     return row ? row.valor : padrao;
 }
 
 function dbSetConfig(chave, valor) {
+    if (!db) {
+        console.error('❌ Banco não inicializado. Chame criarTabelas primeiro.');
+        return;
+    }
     db.prepare('INSERT OR REPLACE INTO configuracoes (chave, valor, atualizado_em) VALUES (?, ?, CURRENT_TIMESTAMP)').run(chave, valor);
 }
 
