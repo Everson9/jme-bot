@@ -1,0 +1,6 @@
+{
+  "restartable": "rs",
+  "ignore": ["*"],
+  "watch": ["index.js"],
+  "delay": "1000"
+}

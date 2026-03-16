@@ -1,0 +1,401 @@
+'use strict';
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// FLUXO FINANCEIRO / PAGAMENTO — VERSÃO FINAL
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+module.exports = function criarFluxoFinanceiro(ctx) {
+    const {
+        client, db,
+        dbSalvarHistorico, dbIniciarAtendimento,
+        state,
+        ADMINISTRADORES, P,
+        chavePixExibicao,
+        atendenteDisponivel, proximoAtendimento,
+        buscarStatusCliente, analisarImagem,
+        darBaixaAutomatica,
+        groqChatFallback, normalizarTexto,
+        utils,
+        abrirChamadoComMotivo,
+    } = ctx;
+
+    // Usa o Map global compartilhado via ctx
+    const _fotosPendentes = ctx.fotosPendentes;
+
+    const FORMAS_PAGAMENTO = {
+        '1': 'PIX',
+        '2': 'BOLETO',
+        '3': 'DINHEIRO',
+        '4': 'CARNE'
+    };
+
+    async function iniciar(deQuem, msg, intencaoEspecifica = null) {
+        const dadosCliente = await buscarStatusCliente(deQuem);
+        
+        // Se já veio com intenção específica, vai direto
+        if (intencaoEspecifica) {
+            switch(intencaoEspecifica) {
+                case 'PIX':
+                    return await iniciarPix(deQuem, dadosCliente);
+                case 'BOLETO':
+                    return await iniciarBoleto(deQuem, dadosCliente);
+                case 'CARNE':
+                    return await iniciarCarne(deQuem, dadosCliente);
+                case 'DINHEIRO':
+                    return await iniciarDinheiro(deQuem, dadosCliente);
+            }
+        }
+
+        // Cliente já está pago
+        if (dadosCliente && dadosCliente.status === 'pago') {
+            const prNome = dadosCliente.nome ? dadosCliente.nome.split(' ')[0] : null;
+            const msgStatus = prNome
+                ? `${P}Boa notícia, ${prNome}! Aqui no sistema consta que sua fatura está em dia. ✅`
+                : `${P}Boa notícia! Aqui no sistema consta que sua fatura está em dia. ✅`;
+            await client.sendMessage(deQuem, msgStatus);
+            dbSalvarHistorico(deQuem, 'assistant', msgStatus);
+            dbIniciarAtendimento(deQuem);
+            state.iniciarTimer(deQuem);
+            return;
+        }
+
+        // Mostra menu de opções
+        const msgStatus = dadosCliente
+            ? (dadosCliente.nome 
+                ? `${P}${dadosCliente.nome.split(' ')[0]}, encontrei seu cadastro! 😊\n\nConsta uma fatura com vencimento no dia *${dadosCliente.aba.replace('Data ','')}* ainda em aberto.\n\nQuer efetuar o pagamento agora? Escolha a forma que preferir:`
+                : `${P}Encontrei seu cadastro! 😊\n\nConsta uma fatura com vencimento no dia *${dadosCliente.aba.replace('Data ','')}* ainda em aberto.\n\nQuer efetuar o pagamento agora? Escolha a forma que preferir:`)
+            : `${P}Claro! Vou te ajudar com o pagamento. 😊\n\nTemos algumas formas disponíveis — qual funciona melhor pra você?`;
+
+        await client.sendMessage(deQuem, msgStatus);
+        await new Promise(r => setTimeout(r, 1200));
+        await client.sendMessage(deQuem,
+            `1️⃣ *PIX*\n_Transfira via Pix — te mando a chave na hora_\n\n` +
+            `2️⃣ *Boleto*\n_O atendente gera e te envia o código de barras_\n\n` +
+            `3️⃣ *Dinheiro / Espécie*\n_A gente agenda pra passar aí no seu endereço_\n\n` +
+            `4️⃣ *Carnê físico*\n_Solicitamos a emissão e entregamos pra você_\n\n` +
+            `💬 _É só digitar o número ou o nome da forma que preferir!_`
+        );
+
+        state.iniciar(deQuem, 'financeiro', 'aguardando_escolha', { 
+            nome: dadosCliente?.nome || null,
+            dadosCliente 
+        });
+        
+        dbSalvarHistorico(deQuem, 'assistant', 'Opções de pagamento apresentadas.');
+        dbIniciarAtendimento(deQuem);
+        state.iniciarTimer(deQuem);
+    }
+
+    async function iniciarPix(deQuem, dadosCliente) {
+        state.avancar(deQuem, 'pix_enviado', { nome: dadosCliente?.nome || null });
+        await client.sendMessage(deQuem, `${P}Ótimo! Segue nossa chave Pix. Assim que pagar, pode me enviar o comprovante por aqui! 😊`);
+        await new Promise(r => setTimeout(r, 1500));
+        await client.sendMessage(deQuem, `jmetelecomnt@gmail.com`, { linkPreview: false });
+        await new Promise(r => setTimeout(r, 800));
+        await client.sendMessage(deQuem, `+5581987500456`, { linkPreview: false });
+        dbSalvarHistorico(deQuem, 'assistant', 'Chave PIX enviada.');
+        state.iniciarTimer(deQuem);
+    }
+
+    async function iniciarBoleto(deQuem, dadosCliente) {
+        state.encerrarFluxo(deQuem);
+        abrirChamadoComMotivo(deQuem, dadosCliente?.nome || null, 'Financeiro — boleto');
+        await client.sendMessage(deQuem, `${P}Certo! Vou chamar o atendente para gerar e te enviar o boleto. Aguarda um instante! 😊`);
+        dbSalvarHistorico(deQuem, 'assistant', 'Boleto solicitado.');
+    }
+
+    async function iniciarCarne(deQuem, dadosCliente) {
+        const nome = dadosCliente?.nome || null;
+        
+        if (!nome) {
+            state.avancar(deQuem, 'carne_nome');
+            await client.sendMessage(deQuem, `${P}Claro! Para solicitar o carnê, pode me dizer seu *nome completo* primeiro? 😊`);
+        } else {
+            db.prepare(`DELETE FROM carne_solicitacoes WHERE numero = ? AND status = 'solicitado'`).run(deQuem);
+            db.prepare(`INSERT INTO carne_solicitacoes (numero, nome) VALUES (?, ?)`).run(deQuem, nome);
+            state.avancar(deQuem, 'carne_endereco', { nome });
+            await client.sendMessage(deQuem, `${P}Certo, ${nome.split(' ')[0]}! Pode me confirmar seu endereço para entrega? (Rua, número, bairro)`);
+        }
+        dbSalvarHistorico(deQuem, 'assistant', 'Iniciou solicitação de carnê.');
+        state.iniciarTimer(deQuem);
+    }
+
+    async function iniciarDinheiro(deQuem, dadosCliente) {
+        const nome = dadosCliente?.nome || null;
+        
+        if (nome) {
+            state.avancar(deQuem, 'dinheiro_endereco', { nome });
+            await client.sendMessage(deQuem, `${P}Combinado! Pode me confirmar seu endereço completo para o atendente passar aí? (Rua, número, bairro)`);
+        } else {
+            state.avancar(deQuem, 'dinheiro_nome');
+            await client.sendMessage(deQuem, `${P}Combinado! Pode me dizer seu nome completo?`);
+        }
+        dbSalvarHistorico(deQuem, 'assistant', 'Iniciou coleta em dinheiro.');
+        state.iniciarTimer(deQuem);
+    }
+
+    async function handle(deQuem, msg) {
+        const etapa = state.getEtapa(deQuem);
+        const dados = state.getDados(deQuem);
+        const texto = normalizarTexto(msg.body || '');
+        const textoOriginal = msg.body || '';
+        const temFoto = msg.hasMedia && msg.type === 'image';
+
+        state.cancelarTimer(deQuem);
+        dbIniciarAtendimento(deQuem);
+
+        // ─── aguardando_escolha ──────────────────────────
+        if (etapa === 'aguardando_escolha') {
+            const t = texto.toLowerCase();
+
+            // ✅ Cliente diz que já pagou ou enviou comprovante
+            if (t.includes('feito') || t.includes('paguei') || t.includes('pagamento realizado') || 
+                t.includes('já paguei') || t.includes('pago') || t.includes('efetuei') ||
+                t.includes('comprovante') || t.includes('enviei')) {
+                
+                // ✅ Verifica se já tem comprovante pendente
+                if (_fotosPendentes?.has(deQuem)) {
+                    console.log(`📷 Comprovante pendente detectado para ${deQuem}`);
+                    const msgComprovante = _fotosPendentes.get(deQuem);
+                    
+                    // Processa o comprovante
+                    const analise = await analisarImagem(msgComprovante);
+                    
+                    if (analise && analise.categoria === 'comprovante') {
+                        const baixa = await darBaixaAutomatica(deQuem, analise);
+                        
+                        if (analise.valido) {
+                            state.encerrarFluxo(deQuem);
+                            await client.sendMessage(deQuem, 
+                                `${P}Comprovante recebido e pagamento confirmado! ✅ Já dei baixa no sistema. Obrigado! 😊`
+                            );
+                            _fotosPendentes.delete(deQuem);
+                            
+                            try { db.prepare(`INSERT INTO log_comprovantes (numero) VALUES (?)`).run(deQuem); } catch(_){}
+                            
+                            for (const adm of ADMINISTRADORES) {
+                                client.sendMessage(adm,
+                                    `✅ *BAIXA VIA PIX (após cliente avisar)*\n\n👤 ${baixa?.nomeCliente || dados.nome || 'N/A'}\n📱 ${deQuem.replace('@c.us','')}`
+                                ).catch(() => {});
+                            }
+                            return;
+                        } else {
+                            // Comprovante inválido
+                            await client.sendMessage(deQuem, 
+                                `${P}Recebi seu comprovante, mas não consegui validar automaticamente. Vou encaminhar para um atendente verificar. 😊`
+                            );
+                            abrirChamadoComMotivo(deQuem, dados.nome || dadosCliente?.nome, 'Financeiro — comprovante suspeito');
+                            state.encerrarFluxo(deQuem);
+                            _fotosPendentes.delete(deQuem);
+                            return;
+                        }
+                    }
+                }
+                
+                // Se não achou comprovante pendente, pede para enviar
+                await client.sendMessage(deQuem, 
+                    `${P}Entendi que você já realizou o pagamento! 😊\n\n` +
+                    `Pode me enviar o *comprovante*? (foto ou PDF)\n\n` +
+                    `Assim que eu receber, já dou baixa no sistema.`
+                );
+                
+                state.avancar(deQuem, 'pix_enviado', { 
+                    ...dados,
+                    aguardandoComprovante: true 
+                });
+                return;
+            }
+
+            // Código existente (escolha de forma de pagamento)
+            const escolhaNum = FORMAS_PAGAMENTO[texto.trim()];
+            let escolha = escolhaNum || null;
+
+            if (!escolha) {
+                try {
+                    const prompt = `Classifique a forma de pagamento escolhida. Responda só: PIX | BOLETO | DINHEIRO | CARNE | OUTRO\nMensagem: "${textoOriginal}"`;
+                    const r = (await groqChatFallback([{ role:'user', content: prompt }], 0.1) || '').trim().toUpperCase();
+                    if (['PIX','BOLETO','DINHEIRO','CARNE'].includes(r)) escolha = r;
+                } catch (_) {}
+            }
+
+            if (escolha === 'PIX') {
+                await iniciarPix(deQuem, dados.dadosCliente);
+                return;
+            }
+            if (escolha === 'BOLETO') {
+                await iniciarBoleto(deQuem, dados.dadosCliente);
+                return;
+            }
+            if (escolha === 'DINHEIRO') {
+                await iniciarDinheiro(deQuem, dados.dadosCliente);
+                return;
+            }
+            if (escolha === 'CARNE') {
+                await iniciarCarne(deQuem, dados.dadosCliente);
+                return;
+            }
+
+            const tentativas = (dados.tentativasEscolha || 0) + 1;
+            state.atualizar(deQuem, { tentativasEscolha: tentativas });
+            
+            if (tentativas >= 3) {
+                state.encerrarFluxo(deQuem);
+                abrirChamadoComMotivo(deQuem, dados.nome, 'Financeiro — cliente não conseguiu escolher');
+                await client.sendMessage(deQuem, `${P}Não consegui entender a forma de pagamento. Vou chamar um atendente para te ajudar! 😊`);
+                return;
+            }
+            
+            await client.sendMessage(deQuem, `${P}Digite *1* para PIX, *2* para Boleto, *3* para Dinheiro ou *4* para Carnê físico. Qual prefere?`);
+            state.iniciarTimer(deQuem);
+            return;
+        }
+
+        // ─── pix_enviado ─────────────────────────────────
+        if (etapa === 'pix_enviado') {
+            if (temFoto) {
+                const analise = await analisarImagem(msg);
+                if (analise && analise.categoria === 'comprovante') {
+                    const baixa = await darBaixaAutomatica(deQuem, analise);
+                    
+                    if (analise.valido) {
+                        state.encerrarFluxo(deQuem);
+                        await client.sendMessage(deQuem, `${P}Comprovante recebido e pagamento confirmado! ✅ Já dei baixa no sistema. Obrigado! 😊`);
+                        
+                        try { db.prepare(`INSERT INTO log_comprovantes (numero) VALUES (?)`).run(deQuem); } catch(_){}
+                        
+                        for (const adm of ADMINISTRADORES) {
+                            client.sendMessage(adm,
+                                `✅ *BAIXA VIA PIX*\n\n👤 ${baixa?.nomeCliente || dados.nome || 'N/A'}\n📱 ${deQuem.replace('@c.us','')}\n💰 R$ ${analise.valor || 'N/A'}\n📅 ${analise.data || 'N/A'}`
+                            ).catch(() => {});
+                        }
+                    } else {
+                        state.encerrarFluxo(deQuem);
+                        await client.sendMessage(deQuem, `${P}Recebi o comprovante, mas não consegui validar automaticamente. Vou encaminhar para o atendente verificar! 😊`);
+                        abrirChamadoComMotivo(deQuem, dados.nome, 'Financeiro — comprovante suspeito');
+                    }
+                } else {
+                    await client.sendMessage(deQuem, `${P}Não consegui identificar o comprovante nessa imagem. Pode me enviar o comprovante de pagamento?`);
+                }
+                return;
+            }
+            
+            // Mensagem comum após enviar pix
+            await client.sendMessage(deQuem, `${P}Assim que realizar o pagamento, pode me enviar o comprovante por aqui para eu dar baixa! 😊`);
+            state.iniciarTimer(deQuem);
+            return;
+        }
+
+        // ─── carne_nome ──────────────────────────────────
+        if (etapa === 'carne_nome') {
+            const nomeLimpo = await utils.extrairNomeDaMensagem(textoOriginal);
+            
+            if (!nomeLimpo) {
+                await client.sendMessage(deQuem, `${P}Não consegui identificar seu nome. Pode digitar só o nome e sobrenome, por favor?`);
+                state.iniciarTimer(deQuem);
+                return;
+            }
+            
+            db.prepare(`DELETE FROM carne_solicitacoes WHERE numero = ? AND status = 'solicitado'`).run(deQuem);
+            db.prepare(`INSERT INTO carne_solicitacoes (numero, nome) VALUES (?, ?)`).run(deQuem, nomeLimpo);
+            
+            state.avancar(deQuem, 'carne_endereco', { nome: nomeLimpo });
+            await client.sendMessage(deQuem, `${P}Obrigado, ${nomeLimpo.split(' ')[0]}! Agora pode me informar seu *endereço completo* para entrega? 😊`);
+            state.iniciarTimer(deQuem);
+            return;
+        }
+
+        // ─── carne_endereco ──────────────────────────────
+        if (etapa === 'carne_endereco') {
+            const endereco = (msg.body || '').trim();
+            if (!endereco || endereco.length < 3) {
+                await client.sendMessage(deQuem, `${P}Pode me dizer seu endereço completo? (Rua, número, bairro)`);
+                state.iniciarTimer(deQuem);
+                return;
+            }
+            
+            db.prepare(`UPDATE carne_solicitacoes SET endereco = ? WHERE numero = ? AND status = 'solicitado' ORDER BY id DESC LIMIT 1`).run(endereco, deQuem);
+            
+            state.encerrarFluxo(deQuem);
+            
+            for (const adm of ADMINISTRADORES) {
+                client.sendMessage(adm,
+                    `📋 *SOLICITAÇÃO DE CARNÊ FÍSICO*\n\n` +
+                    `👤 ${dados.nome || deQuem.replace('@c.us','')}\n` +
+                    `📱 ${deQuem.replace('@c.us','')}\n` +
+                    `📍 ${endereco}\n\n_Acesse o painel para marcar como impresso e entregue._`
+                ).catch(() => {});
+            }
+            
+            const msgFinal = `Perfeito${dados.nome ? ', '+dados.nome.split(' ')[0] : ''}! Sua solicitação de carnê físico foi registrada. ✅\n\nAssim que estiver pronto, entraremos em contato! 😊`;
+            await client.sendMessage(deQuem, `${P}${msgFinal}`);
+            dbSalvarHistorico(deQuem, 'assistant', msgFinal);
+            return;
+        }
+
+        // ─── dinheiro_nome ───────────────────────────────
+        if (etapa === 'dinheiro_nome') {
+            const nomeLimpo = await utils.extrairNomeDaMensagem(textoOriginal);
+            
+            if (!nomeLimpo) {
+                await client.sendMessage(deQuem, `${P}Não consegui identificar seu nome. Pode digitar só o nome e sobrenome?`);
+                state.iniciarTimer(deQuem);
+                return;
+            }
+            
+            state.avancar(deQuem, 'dinheiro_endereco', { nome: nomeLimpo });
+            await client.sendMessage(deQuem, `${P}Obrigado, ${nomeLimpo.split(' ')[0]}! E seu endereço completo para o atendente passar aí? (Rua, número, bairro)`);
+            state.iniciarTimer(deQuem);
+            return;
+        }
+
+        // ─── dinheiro_endereco ───────────────────────────
+        if (etapa === 'dinheiro_endereco') {
+            const endereco = (msg.body || '').trim();
+            if (!endereco || endereco.length < 3) {
+                await client.sendMessage(deQuem, `${P}Pode me dizer seu endereço completo? (Rua, número, bairro)`);
+                state.iniciarTimer(deQuem);
+                return;
+            }
+            
+            const nome = dados.nome;
+            state.encerrarFluxo(deQuem);
+            
+            abrirChamadoComMotivo(deQuem, nome, 'Financeiro — coleta em dinheiro', { endereco });
+            
+            const msgFinal = atendenteDisponivel()
+                ? `Perfeito${nome ? ', '+nome.split(' ')[0] : ''}! Registrei tudo. O atendente vai confirmar o horário de passagem em breve! 😊`
+                : `Perfeito${nome ? ', '+nome.split(' ')[0] : ''}! Registrei tudo. O atendente confirma o horário ${proximoAtendimento()}. 😊`;
+            
+            await client.sendMessage(deQuem, `${P}${msgFinal}`);
+            dbSalvarHistorico(deQuem, 'assistant', msgFinal);
+            return;
+        }
+
+        // ─── dinheiro_acertado_nome ──────────────────────
+        if (etapa === 'dinheiro_acertado_nome') {
+            const nomeLimpo = await utils.extrairNomeDaMensagem(textoOriginal);
+            
+            if (!nomeLimpo) {
+                await client.sendMessage(deQuem, `${P}Não consegui identificar seu nome. Pode digitar só o nome e sobrenome?`);
+                state.iniciarTimer(deQuem);
+                return;
+            }
+            
+            state.encerrarFluxo(deQuem);
+            abrirChamadoComMotivo(deQuem, nomeLimpo, 'Pagamento em dinheiro — já acertado com cliente');
+            
+            const msgFinal = `Perfeito, ${nomeLimpo.split(' ')[0]}! 😊 Avisamos o atendente para passar aí e buscar o pagamento. Qualquer dúvida é só chamar!`;
+            await client.sendMessage(deQuem, `${P}${msgFinal}`);
+            dbSalvarHistorico(deQuem, 'assistant', msgFinal);
+            return;
+        }
+    }
+
+    return { 
+        iniciar, 
+        handle,
+        iniciarPix,
+        iniciarBoleto,
+        iniciarCarne,
+        iniciarDinheiro
+    };
+};
