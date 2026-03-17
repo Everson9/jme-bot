@@ -1,5 +1,5 @@
 // helpers/identificacao.js
-module.exports = function criarIdentificacao(db, state, client, utils, banco, verificarETransferir, processarAposIdentificacao) {
+module.exports = function criarIdentificacao(state, client, utils, banco, verificarETransferir, processarAposIdentificacao) {
     
     async function handleIdentificacao(deQuem, msg) {
         const etapa = state.getEtapa(deQuem);
@@ -21,7 +21,8 @@ module.exports = function criarIdentificacao(db, state, client, utils, banco, ve
             
             console.log(`📝 Nome informado: "${texto}"`);
             
-            const clientes = banco.buscarClientePorNome(texto);
+            // 🔥 FIREBASE: busca cliente por nome (agora async)
+            const clientes = await banco.buscarClientePorNome(texto);
             
             if (clientes.length === 1) {
                 console.log(`✅ Cliente encontrado por nome: ${clientes[0].nome}`);
@@ -67,7 +68,6 @@ module.exports = function criarIdentificacao(db, state, client, utils, banco, ve
         if (etapa === 'aguardando_cpf') {
             const cpf = texto.replace(/\D/g, '');
             
-            // Validação de tamanho
             if (cpf.length !== 11) {
                 const tentativas = (dados.tentativasCpf || 1);
                 
@@ -91,7 +91,8 @@ module.exports = function criarIdentificacao(db, state, client, utils, banco, ve
                 return;
             }
             
-            const cliente = banco.buscarClientePorCPF(cpf);
+            // 🔥 FIREBASE: busca cliente por CPF (agora async)
+            const cliente = await banco.buscarClientePorCPF(cpf);
             
             if (cliente) {
                 console.log(`✅ Cliente encontrado por CPF: ${cliente.nome}`);
@@ -134,7 +135,8 @@ module.exports = function criarIdentificacao(db, state, client, utils, banco, ve
                 return;
             }
             
-            const cliente = banco.buscarClientePorTelefone(telefone);
+            // 🔥 FIREBASE: busca cliente por telefone (agora async)
+            const cliente = await banco.buscarClientePorTelefone(telefone);
             
             if (cliente) {
                 console.log(`✅ Cliente encontrado por telefone: ${cliente.nome}`);

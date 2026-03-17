@@ -22,12 +22,26 @@ export function PageAgendamentos() {
         try {
             const url = `/api/agendamentos?data=${filtroData}&status=${filtroStatus}`;
             const response = await fetch(url);
+            
+            // Verifica se a resposta foi bem sucedida
+            if (!response.ok) {
+                console.error('Erro na resposta da API:', response.status);
+                setAgendamentos([]);
+                setTotalPages(1);
+                return;
+            }
+            
             const data = await response.json();
-            setAgendamentos(data);
-            setTotalPages(Math.ceil(data.length / pageSize));
+            
+            // Garante que data é um array
+            const agendamentosArray = Array.isArray(data) ? data : [];
+            setAgendamentos(agendamentosArray);
+            setTotalPages(Math.ceil(agendamentosArray.length / pageSize));
             setCurrentPage(1);
         } catch (error) {
             console.error('Erro ao buscar agendamentos:', error);
+            setAgendamentos([]);
+            setTotalPages(1);
         } finally {
             setLoading(false);
         }
@@ -37,15 +51,23 @@ export function PageAgendamentos() {
 
     async function concluirAgendamento(id) {
         if (confirm('Marcar como concluído?')) {
-            await fetch(API + `/api/agendamentos/${id}/concluir`, { method: 'POST' });
-            fetchAgendamentos();
+            try {
+                await fetch(API + `/api/agendamentos/${id}/concluir`, { method: 'POST' });
+                fetchAgendamentos();
+            } catch (error) {
+                console.error('Erro ao concluir agendamento:', error);
+            }
         }
     }
 
     async function cancelarAgendamento(id) {
         if (confirm('Cancelar este agendamento?')) {
-            await fetch(API + `/api/agendamentos/${id}/cancelar`, { method: 'POST' });
-            fetchAgendamentos();
+            try {
+                await fetch(API + `/api/agendamentos/${id}/cancelar`, { method: 'POST' });
+                fetchAgendamentos();
+            } catch (error) {
+                console.error('Erro ao cancelar agendamento:', error);
+            }
         }
     }
 
@@ -57,10 +79,16 @@ export function PageAgendamentos() {
         return labels[periodo] || { icon: '❓', text: periodo, time: '' };
     }
 
-    // Paginação manual
+    // 🔥 CORREÇÃO: verificação de segurança para o slice
+    const agendamentosList = Array.isArray(agendamentos) ? agendamentos : [];
     const startIndex = (currentPage - 1) * pageSize;
     const endIndex = startIndex + pageSize;
-    const agendamentosPaginados = agendamentos.slice(startIndex, endIndex);
+    const agendamentosPaginados = agendamentosList.slice(startIndex, endIndex);
+
+    // 🔥 CORREÇÃO: valores padrão para disponibilidade
+    const disponibilidadeHoje = disponibilidade?.hoje ?? 0;
+    const disponibilidadeAmanha = disponibilidade?.amanha ?? 0;
+    const disponibilidadeSemana = disponibilidade?.semana ?? 0;
 
     return (
         <div className="page">
@@ -68,15 +96,15 @@ export function PageAgendamentos() {
             
             <div className="base-kpis">
                 <div className="base-kpi">
-                    <span className="bk-val">{disponibilidade?.hoje || 0}</span>
+                    <span className="bk-val">{disponibilidadeHoje}</span>
                     <span className="bk-label">Hoje</span>
                 </div>
                 <div className="base-kpi">
-                    <span className="bk-val">{disponibilidade?.amanha || 0}</span>
+                    <span className="bk-val">{disponibilidadeAmanha}</span>
                     <span className="bk-label">Amanhã</span>
                 </div>
                 <div className="base-kpi">
-                    <span className="bk-val">{disponibilidade?.semana || 0}</span>
+                    <span className="bk-val">{disponibilidadeSemana}</span>
                     <span className="bk-label">Próximos 7 dias</span>
                 </div>
             </div>
@@ -148,19 +176,22 @@ export function PageAgendamentos() {
                                     ) : (
                                         agendamentosPaginados.map(ag => {
                                             const periodo = getPeriodoLabel(ag.periodo);
+                                            // 🔥 CORREÇÃO: tratamento seguro do telefone
+                                            const telefone = ag.numero ? ag.numero.replace('@c.us', '') : '';
+                                            
                                             return (
                                                 <tr key={ag.id}>
-                                                    <td>{new Date(ag.data).toLocaleDateString()}</td>
+                                                    <td>{ag.data ? new Date(ag.data).toLocaleDateString() : '-'}</td>
                                                     <td>{periodo.icon} {periodo.text}</td>
-                                                    <td className="td-nome">{ag.cliente_nome}</td>
-                                                    <td className="td-mono">{ag.numero.replace('@c.us', '')}</td>
-                                                    <td>{ag.endereco}</td>
+                                                    <td className="td-nome">{ag.cliente_nome || '-'}</td>
+                                                    <td className="td-mono">{telefone}</td>
+                                                    <td>{ag.endereco || '-'}</td>
                                                     <td>
                                                         <span className={`badge badge-${
                                                             ag.status === 'concluido' ? 'pago' : 
                                                             ag.status === 'cancelado' ? 'vencida' : 'pendente'
                                                         }`}>
-                                                            {ag.status}
+                                                            {ag.status || '-'}
                                                         </span>
                                                     </td>
                                                     <td>

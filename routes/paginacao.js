@@ -1,53 +1,61 @@
 // routes/paginacao.js
 module.exports = function setupRotasPaginacao(app, ctx) {
-    const { db } = ctx;
+    const { db: firebaseDb } = ctx;
 
     // CLIENTES com paginação e filtros
-    app.get('/api/clientes/paginados', (req, res) => {
+    app.get('/api/clientes/paginados', async (req, res) => {
         try {
             const page = parseInt(req.query.page) || 1;
             const limit = parseInt(req.query.limit) || 20;
-            const offset = (page - 1) * limit;
             const busca = req.query.busca || '';
             const dia = req.query.dia; // '10', '20', '30'
             const status = req.query.status; // 'pago', 'pendente', 'promessa'
             const base = req.query.base;
 
-            let sqlCount = 'SELECT COUNT(*) as total FROM clientes_base WHERE 1=1';
-            let sqlData = 'SELECT * FROM clientes_base WHERE 1=1';
-            const params = [];
-
-            if (busca) {
-                const termo = `%${busca}%`;
-                sqlCount += ` AND (nome LIKE ? OR telefone LIKE ? OR cpf LIKE ?)`;
-                sqlData += ` AND (nome LIKE ? OR telefone LIKE ? OR cpf LIKE ?)`;
-                params.push(termo, termo, termo);
-            }
+            // Firebase não tem COUNT fácil, então precisamos buscar todos e filtrar
+            // Mas para performance, vamos usar queries combinadas quando possível
+            let query = firebaseDb.collection('clientes_base');
+            
+            // Aplicar filtros que o Firebase suporta
             if (dia && dia !== 'todos') {
-                sqlCount += ` AND dia_vencimento = ?`;
-                sqlData += ` AND dia_vencimento = ?`;
-                params.push(parseInt(dia));
+                query = query.where('dia_vencimento', '==', parseInt(dia));
             }
             if (status && status !== 'todos') {
-                sqlCount += ` AND status = ?`;
-                sqlData += ` AND status = ?`;
-                params.push(status);
+                query = query.where('status', '==', status);
             }
             if (base && base !== 'todos') {
-                sqlCount += ` AND base_id = ?`;
-                sqlData += ` AND base_id = ?`;
-                params.push(parseInt(base));
+                query = query.where('base_id', '==', base);
             }
-
-            const total = db.prepare(sqlCount).get(...params).total;
+            
+            // Buscar todos os documentos (limitado para não sobrecarregar)
+            const snapshot = await query.limit(1000).get();
+            
+            // Filtrar por busca em memória (Firebase não tem LIKE)
+            let clientes = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            
+            if (busca) {
+                const termo = busca.toLowerCase();
+                clientes = clientes.filter(c => 
+                    (c.nome && c.nome.toLowerCase().includes(termo)) ||
+                    (c.telefone && c.telefone.includes(termo)) ||
+                    (c.cpf && c.cpf.includes(termo))
+                );
+            }
+            
+            // Ordenar por nome
+            clientes.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+            
+            // Paginação
+            const total = clientes.length;
             const totalPages = Math.ceil(total / limit);
-
-            // Adiciona parâmetros de paginação
-            const dataParams = [...params, limit, offset];
-            const clientes = db.prepare(sqlData + ' ORDER BY nome LIMIT ? OFFSET ?').all(...dataParams);
-
+            const start = (page - 1) * limit;
+            const paginatedData = clientes.slice(start, start + limit);
+            
             res.json({
-                data: clientes,
+                data: paginatedData,
                 total,
                 totalPages,
                 currentPage: page,
@@ -59,45 +67,56 @@ module.exports = function setupRotasPaginacao(app, ctx) {
         }
     });
 
-    // AGENDAMENTOS com paginação (se quiser)
-    app.get('/api/agendamentos/paginados', (req, res) => {
+    // AGENDAMENTOS com paginação
+    app.get('/api/agendamentos/paginados', async (req, res) => {
         try {
             const page = parseInt(req.query.page) || 1;
             const limit = parseInt(req.query.limit) || 20;
-            const offset = (page - 1) * limit;
             const data = req.query.data; // 'hoje', 'amanha', 'semana', 'todos'
             const status = req.query.status;
 
-            let sqlCount = 'SELECT COUNT(*) as total FROM agendamentos WHERE 1=1';
-            let sqlData = 'SELECT * FROM agendamentos WHERE 1=1';
-            const params = [];
-
+            let query = firebaseDb.collection('agendamentos');
+            
+            // Aplicar filtros de data
             if (data && data !== 'todos') {
+                const hoje = new Date().toISOString().split('T')[0];
+                const amanha = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+                const semana = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+                
                 if (data === 'hoje') {
-                    sqlCount += ` AND data = date('now')`;
-                    sqlData += ` AND data = date('now')`;
+                    query = query.where('data', '==', hoje);
                 } else if (data === 'amanha') {
-                    sqlCount += ` AND data = date('now', '+1 day')`;
-                    sqlData += ` AND data = date('now', '+1 day')`;
+                    query = query.where('data', '==', amanha);
                 } else if (data === 'semana') {
-                    sqlCount += ` AND data BETWEEN date('now') AND date('now', '+7 days')`;
-                    sqlData += ` AND data BETWEEN date('now') AND date('now', '+7 days')`;
+                    query = query.where('data', '>=', hoje)
+                                .where('data', '<=', semana);
                 }
             }
+            
+            // Aplicar filtro de status
             if (status && status !== 'todos') {
-                sqlCount += ` AND status = ?`;
-                sqlData += ` AND status = ?`;
-                params.push(status);
+                query = query.where('status', '==', status);
             }
-
-            const total = db.prepare(sqlCount).get(...params).total;
+            
+            // Buscar dados
+            const snapshot = await query
+                .orderBy('data', 'asc')
+                .orderBy('periodo', 'asc')
+                .get();
+            
+            let agendamentos = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            
+            // Paginação
+            const total = agendamentos.length;
             const totalPages = Math.ceil(total / limit);
-
-            const dataParams = [...params, limit, offset];
-            const agendamentos = db.prepare(sqlData + ' ORDER BY data ASC, periodo ASC LIMIT ? OFFSET ?').all(...dataParams);
-
+            const start = (page - 1) * limit;
+            const paginatedData = agendamentos.slice(start, start + limit);
+            
             res.json({
-                data: agendamentos,
+                data: paginatedData,
                 total,
                 totalPages,
                 currentPage: page,

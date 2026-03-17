@@ -1,66 +1,87 @@
 // routes/instalacoes-agendadas.js
 module.exports = function setupRotasInstalacoesAgendadas(app, ctx) {
-    const { db } = ctx;
+    const { db: firebaseDb } = ctx;
 
     // Listar instalações agendadas
-    app.get('/api/instalacoes-agendadas', (req, res) => {
+    app.get('/api/instalacoes-agendadas', async (req, res) => {
         try {
             const { status } = req.query;
-            let sql = 'SELECT * FROM instalacoes_agendadas WHERE 1=1';
-            const params = [];
+            let query = firebaseDb.collection('instalacoes_agendadas');
             
             if (status && status !== 'todos') {
-                sql += ' AND status = ?';
-                params.push(status);
+                query = query.where('status', '==', status);
             }
             
-            sql += ' ORDER BY data ASC, criado_em DESC';
+            const snapshot = await query
+                .orderBy('data', 'asc')
+                .orderBy('criado_em', 'desc')
+                .get();
             
-            const instalacoes = db.prepare(sql).all(...params);
+            const instalacoes = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            
             res.json(instalacoes);
         } catch (error) {
+            console.error('Erro ao listar instalações:', error);
             res.status(500).json({ erro: error.message });
         }
     });
 
     // Confirmar instalação (e adicionar à base)
-    app.post('/api/instalacoes-agendadas/:id/confirmar', (req, res) => {
+    app.post('/api/instalacoes-agendadas/:id/confirmar', async (req, res) => {
         try {
-            const instalacao = db.prepare('SELECT * FROM instalacoes_agendadas WHERE id = ?').get(req.params.id);
+            const instalacaoDoc = await firebaseDb.collection('instalacoes_agendadas').doc(req.params.id).get();
             
-            if (!instalacao) {
+            if (!instalacaoDoc.exists) {
                 return res.status(404).json({ erro: 'Instalação não encontrada' });
             }
             
+            const instalacao = instalacaoDoc.data();
             const diaVencimento = 10;
             
-            // Busca a base "Data 10" (ou ajuste conforme necessário)
-            let base = db.prepare('SELECT id FROM bases WHERE nome = ?').get('Data 10');
-            if (!base) {
-                const r = db.prepare('INSERT INTO bases (nome, descricao) VALUES (?, ?)').run('Data 10', 'Base para instalações');
-                base = { id: r.lastInsertRowid };
+            // Busca a base "Data 10"
+            let baseSnapshot = await firebaseDb.collection('bases')
+                .where('nome', '==', 'Data 10')
+                .limit(1)
+                .get();
+            
+            let baseId;
+            if (baseSnapshot.empty) {
+                // Cria a base se não existir
+                const baseRef = await firebaseDb.collection('bases').add({
+                    nome: 'Data 10',
+                    descricao: 'Base para instalações',
+                    criado_em: new Date().toISOString()
+                });
+                baseId = baseRef.id;
+                
+                // Adiciona dias à base (opcional)
+                await firebaseDb.collection('bases').doc(baseId).collection('datas_base').add({
+                    dia: 10
+                });
+            } else {
+                baseId = baseSnapshot.docs[0].id;
             }
             
             // Adiciona à base de clientes
-            db.prepare(`
-                INSERT INTO clientes_base 
-                    (base_id, dia_vencimento, numero, nome, endereco, telefone, status, criado_em)
-                VALUES (?, ?, ?, ?, ?, ?, 'pendente', CURRENT_TIMESTAMP)
-            `).run(
-                base.id,
-                diaVencimento,
-                instalacao.numero,
-                instalacao.nome,
-                instalacao.endereco,
-                instalacao.numero.replace('@c.us', ''),
-            );
+            await firebaseDb.collection('clientes_base').add({
+                base_id: baseId,
+                dia_vencimento: diaVencimento,
+                numero: instalacao.numero,
+                nome: instalacao.nome,
+                endereco: instalacao.endereco,
+                telefone: instalacao.numero ? instalacao.numero.replace('@c.us', '') : '',
+                status: 'pendente',
+                criado_em: new Date().toISOString()
+            });
             
             // Atualiza status da instalação
-            db.prepare(`
-                UPDATE instalacoes_agendadas 
-                SET status = 'confirmado', confirmado_em = CURRENT_TIMESTAMP 
-                WHERE id = ?
-            `).run(req.params.id);
+            await firebaseDb.collection('instalacoes_agendadas').doc(req.params.id).update({
+                status: 'confirmado',
+                confirmado_em: new Date().toISOString()
+            });
             
             res.json({ ok: true, mensagem: 'Cliente adicionado à base com sucesso' });
         } catch (error) {
@@ -70,29 +91,28 @@ module.exports = function setupRotasInstalacoesAgendadas(app, ctx) {
     });
 
     // Concluir instalação
-    app.post('/api/instalacoes-agendadas/:id/concluir', (req, res) => {
+    app.post('/api/instalacoes-agendadas/:id/concluir', async (req, res) => {
         try {
-            db.prepare(`
-                UPDATE instalacoes_agendadas 
-                SET status = 'concluido', concluido_em = CURRENT_TIMESTAMP 
-                WHERE id = ?
-            `).run(req.params.id);
+            await firebaseDb.collection('instalacoes_agendadas').doc(req.params.id).update({
+                status: 'concluido',
+                concluido_em: new Date().toISOString()
+            });
             res.json({ ok: true });
         } catch (error) {
+            console.error('Erro ao concluir instalação:', error);
             res.status(500).json({ erro: error.message });
         }
     });
 
     // Cancelar instalação
-    app.post('/api/instalacoes-agendadas/:id/cancelar', (req, res) => {
+    app.post('/api/instalacoes-agendadas/:id/cancelar', async (req, res) => {
         try {
-            db.prepare(`
-                UPDATE instalacoes_agendadas 
-                SET status = 'cancelado' 
-                WHERE id = ?
-            `).run(req.params.id);
+            await firebaseDb.collection('instalacoes_agendadas').doc(req.params.id).update({
+                status: 'cancelado'
+            });
             res.json({ ok: true });
         } catch (error) {
+            console.error('Erro ao cancelar instalação:', error);
             res.status(500).json({ erro: error.message });
         }
     });

@@ -1,11 +1,11 @@
 // routes/alertas.js
 module.exports = function setupRotasAlertas(app, ctx) {
-    const { db } = ctx;
+    const { db: firebaseDb } = ctx;
 
     // =====================================================
     // ROTA DE ALERTAS PARA NOTIFICAÇÕES
     // =====================================================
-    app.get('/api/dashboard/alertas', (req, res) => {
+    app.get('/api/dashboard/alertas', async (req, res) => {
         try {
             const hoje = new Date();
             const hojeStr = hoje.toISOString().split('T')[0];
@@ -23,52 +23,69 @@ module.exports = function setupRotasAlertas(app, ctx) {
                 return null;
             };
             
-            // Promessas pendentes
-            const promessas = db.prepare(`
-                SELECT nome, numero, data_promessa 
-                FROM promessas 
-                WHERE status = 'pendente' AND notificado = 0 AND data_promessa IS NOT NULL
-            `).all();
+            // Promessas pendentes (não notificadas)
+            const promessasSnapshot = await firebaseDb.collection('promessas')
+                .where('status', '==', 'pendente')
+                .where('notificado', '==', 0)
+                .get();
             
-            const promessasHoje = promessas.filter(p => toDate(p.data_promessa) === hojeStr);
-            const promessasAmanha = promessas.filter(p => toDate(p.data_promessa) === amanhaStr);
+            const promessasHoje = [];
+            const promessasAmanha = [];
+            
+            promessasSnapshot.docs.forEach(doc => {
+                const p = doc.data();
+                const dataFormatada = toDate(p.data_promessa);
+                if (dataFormatada === hojeStr) {
+                    promessasHoje.push({
+                        nome: p.nome,
+                        numero: p.numero,
+                        data_promessa: p.data_promessa
+                    });
+                } else if (dataFormatada === amanhaStr) {
+                    promessasAmanha.push({ nome: p.nome });
+                }
+            });
             
             // Inadimplentes (pendente + mais de 5 dias sem atualizar)
-            const inadimplentes = db.prepare(`
-                SELECT COUNT(*) as total 
-                FROM clientes_base 
-                WHERE status = 'pendente' AND julianday('now') - julianday(atualizado_em) > 5
-            `).get().total;
+            const cincoDiasAtras = new Date();
+            cincoDiasAtras.setDate(cincoDiasAtras.getDate() - 5);
+            
+            const inadimplentesSnapshot = await firebaseDb.collection('clientes')
+                .where('status', '==', 'pendente')
+                .where('atualizado_em', '<=', cincoDiasAtras.toISOString())
+                .get();
             
             // Chamados abertos há mais de 24h
-            const chamadosAbertos = db.prepare(`
-                SELECT COUNT(*) as total 
-                FROM chamados 
-                WHERE status = 'aberto' AND (julianday('now') * 86400000) - aberto_em > 86400000
-            `).get().total;
+            const umDiaAtras = Date.now() - 86400000;
+            const chamadosSnapshot = await firebaseDb.collection('chamados')
+                .where('status', '==', 'aberto')
+                .get();
+            
+            const chamadosAbertos = chamadosSnapshot.docs.filter(doc => {
+                const data = doc.data();
+                return data.aberto_em && data.aberto_em < umDiaAtras;
+            }).length;
             
             // Novos agendamentos para hoje
-            const agendamentosHoje = db.prepare(`
-                SELECT COUNT(*) as total 
-                FROM agendamentos 
-                WHERE data = date('now') AND status = 'agendado'
-            `).get().total;
+            const agendamentosHojeSnapshot = await firebaseDb.collection('agendamentos')
+                .where('data', '==', hojeStr)
+                .where('status', '==', 'agendado')
+                .get();
             
             // Instalações agendadas para hoje
-            const instalacoesHoje = db.prepare(`
-                SELECT COUNT(*) as total 
-                FROM instalacoes_agendadas 
-                WHERE data = date('now') AND status = 'agendado'
-            `).get().total;
+            const instalacoesHojeSnapshot = await firebaseDb.collection('instalacoes_agendadas')
+                .where('data', '==', hojeStr)
+                .where('status', '==', 'agendado')
+                .get();
             
             res.json({
                 promessasHoje: promessasHoje.length,
                 promessasAmanha: promessasAmanha.length,
                 promessasHojeDetalhe: promessasHoje,
-                inadimplentes,
+                inadimplentes: inadimplentesSnapshot.size,
                 chamadosAbertos,
-                agendamentosHoje,
-                instalacoesHoje
+                agendamentosHoje: agendamentosHojeSnapshot.size,
+                instalacoesHoje: instalacoesHojeSnapshot.size
             });
         } catch (error) {
             console.error('Erro ao buscar alertas:', error);
@@ -85,17 +102,16 @@ module.exports = function setupRotasAlertas(app, ctx) {
     });
 
     // =====================================================
-    // MARCAR NOTIFICAÇÕES COMO LIDAS (opcional)
+    // MARCAR NOTIFICAÇÕES COMO LIDAS
     // =====================================================
-    app.post('/api/notificacoes/marcar-lida', (req, res) => {
+    app.post('/api/notificacoes/marcar-lida', async (req, res) => {
         try {
             const { tipo, id } = req.body;
             
-            // Se for promessa, marca como notificada
             if (tipo === 'promessa' && id) {
-                db.prepare(`
-                    UPDATE promessas SET notificado = 1 WHERE id = ?
-                `).run(id);
+                await firebaseDb.collection('promessas').doc(id).update({
+                    notificado: 1
+                });
             }
             
             res.json({ ok: true });
@@ -107,16 +123,18 @@ module.exports = function setupRotasAlertas(app, ctx) {
     // =====================================================
     // MARCAR TODAS COMO LIDAS
     // =====================================================
-    app.post('/api/notificacoes/marcar-todas-lidas', (req, res) => {
+    app.post('/api/notificacoes/marcar-todas-lidas', async (req, res) => {
         try {
-            // Marca promessas de hoje como notificadas
-            const hoje = new Date().toISOString().split('T')[0];
+            const snapshot = await firebaseDb.collection('promessas')
+                .where('status', '==', 'pendente')
+                .where('notificado', '==', 0)
+                .get();
             
-            db.prepare(`
-                UPDATE promessas 
-                SET notificado = 1 
-                WHERE status = 'pendente' AND notificado = 0
-            `).run();
+            const batch = firebaseDb.batch();
+            snapshot.docs.forEach(doc => {
+                batch.update(doc.ref, { notificado: 1 });
+            });
+            await batch.commit();
             
             res.json({ ok: true });
         } catch (error) {

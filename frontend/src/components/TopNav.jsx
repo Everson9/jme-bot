@@ -5,6 +5,7 @@ import { useFetch } from '../hooks/useFetch';
 import { BuscaGlobal } from './BuscaGlobal';
 import { useTheme } from '../contexts/ThemeContext';
 import { NotificationBell } from './NotificationBell';
+import { BackupButton } from './BackupButton'; // <-- NOVO!
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -221,6 +222,41 @@ export const TopNav = ({ botAtivo, onToggle, bases }) => {
           flex-shrink: 0;
           margin-left: auto;
         }
+        /* ===== NOVO: Botão de Backup ===== */
+        .backup-btn-wrapper {
+          margin-right: 2px;
+        }
+        .backup-btn {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 10px;
+          border-radius: 20px;
+          font-size: 12px;
+          font-weight: 600;
+          background: rgba(255,255,255,0.05);
+          border: 1px solid rgba(255,255,255,0.08);
+          cursor: pointer;
+          color: #94a3b8;
+          transition: all .15s;
+        }
+        [data-theme="light"] .backup-btn {
+          background: rgba(0,0,0,0.05);
+          border: 1px solid rgba(0,0,0,0.1);
+          color: #334155;
+        }
+        .backup-btn:hover {
+          background: rgba(255,255,255,0.1);
+          color: #f1f5f9;
+        }
+        [data-theme="light"] .backup-btn:hover {
+          background: rgba(0,0,0,0.1);
+          color: #0f172a;
+        }
+        .backup-btn svg {
+          font-size: 14px;
+        }
+        /* ===== Fim do backup ===== */
         .theme-toggle {
           background: none;
           border: none;
@@ -353,6 +389,7 @@ export const TopNav = ({ botAtivo, onToggle, bases }) => {
           .topnav-right .horario-dropdown-wrap { display: none; }
           .hamburger { display: flex; }
           .busca-global-wrap { display: none; }
+          .backup-btn-wrapper { display: none; } /* Esconde backup no mobile */
         }
         @media (max-width: 600px) {
           .topnav-right .bot-pill span:not(.dot) { display: none; }
@@ -472,6 +509,11 @@ export const TopNav = ({ botAtivo, onToggle, bases }) => {
         </div>
 
         <div className="topnav-right">
+          {/* ===== NOVO: Botão de Backup ===== */}
+          <div className="backup-btn-wrapper">
+            <BackupButton />
+          </div>
+
           {/* NOTIFICATION BELL */}
           <NotificationBell />
 

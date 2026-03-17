@@ -21,6 +21,7 @@ export function PageDashboard({ status, refetch }) {
   const { data: resumoBases } = useFetch("/api/dashboard/resumo-bases", 30000);
   const { data: caixaHoje } = useFetch("/api/dashboard/caixa-hoje", 20000);
   const { data: alertas } = useFetch("/api/dashboard/alertas", 30000);
+  const { data: status } = useFetch("/api/status", 10000);
 
   const statsEstados = estados?.stats || { porFluxo: {}, atendimentoHumano: 0 };
   
@@ -37,6 +38,15 @@ export function PageDashboard({ status, refetch }) {
     comprovantePendente: "📄 Comprovante",
     cancelamento: "❌ Cancelamento"
   };
+  console.log('📊 Dados de atendimentos:', atend);
+  console.log('📊 Dados de cobranças:', cobr);
+
+    // Logs para debug (remover depois)
+React.useEffect(() => {
+  console.log('📊 Dados de atendimentos:', atend);
+  console.log('📊 Dados de cobranças:', cobr);
+  console.log('💰 Caixa hoje:', caixaHoje);
+}, [atend, cobr, caixaHoje]);
 
   const SectionLabel = ({ text, icon }) => (
     <div style={{

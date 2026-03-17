@@ -29,19 +29,32 @@ export const ModalNovoClienteBase = ({ baseId, diaDefault, onClose, onSalvo }) =
     setSalvando(true);
     setErro(null);
     try {
-      const r = await fetch(`${API}/api/bases/${baseId}/clientes`, {
+      // 🔥 CORREÇÃO: Rota correta para criar cliente
+      const r = await fetch(`${API}/api/clientes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, dia_vencimento: parseInt(form.dia_vencimento) }),
+        body: JSON.stringify({ 
+          ...form, 
+          base_id: parseInt(baseId),  // ← IMPORTANTE: enviar o base_id como número
+          dia_vencimento: parseInt(form.dia_vencimento) 
+        }),
       });
+      
+      if (!r.ok) {
+        const errorText = await r.text();
+        throw new Error(`HTTP ${r.status}: ${errorText}`);
+      }
+      
       const json = await r.json();
       if (json.id) {
         onSalvo(json);
+        onClose();
       } else {
         setErro(json.erro || "Erro ao salvar");
       }
     } catch (e) {
-      setErro("Falha de conexão");
+      console.error('Erro ao criar cliente:', e);
+      setErro("Falha de conexão: " + e.message);
     }
     setSalvando(false);
   };

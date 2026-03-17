@@ -1,5 +1,5 @@
 // helpers/seguranca.js
-module.exports = function criarSeguranca(state, db, client, ADMINISTRADORES) {
+module.exports = function criarSeguranca(state, firebaseDb, banco, client, ADMINISTRADORES) {
     
     async function verificarETransferir(deQuem, motivo) {
         const erros = state.incrementarErros ? state.incrementarErros(deQuem) : 1;
@@ -12,15 +12,26 @@ module.exports = function criarSeguranca(state, db, client, ADMINISTRADORES) {
             if (state.resetarErros) state.resetarErros(deQuem);
             
             state.setAtendimentoHumano(deQuem, true);
-            db.prepare('INSERT OR REPLACE INTO atendimento_humano (numero, desde) VALUES (?, ?)').run(deQuem, Date.now());
+            
+            // 🔥 FIREBASE: salva atendimento humano
+            await firebaseDb.collection('atendimento_humano').doc(deQuem).set({
+                numero: deQuem,
+                desde: Date.now()
+            });
             
             const nome = state.getDados(deQuem)?.nomeCliente || 'não identificado';
-            const chamadoId = db.prepare(`
-                INSERT INTO chamados (numero, nome, motivo, aberto_em)
-                VALUES (?, ?, ?, ?)
-            `).run(deQuem, nome, `Transferido por erro - ${motivo}`, Date.now()).lastInsertRowid;
             
-            console.log(`✅ Chamado #${chamadoId} aberto para atendente`);
+            // 🔥 FIREBASE: abre chamado
+            const chamadoRef = await firebaseDb.collection('chamados').add({
+                numero: deQuem,
+                nome: nome,
+                motivo: `Transferido por erro - ${motivo}`,
+                status: 'aberto',
+                aberto_em: Date.now(),
+                criado_em: new Date().toISOString()
+            });
+            
+            console.log(`✅ Chamado #${chamadoRef.id} aberto para atendente`);
             
             const hora = new Date().getUTCHours() - 3;
             const diaSemana = new Date().getDay();
@@ -42,13 +53,13 @@ module.exports = function criarSeguranca(state, db, client, ADMINISTRADORES) {
             await client.sendMessage(deQuem, mensagem);
             
             for (const adm of ADMINISTRADORES) {
-                client.sendMessage(adm, 
+                await client.sendMessage(adm, 
                     `🆘 *TRANSFERÊNCIA POR ERRO*\n\n` +
                     `Cliente: ${deQuem.replace('@c.us', '')}\n` +
                     `Nome: ${nome}\n` +
                     `Motivo: ${motivo}\n` +
                     `Erros: ${erros}\n` +
-                    `Chamado: #${chamadoId}\n` +
+                    `Chamado: #${chamadoRef.id}\n` +
                     `Horário: ${new Date().toLocaleString()}`
                 ).catch(() => {});
             }

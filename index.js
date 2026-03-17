@@ -12,48 +12,49 @@ const QRCode = require('qrcode');
 const Groq = require('groq-sdk');
 const express = require('express');
 const cors = require('cors');
+const P = "🤖 *Assistente JMENET*\n\n";
 
-const { criarTabelas, dbGetConfig, dbSetConfig } = require('./database/database');
-const criarFuncoesBanco = require('./database/funcoes');
+// =====================================================
+// FIREBASE (NOVO!) - Substitui o SQLite
+// =====================================================
+const { db: firebaseDb } = require('./config/firebase'); // conexão Firestore
+const banco = require('./database/funcoes-firebase');
+const agendamentos = require('./database/agendamentos-firebase')(firebaseDb);
+const instalacoesAgendadas = require('./database/instalacoes-agendadas-firebase')(firebaseDb);
+
+
+
 const criarUtils = require('./shared/utils');
 const criarClassificador = require('./shared/classificador');
 const criarDetectorMultiplas = require('./shared/multiplasIntencoes');
 
 const pdfParse = require('pdf-parse');
 
+agendamentos.inicializarTabela();
+instalacoesAgendadas.criarTabela();
+
 // =====================================================
-// CONFIGURAÇÃO DO CAMINHO DOS DADOS PERSISTENTES (AGORA ANTES DO BANCO!)
+// CONFIGURAÇÃO DO CAMINHO DOS DADOS PERSISTENTES (SÓ PARA SESSÃO DO WHATSAPP)
 // =====================================================
 const DATA_PATH = (() => {
-    // Railway: usa o volume montado (geralmente /data)
     if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
         return process.env.RAILWAY_VOLUME_MOUNT_PATH;
     }
-    // Render: usa o caminho do disco persistente
     if (process.env.RENDER) {
         return '/opt/render/project/src/data';
     }
-    // Local: usa o diretório atual
     return __dirname;
 })();
 
 console.log(`📁 Dados persistentes em: ${DATA_PATH}`);
 
-// Garante que o diretório de dados exista
 if (!fs.existsSync(DATA_PATH)) {
     fs.mkdirSync(DATA_PATH, { recursive: true });
 }
 
 // =====================================================
-// BANCO DE DADOS (AGORA COM CAMINHO PERSISTENTE!)
+// UTILS E CLASSIFICADORES
 // =====================================================
-const DB_PATH = path.join(DATA_PATH, 'jmenet.db');
-console.log(`📁 Banco de dados em: ${DB_PATH}`);
-
-// Passa o caminho para a função criarTabelas
-const db = criarTabelas(DB_PATH);
-const banco = criarFuncoesBanco(db);
-
 const utils = criarUtils(groqChatFallback);
 const classificador = criarClassificador(groqChatFallback);
 const detectorMultiplas = criarDetectorMultiplas(groqChatFallback);
@@ -64,14 +65,14 @@ const NUMEROS_TESTE = [];
 const chavePixExibicao = "jmetelecomnt@gmail.com";
 
 let botAtivo = true;
-let situacaoRede = dbGetConfig('situacao_rede', 'normal');
-let previsaoRetorno = dbGetConfig('previsao_retorno', 'sem previsão');
+let situacaoRede = 'normal'; // Valor padrão, sem dbGetConfig
+let previsaoRetorno = 'sem previsão';
 let horarioFuncionamento = { inicio: 8, fim: 20, ativo: true };
 let horarioCobranca = { inicio: 8, fim: 17 };
 let botIniciadoEm = null;
 let ultimoQR = null;
 
-const state = new StateManager(db);
+const state = new StateManager(null); // StateManager não precisa mais do db SQLite
 
 const metrics = {
     mensagensProcessadas: 0,
@@ -87,7 +88,7 @@ const processingLock = new Map();
 const filaEspera = new Map();
 const mensagensPendentes = new Map();
 const debounceTimers = new Map();
-const fotosPendentes = new Map(); // ← GLOBAL para comprovantes
+const fotosPendentes = new Map();
 
 const DEBOUNCE_TEXTO = 12000;
 const DEBOUNCE_AUDIO = 10000;
@@ -96,7 +97,7 @@ const DEBOUNCE_MIDIA = 6000;
 let _fluxoSuporte, _fluxoFinanceiro, _fluxoPromessa, _fluxoNovoCliente, _fluxoCancelamento;
 
 // =====================================================
-// FUNÇÕES AUXILIARES
+// FUNÇÕES AUXILIARES (mantidas iguais)
 // =====================================================
 
 function logErro(contexto, erro, dados = {}) {
@@ -113,6 +114,7 @@ function logErro(contexto, erro, dados = {}) {
 }
 
 async function groqChatFallback(messages, temperature = 0.5, tentativa = 1) {
+    // ... função mantida igual
     const MAX_TENTATIVAS = 3;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20000);
@@ -153,12 +155,12 @@ async function groqChatFallback(messages, temperature = 0.5, tentativa = 1) {
 }
 
 async function analisarImagem(msg) {
+    // ... função mantida igual
     try {
         if (typeof msg.downloadMedia !== 'function') return null;
         const media = await msg.downloadMedia();
         if (!media || !media.data) return null;
 
-        // Se for PDF
         if (media.mimetype === 'application/pdf') {
             try {
                 const pdfBuffer = Buffer.from(media.data, 'base64');
@@ -192,7 +194,6 @@ async function analisarImagem(msg) {
             }
         }
 
-        // Se for imagem
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -228,10 +229,8 @@ async function analisarImagem(msg) {
     }
 }
 
-// =====================================================
-// PROCESSAMENTO AUTOMÁTICO DE MÍDIA (COMPROVANTES)
-// =====================================================
 async function processarMidiaAutomatico(deQuem, msg) {
+    // ... função mantida igual (mas usando banco Firebase)
     console.log(`📷 Processando mídia automaticamente: ${msg.type}`);
     
     const analise = await analisarImagem(msg);
@@ -255,7 +254,7 @@ async function processarMidiaAutomatico(deQuem, msg) {
                 `${P}Comprovante recebido e pagamento confirmado! ✅ Já dei baixa no sistema. Obrigado, ${baixa.nomeCliente}! 😊`
             );
             
-            try { db.prepare(`INSERT INTO log_comprovantes (numero) VALUES (?)`).run(deQuem); } catch(_){}
+            await banco.dbLogComprovante(deQuem); // Versão Firebase
             
             for (const adm of ADMINISTRADORES) {
                 client.sendMessage(adm,
@@ -291,6 +290,7 @@ async function processarMidiaAutomatico(deQuem, msg) {
 }
 
 async function transcreverAudio(msg) {
+    // ... função mantida igual
     try {
         const media = await msg.downloadMedia();
         if (!media || !media.data) return null;
@@ -356,23 +356,41 @@ function redeNormal() {
 async function darBaixaAutomatica(numeroWhatsapp, analise) {
     try {
         const numeroBusca = numeroWhatsapp.replace('@c.us', '').replace(/^55/, '');
-        const cliente = db.prepare(`
-            SELECT id, nome FROM clientes_base
-            WHERE REPLACE(REPLACE(REPLACE(telefone, '-', ''), ' ', ''), '()', '') LIKE ?
-            LIMIT 1
-        `).get('%' + numeroBusca.slice(-8) + '%');
-
+        
+        const cliente = await banco.buscarClientePorTelefone(numeroBusca);
+        
         if (!cliente) return { sucesso: false, nomeCliente: null, valido: false };
 
-        const obs = !analise.valido ? ` ⚠️ Pix suspeito: ${analise.motivo_invalido || 'verificar'}` : null;
+        // 🔴 FUNÇÃO NÃO EXISTE - REMOVER ESTA LINHA:
+        // await banco.dbAtualizarStatusCliente(cliente.id, 'pago', analise);
 
-        db.prepare(`UPDATE clientes_base SET status = 'pago', baixa_sgp = 1,
-            forma_pagamento = 'EFI',
-            observacao = COALESCE(observacao, '') || COALESCE(?, ''),
-            atualizado_em = CURRENT_TIMESTAMP WHERE id = ?`).run(obs, cliente.id);
+        // ✅ USAR ISSO EM VEZ:
+        // Atualiza status do cliente
+        await firebaseDb.collection('clientes').doc(cliente.id).update({
+            status: 'pago',
+            atualizado_em: new Date().toISOString()
+        });
+
+        // Registra no histórico
+        const hoje = new Date();
+        const mesRef = `${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
+        
+        await firebaseDb.collection('clientes')
+            .doc(cliente.id)
+            .collection('historico_pagamentos')
+            .doc(mesRef)
+            .set({
+                referencia: mesRef,
+                status: 'pago',
+                forma_pagamento: 'Comprovante',
+                pago_em: new Date().toISOString(),
+                data_vencimento: cliente.dia_vencimento || 10,
+                valor: analise.valor
+            }, { merge: true });
 
         return { sucesso: true, nomeCliente: cliente.nome, valido: analise.valido };
     } catch(e) {
+        console.error('Erro em darBaixaAutomatica:', e);
         return { sucesso: false, nomeCliente: null, valido: false };
     }
 }
@@ -395,6 +413,7 @@ function abrirChamadoComMotivo(deQuem, nome, motivo, extras = {}) {
 }
 
 async function verificarETransferir(deQuem, motivo) {
+    // ... função mantida igual (não usa banco)
     const erros = state.incrementarErros ? state.incrementarErros(deQuem) : 1;
     
     console.log(`⚠️ Cliente ${deQuem} - Erro ${erros}/5: ${motivo}`);
@@ -446,15 +465,12 @@ async function verificarETransferir(deQuem, motivo) {
 }
 
 // =====================================================
-// FUNÇÃO processarAposIdentificacao
+// FUNÇÃO processarAposIdentificacao (adaptada para Firebase)
 // =====================================================
 async function processarAposIdentificacao(deQuem, nomeTitular, msgOriginal, intencoes) {
-    const cliente = db.prepare(`
-        SELECT nome, status, dia_vencimento, telefone, cpf
-        FROM clientes_base
-        WHERE LOWER(nome) LIKE LOWER(?)
-        LIMIT 1
-    `).get('%' + nomeTitular.trim() + '%');
+    // Busca cliente pelo nome no Firebase
+    const clientes = await banco.buscarClientePorNome(nomeTitular);
+    const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
     
     if (!cliente) {
         await client.sendMessage(deQuem, 
@@ -480,7 +496,7 @@ async function processarAposIdentificacao(deQuem, nomeTitular, msgOriginal, inte
         cpfCliente: cliente.cpf
     });
     
-    const promessa = banco.buscarPromessa(cliente.nome);
+    const promessa = await banco.buscarPromessa(cliente.nome);
     
     if (promessa) {
         state.atualizar(deQuem, { promessaCliente: promessa.data_promessa });
@@ -536,6 +552,7 @@ async function processarAposIdentificacao(deQuem, nomeTitular, msgOriginal, inte
 }
 
 async function processarMensagem(deQuem, msg) {
+    // ... função mantida IGUAL, pois usa as funções do banco (que agora são Firebase)
     if (state.isAtendimentoHumano(deQuem)) return;
 
     if (processingLock.get(deQuem)) {
@@ -556,7 +573,7 @@ async function processarMensagem(deQuem, msg) {
         if (ultimaAtualizacao && (agora - ultimaAtualizacao > 60 * 60 * 1000)) {
             console.log(`🔄 Sessão expirada para ${deQuem.slice(-8)} (mais de 1h sem atividade)`);
             state.encerrarFluxo(deQuem);
-            banco.dbLimparHistorico(deQuem);
+            await banco.dbLimparHistorico(deQuem); // Firebase
         }
 
         const fluxoAtivo = state.getFluxo(deQuem);
@@ -595,8 +612,9 @@ async function processarMensagem(deQuem, msg) {
             
             if (fluxoAtivo === 'aguardando_nome_comprovante') {
                 const nomeLimpo = await utils.extrairNomeDaMensagem(msg.body || '');
+                  const dados = state.getDados(deQuem);
                 if (nomeLimpo) {
-                    const cliente = banco.buscarClientePorNome(nomeLimpo);
+                    const cliente = await banco.buscarClientePorNome(nomeLimpo);
                     if (cliente && cliente.length > 0) {
                         await darBaixaAutomatica(deQuem, dados.analise);
                         await client.sendMessage(deQuem, 
@@ -633,7 +651,8 @@ async function processarMensagem(deQuem, msg) {
             return;
         }
 
-        const dadosCliente = banco.buscarStatusCliente(deQuem);
+        // BUSCA CLIENTE NO FIREBASE pelo telefone
+        const dadosCliente = await banco.buscarStatusCliente(deQuem);
         
         if (!dadosCliente) {
             console.log(`🆔 Cliente não identificado por telefone. Iniciando identificação.`);
@@ -651,37 +670,36 @@ async function processarMensagem(deQuem, msg) {
                 `Para melhor atendê-lo, poderia me informar o *nome completo do titular* da internet?`
             );
             
-            banco.dbIniciarAtendimento(deQuem);
+            await banco.dbIniciarAtendimento(deQuem);
             return;
         }
 
         console.log(`✅ Cliente identificado por telefone: ${dadosCliente.nome} (${dadosCliente.status})`);
         
-        const cliente = db.prepare(`
-            SELECT nome, status, dia_vencimento, telefone
-            FROM clientes_base
-            WHERE LOWER(nome) LIKE LOWER(?)
-            LIMIT 1
-        `).get('%' + dadosCliente.nome + '%');
+        // Busca dados completos do cliente no Firebase
+        const clientesList = await banco.buscarClientePorNome(dadosCliente.nome);
+        const cliente = clientesList && clientesList.length > 0 ? clientesList[0] : null;
         
-        state.atualizar(deQuem, { 
-            clienteIdentificado: true,
-            nomeCliente: cliente.nome,
-            statusCliente: cliente.status,
-            telefoneCliente: cliente.telefone
-        });
+        if (cliente) {
+            state.atualizar(deQuem, { 
+                clienteIdentificado: true,
+                nomeCliente: cliente.nome,
+                statusCliente: cliente.status,
+                telefoneCliente: cliente.telefone
+            });
+        }
         
-        const promessa = banco.buscarPromessa(cliente.nome);
+        const promessa = await banco.buscarPromessa(dadosCliente.nome);
         
         if (promessa) {
             console.log(`📅 Promessa encontrada: ${promessa.data_promessa}`);
             
             state.atualizar(deQuem, { promessaCliente: promessa.data_promessa });
             
-            let mensagem = `Encontrei o cadastro de *${cliente.nome}*! `;
+            let mensagem = `Encontrei o cadastro de *${dadosCliente.nome}*! `;
             mensagem += `Você tem uma *promessa de pagamento* para o dia *${promessa.data_promessa}*. 😊\n\n`;
             
-            if (cliente.status === 'pago') {
+            if (dadosCliente.status === 'pago') {
                 mensagem += `Sua internet está em dia! Como posso ajudar?`;
                 await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\n${mensagem}`);
                 
@@ -714,7 +732,7 @@ async function processarMensagem(deQuem, msg) {
                     msgPendente: msg.body 
                 });
             }
-            banco.dbIniciarAtendimento(deQuem);
+            await banco.dbIniciarAtendimento(deQuem);
             return;
         }
 
@@ -754,11 +772,11 @@ async function processarMensagem(deQuem, msg) {
             return;
         }
 
-        const historico = banco.dbCarregarHistorico(deQuem);
+        const historico = await banco.dbCarregarHistorico(deQuem);
         const intencao = multiplas.length === 1 ? multiplas[0] : 
                         await classificador.classificarIntencaoUnificada(msg.body || '', historico, fluxoAtivo);
         
-        banco.dbLog(deQuem, 'decisao', 'classificacao', msg.body, { intencao });
+        await banco.dbLog(deQuem, 'decisao', 'classificacao', msg.body, { intencao });
         await iniciarFluxoPorIntencao(intencao, deQuem, msg);
         
     } catch (error) {
@@ -774,18 +792,151 @@ async function processarMensagem(deQuem, msg) {
 }
 
 async function handleIdentificacao(deQuem, msg) {
+    // ... função mantida igual, mas usando banco Firebase nas chamadas
     const etapa = state.getEtapa(deQuem);
     const dados = state.getDados(deQuem);
     const texto = msg.body?.trim() || '';
     
     console.log(`🆔 Fluxo de identificação - etapa: ${etapa}`);
     
-    // ... (mantenha a função handleIdentificacao completa igual ao seu código original)
-    // Por questões de espaço, não repeti todo o conteúdo, mas você deve manter o que já tinha.
-    // Certifique-se de que ela está presente.
+    if (etapa === 'aguardando_nome') {
+        if (!texto || texto.length < 3) {
+            await client.sendMessage(deQuem, 
+                `🤖 *Assistente JMENET*\n\n` +
+                `Por favor, me informe o *nome completo do titular* da internet. 😊`
+            );
+            state.iniciarTimer(deQuem);
+            return;
+        }
+        
+        console.log(`📝 Nome informado: "${texto}"`);
+        
+        const clientes = await banco.buscarClientePorNome(texto);
+        
+        if (clientes.length === 1) {
+            console.log(`✅ Cliente encontrado por nome: ${clientes[0].nome}`);
+            await processarAposIdentificacao(deQuem, clientes[0].nome, dados.msgOriginal, dados.intencoes);
+            return;
+        }
+        
+        if (clientes.length === 0) {
+            console.log(`❌ Nenhum cliente encontrado com nome: ${texto}`);
+            state.atualizar(deQuem, { 
+                etapa: 'aguardando_cpf',
+                tentativasCpf: 1,
+                nomeTentado: texto
+            });
+            await client.sendMessage(deQuem, 
+                `🤖 *Assistente JMENET*\n\n` +
+                `Não encontrei *${texto}* na minha base. 😕\n\n` +
+                `Para facilitar a busca, poderia me informar o *CPF* do titular? (apenas números)`
+            );
+            state.iniciarTimer(deQuem);
+            return;
+        }
+        
+        if (clientes.length > 1) {
+            console.log(`⚠️ Múltiplos clientes (${clientes.length}) com nome: ${texto}`);
+            state.atualizar(deQuem, { 
+                etapa: 'aguardando_cpf',
+                tentativasCpf: 1,
+                nomeTentado: texto,
+                multiplosClientes: clientes
+            });
+            await client.sendMessage(deQuem, 
+                `🤖 *Assistente JMENET*\n\n` +
+                `Encontrei *${clientes.length}* clientes com esse nome. 😕\n\n` +
+                `Para identificar corretamente, poderia me informar o *CPF* do titular? (apenas números)`
+            );
+            state.iniciarTimer(deQuem);
+            return;
+        }
+    }
+    
+    if (etapa === 'aguardando_cpf') {
+        const cpf = texto.replace(/\D/g, '');
+        
+        if (cpf.length !== 11) {
+            const tentativas = (dados.tentativasCpf || 1);
+            
+            if (tentativas >= 3) {
+                state.atualizar(deQuem, { 
+                    etapa: 'aguardando_telefone',
+                    tentativasTelefone: 1
+                });
+                await client.sendMessage(deQuem, 
+                    `🤖 *Assistente JMENET*\n\n` +
+                    `Vamos tentar de outra forma. Poderia me informar o *telefone de contato* do titular? (com DDD, apenas números)`
+                );
+                return;
+            }
+            
+            await client.sendMessage(deQuem, 
+                `🤖 *Assistente JMENET*\n\n` +
+                `CPF deve ter 11 dígitos. Você informou ${cpf.length}. Digite apenas números.`
+            );
+            state.atualizar(deQuem, { tentativasCpf: tentativas + 1 });
+            return;
+        }
+        
+        const cliente = await banco.buscarClientePorCPF(cpf);
+        
+        if (cliente) {
+            console.log(`✅ Cliente encontrado por CPF: ${cliente.nome}`);
+            await processarAposIdentificacao(deQuem, cliente.nome, dados.msgOriginal, dados.intencoes);
+            return;
+        }
+        
+        console.log(`❌ Cliente não encontrado com CPF: ${cpf}`);
+        
+        state.atualizar(deQuem, { 
+            etapa: 'aguardando_telefone',
+            tentativasTelefone: 1
+        });
+        
+        await client.sendMessage(deQuem, 
+            `🤖 *Assistente JMENET*\n\n` +
+            `Não encontrei o CPF na base. 😕\n\n` +
+            `Última tentativa: poderia me informar o *telefone de contato* do titular? (com DDD, apenas números)`
+        );
+        return;
+    }
+    
+    if (etapa === 'aguardando_telefone') {
+        const telefone = texto.replace(/\D/g, '');
+        
+        if (telefone.length < 10 || telefone.length > 11) {
+            const tentativas = (dados.tentativasTelefone || 1);
+            
+            if (tentativas >= 2) {
+                await verificarETransferir(deQuem, 'Não identificado após nome, CPF e telefone');
+                return;
+            }
+            
+            await client.sendMessage(deQuem, 
+                `🤖 *Assistente JMENET*\n\n` +
+                `Telefone deve ter 10 ou 11 dígitos (com DDD). Digite apenas números.`
+            );
+            state.atualizar(deQuem, { tentativasTelefone: tentativas + 1 });
+            return;
+        }
+        
+        const cliente = await banco.buscarClientePorTelefone(telefone);
+        
+        if (cliente) {
+            console.log(`✅ Cliente encontrado por telefone: ${cliente.nome}`);
+            await processarAposIdentificacao(deQuem, cliente.nome, dados.msgOriginal, dados.intencoes);
+            return;
+        }
+        
+        console.log(`❌ Cliente não encontrado após TODAS as tentativas`);
+        await verificarETransferir(deQuem, 'Não identificado após nome, CPF e telefone');
+        return;
+    }
 }
 
 async function delegarParaFluxo(fluxo, deQuem, msg) {
+    // ... função mantida igual
     const fluxos = {
         'suporte': _fluxoSuporte,
         'financeiro': _fluxoFinanceiro,
@@ -806,18 +957,19 @@ async function delegarParaFluxo(fluxo, deQuem, msg) {
 }
 
 async function responderComIA(deQuem, msg) {
-    const historico = banco.dbCarregarHistorico(deQuem).slice(-10);
+    const historico = await banco.dbCarregarHistorico(deQuem);
+    const historicoSlice = historico.slice(-10);
     const systemMsg = `Você é o assistente virtual da JMENET Telecom.`;
     try {
         const respostaIA = await groqChatFallback([
             { role: 'system', content: systemMsg },
-            ...historico,
+            ...historicoSlice,
             { role: 'user', content: msg.body }
         ], 0.5);
         
         if (respostaIA) {
             await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\n${respostaIA}`);
-            banco.dbSalvarHistorico(deQuem, 'assistant', respostaIA);
+            await banco.dbSalvarHistorico(deQuem, 'assistant', respostaIA);
         }
     } catch (error) {
         console.error("Erro no Groq:", error);
@@ -825,6 +977,7 @@ async function responderComIA(deQuem, msg) {
 }
 
 async function iniciarFluxoPorIntencao(intencao, deQuem, msg) {
+    // ... função mantida igual
     switch(intencao) {
         case 'SUPORTE':
             await _fluxoSuporte.iniciar(deQuem, msg);
@@ -850,8 +1003,8 @@ async function iniciarFluxoPorIntencao(intencao, deQuem, msg) {
             const saudacao = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
             const resp = `${saudacao}! Como posso te ajudar hoje?\n\n1️⃣ Suporte técnico\n2️⃣ Financeiro\n3️⃣ Planos e instalação`;
             await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\n${resp}`);
-            banco.dbSalvarHistorico(deQuem, 'assistant', resp);
-            banco.dbIniciarAtendimento(deQuem);
+            await banco.dbSalvarHistorico(deQuem, 'assistant', resp);
+            await banco.dbIniciarAtendimento(deQuem);
             break;
         default:
             await responderComIA(deQuem, msg);
@@ -859,6 +1012,7 @@ async function iniciarFluxoPorIntencao(intencao, deQuem, msg) {
 }
 
 function processarFila(deQuem) {
+    // ... função mantida igual
     const fila = filaEspera.get(deQuem) || [];
     if (fila.length > 0) {
         const proxima = fila.shift();
@@ -869,6 +1023,7 @@ function processarFila(deQuem) {
 }
 
 function agendarProcessamento(deQuem, delay) {
+    // ... função mantida igual
     if (debounceTimers.has(deQuem)) clearTimeout(debounceTimers.get(deQuem));
     
     const timer = setTimeout(async () => {
@@ -913,7 +1068,7 @@ function agendarProcessamento(deQuem, delay) {
 }
 
 // =====================================================
-// CLIENTE DO WHATSAPP (AGORA USA O DATA_PATH CORRETO)
+// CLIENTE DO WHATSAPP
 // =====================================================
 const client = new Client({
     authStrategy: new LocalAuth({ 
@@ -956,11 +1111,11 @@ app.get('/qr', async (req, res) => {
     }
 });
 
-// Contexto para as rotas
+// Contexto para as rotas (agora usando Firebase indiretamente via banco)
 const ctxRotas = {
-    db, banco, state, client, ADMINISTRADORES,
-    dbGetConfig, 
-    dbSetConfig, 
+    db: firebaseDb, banco, state, client, ADMINISTRADORES,
+    // dbGetConfig removido (não usado mais)
+    // dbSetConfig removido
     dbRelatorio: banco.dbRelatorio,
     dbListarChamados: banco.dbListarChamados,
     dbAtualizarChamado: banco.dbAtualizarChamado,
@@ -986,9 +1141,10 @@ app.listen(PORT, () => {
 });
 
 // =====================================================
-// EVENTO DE MENSAGEM
+// EVENTO DE MENSAGEM (mantido igual)
 // =====================================================
 client.on('message', async (msg) => {
+    // ... (código mantido igual)
     console.log(`\n📨 MENSAGEM RECEBIDA:`);
     console.log(`   De: ${msg.from}`);
     console.log(`   Corpo: "${msg.body}"`);
@@ -1030,13 +1186,13 @@ client.on('message', async (msg) => {
         const texto = msg.body || '';
         if (texto === '!bot off') {
             botAtivo = false;
-            dbSetConfig('bot_ativo', '0');
+            // dbSetConfig removido
             console.log(`   🔴 Bot desativado por comando admin`);
             return msg.reply("🔴 *IA DESATIVADA.*");
         }
         if (texto === '!bot on') {
             botAtivo = true;
-            dbSetConfig('bot_ativo', '1');
+            // dbSetConfig removido
             console.log(`   🟢 Bot ativado por comando admin`);
             return msg.reply("🟢 *IA ATIVADA.*");
         }
@@ -1100,7 +1256,7 @@ client.on('message', async (msg) => {
 // =====================================================
 function inicializarFluxos() {
     const ctx = {
-        client, db, banco,
+        client, db: firebaseDb, banco,
         state,
         ADMINISTRADORES,
         P: "🤖 *Assistente JMENET*\n\n",
@@ -1141,18 +1297,28 @@ function inicializarFluxos() {
     console.log('✅ Fluxos inicializados!');
 }
 
-function limparLogsAntigos() {
+// Função de limpeza de logs adaptada (não usa SQLite)
+async function limparLogsAntigos() {
+    console.log('🧹 Iniciando limpeza de logs antigos...');
     try {
-        const result = db.prepare(`
-            DELETE FROM log_bot 
-            WHERE criado_em < datetime('now', '-90 days')
-        `).run();
+        const mesAtras = new Date();
+        mesAtras.setMonth(mesAtras.getMonth() - 1);
         
-        if (result.changes > 0) {
-            console.log(`🧹 ${result.changes} logs antigos removidos`);
+        const colecoes = ['log_bot', 'log_cobrancas', 'log_comprovantes', 'log_atendimentos'];
+        
+        for (const colecao of colecoes) {
+            const snapshot = await firebaseDb.collection(colecao)
+                .where('criado_em', '<', mesAtras.toISOString())
+                .get();
+            
+            const batch = firebaseDb.batch();
+            snapshot.docs.forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
+            
+            console.log(`   🗑️ ${snapshot.size} registros antigos de ${colecao}`);
         }
-    } catch (e) {
-        console.error('Erro ao limpar logs:', e);
+    } catch (error) {
+        console.error('Erro na limpeza de logs:', error);
     }
 }
 
@@ -1170,27 +1336,19 @@ client.on('ready', async () => {
 
     const NUMERO_TESTE = '558187500456@c.us';
     if (state.limpar) state.limpar(NUMERO_TESTE);
-    banco.dbLimparHistorico(NUMERO_TESTE);
+    if (banco.dbLimparHistorico) {
+    await banco.dbLimparHistorico(NUMERO_TESTE);
+} else {
+    console.log('ℹ️ Função dbLimparHistorico não disponível no Firebase');
+}
     
-    const botAtivoSalvo = dbGetConfig('bot_ativo');
-    botAtivo = botAtivoSalvo === '' || botAtivoSalvo === '1';
-    
-    try {
-        const hAtendSalvo = dbGetConfig('horario_atendente');
-        if (hAtendSalvo) horarioFuncionamento = { ...horarioFuncionamento, ...JSON.parse(hAtendSalvo) };
-    } catch(e) {}
-    
-    try {
-        const hCobrancaSalvo = dbGetConfig('horario_cobranca');
-        if (hCobrancaSalvo) horarioCobranca = { ...horarioCobranca, ...JSON.parse(hCobrancaSalvo) };
-    } catch(e) {}
-    
-    situacaoRede = dbGetConfig('situacao_rede', 'normal');
-    previsaoRetorno = dbGetConfig('previsao_retorno', 'sem previsão');
+    // Valores iniciais (podem vir do Firebase futuramente)
+    botAtivo = true;
     
     console.log(`\n🚀 JMENET: Sistema online!`);
     console.log(`🤖 Bot IA: ${botAtivo ? 'LIGADO ✅' : 'DESLIGADO ❌'}`);
     console.log(`📡 Rede: ${situacaoRede} | Previsão: ${previsaoRetorno}`);
+    console.log(`🔥 Banco de dados: Firebase Firestore`);
 
     setInterval(() => {
         const expirados = state.verificarTimeouts?.() || [];

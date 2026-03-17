@@ -1,9 +1,7 @@
 'use strict';
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // STATE MANAGER — Gerenciador de Estado Centralizado
-// Substitui todos os Maps individuais (estadoSuporte,
-// estadoFinanceiro, atendimentoHumano, clientesEmSuporte...)
-// por uma única fonte de verdade com persistência SQLite.
+// Versão adaptada para Firebase (sem SQLite)
 //
 // Estrutura de um estado:
 // {
@@ -21,16 +19,25 @@
 const TEMPO_EXPIRACAO_HUMANO = 30 * 60 * 1000; // 30 minutos
 
 class StateManager {
-    constructor(db) {
-        this._db = db;
+    constructor(db = null) {
+        this._db = db; // Pode ser null (Firebase não usa SQLite)
         this._map = new Map();
-        this._timers = new Map(); // Inicializa o Map de timers
-        this._garantirTabela();
-        this._carregar();
+        this._timers = new Map();
+        
+        // Se tiver SQLite, tenta carregar, senão só avisa
+        if (this._db) {
+            this._garantirTabela();
+            this._carregar();
+        } else {
+            console.log('ℹ️ StateManager rodando sem persistência (modo Firebase)');
+        }
     }
 
     // ─── Banco ───────────────────────────────────────────
     _garantirTabela() {
+        // Se não tem banco, ignora
+        if (!this._db) return;
+        
         try {
             this._db.exec(`
                 CREATE TABLE IF NOT EXISTS estados_v2 (
@@ -45,6 +52,9 @@ class StateManager {
     }
 
     _carregar() {
+        // Se não tem banco, ignora
+        if (!this._db) return;
+        
         try {
             const rows = this._db.prepare('SELECT numero, estado_json FROM estados_v2').all();
             let count = 0;
@@ -76,6 +86,9 @@ class StateManager {
     }
 
     _persistir(numero) {
+        // Se não tem banco, não persiste (Firebase)
+        if (!this._db) return;
+        
         const entry = this._map.get(numero);
         if (!entry) return;
         try {
@@ -126,7 +139,7 @@ class StateManager {
         e.etapa = etapa;
         e.dados = dados;
         e.atualizadoEm = Date.now();
-        this._persistir(numero);
+        this._persistir(numero); // Só persiste se tiver SQLite
         console.log(`📌 state.iniciar [${numero.slice(-8)}] fluxo=${fluxo} etapa=${etapa}`);
         return this;
     }
@@ -170,7 +183,10 @@ class StateManager {
         const vazio = !e.fluxo && !e.atendimentoHumano && !e.clienteEmSuporte && !e.aguardandoEscolha;
         if (vazio) {
             this._map.delete(numero);
-            try { this._db.prepare('DELETE FROM estados_v2 WHERE numero = ?').run(numero); } catch (_) {}
+            // Só tenta deletar do banco se tiver SQLite
+            if (this._db) {
+                try { this._db.prepare('DELETE FROM estados_v2 WHERE numero = ?').run(numero); } catch (_) {}
+            }
         } else {
             this._persistir(numero);
         }
@@ -179,18 +195,20 @@ class StateManager {
     /** Reset completo de tudo (usado em !reset) */
     limpar(numero) {
         this._map.delete(numero);
-        try { this._db.prepare('DELETE FROM estados_v2 WHERE numero = ?').run(numero); } catch (_) {}
+        if (this._db) {
+            try { this._db.prepare('DELETE FROM estados_v2 WHERE numero = ?').run(numero); } catch (_) {}
+        }
         return this;
     }
 
     // ─── Getters de fluxo ────────────────────────────────
 
-    hasFluxo(numero) { return this._get(numero).fluxo !== null; }
-    getFluxo(numero) { return this._get(numero).fluxo; }
-    getEtapa(numero) { return this._get(numero).etapa; }
-    getDados(numero) { return this._get(numero).dados; }
+    hasFluxo(numero)        { return this._get(numero).fluxo !== null; }
+    getFluxo(numero)        { return this._get(numero).fluxo; }
+    getEtapa(numero)        { return this._get(numero).etapa; }
+    getDados(numero)        { return this._get(numero).dados; }
 
-    isFluxo(numero, fluxo) { return this._get(numero).fluxo === fluxo; }
+    isFluxo(numero, fluxo)  { return this._get(numero).fluxo === fluxo; }
 
     /** Retorna se há qualquer estado ativo (fluxo, humano ou comprovante pendente) */
     hasAtivo(numero) {
@@ -202,14 +220,14 @@ class StateManager {
 
     setAtendimentoHumano(numero, ativo) {
         const e = this._entry(numero);
-        e.atendimentoHumano = ativo;
+        e.atendimentoHumano      = ativo;
         e.atendimentoHumanoDesde = ativo ? Date.now() : null;
-        e.atualizadoEm = Date.now();
+        e.atualizadoEm           = Date.now();
         // Quando humano assume, limpa fluxo ativo do bot
         if (ativo) {
-            e.fluxo = null;
-            e.etapa = null;
-            e.dados = {};
+            e.fluxo  = null;
+            e.etapa  = null;
+            e.dados  = {};
             e.aguardandoEscolha = false;
             this._persistir(numero);
         } else {
@@ -225,7 +243,7 @@ class StateManager {
         const expirou = (Date.now() - e.atendimentoHumanoDesde) >= TEMPO_EXPIRACAO_HUMANO;
         if (expirou) {
             // Auto-expira — limpa tudo se não há mais nada ativo
-            e.atendimentoHumano = false;
+            e.atendimentoHumano      = false;
             e.atendimentoHumanoDesde = null;
             this._limparSeVazio(numero);
             return false;
@@ -240,9 +258,9 @@ class StateManager {
     // ─── Cliente em Suporte ──────────────────────────────
 
     setClienteEmSuporte(numero, ativo) {
-        const e = this._entry(numero);
+        const e          = this._entry(numero);
         e.clienteEmSuporte = ativo;
-        e.atualizadoEm = Date.now();
+        e.atualizadoEm   = Date.now();
         this._persistir(numero);
         return this;
     }
@@ -254,9 +272,9 @@ class StateManager {
     // ─── Aguardando Escolha de Pagamento ─────────────────
 
     setAguardandoEscolha(numero, ativo) {
-        const e = this._entry(numero);
+        const e             = this._entry(numero);
         e.aguardandoEscolha = ativo;
-        e.atualizadoEm = Date.now();
+        e.atualizadoEm      = Date.now();
         this._persistir(numero);
         return this;
     }

@@ -1,11 +1,11 @@
 'use strict';
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// FLUXO NOVO CLIENTE / INSTALAÇÃO — COM AGENDAMENTO
+// FLUXO NOVO CLIENTE / INSTALAÇÃO — VERSÃO FIREBASE
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module.exports = function criarFluxoNovoCliente(ctx) {
     const {
-        client, db, banco,
+        client, db: firebaseDb, banco,
         dbSalvarHistorico, dbIniciarAtendimento,
         dbSalvarNovoCliente,
         state,
@@ -21,7 +21,7 @@ module.exports = function criarFluxoNovoCliente(ctx) {
     // FUNÇÕES DE AGENDAMENTO DE INSTALAÇÃO
     // =====================================================
     
-    function gerarDiasInstalacao() {
+    async function gerarDiasInstalacao() {
         const dias = [];
         const hoje = new Date();
         const horaBrasil = horaLocal();
@@ -43,14 +43,14 @@ module.exports = function criarFluxoNovoCliente(ctx) {
             const ano = data.getFullYear();
             const dataBanco = `${ano}-${mes}-${dia}`;
             
-            // Verifica quantas instalações já tem nesse dia
-            const count = db.prepare(`
-                SELECT COUNT(*) as total FROM instalacoes_agendadas 
-                WHERE data = ? AND status IN ('agendado', 'confirmado')
-            `).get(dataBanco).total;
+            // 🔥 FIREBASE: Verifica quantas instalações já tem nesse dia
+            const instalacoesSnapshot = await firebaseDb.collection('instalacoes_agendadas')
+                .where('data', '==', dataBanco)
+                .where('status', 'in', ['agendado', 'confirmado'])
+                .get();
             
             // Máximo 1 instalação por dia
-            if (count >= 1) continue;
+            if (instalacoesSnapshot.size >= 1) continue;
             
             const semana = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'][data.getDay()];
             
@@ -84,7 +84,7 @@ module.exports = function criarFluxoNovoCliente(ctx) {
 
     async function iniciar(deQuem) {
         state.iniciar(deQuem, 'novoCliente', 'plano', {});
-        dbIniciarAtendimento(deQuem);
+        await dbIniciarAtendimento(deQuem);
         
         await client.sendMessage(deQuem,
             `${P}Ficamos felizes com seu interesse! 🎉\n\n` +
@@ -94,7 +94,7 @@ module.exports = function criarFluxoNovoCliente(ctx) {
             `Instalação: R$ 50 sem roteador | R$ 80 com roteador.\n\nQual plano te interessa?`
         );
         
-        dbSalvarHistorico(deQuem, 'assistant', 'Iniciou fluxo NOVO_CLIENTE');
+        await dbSalvarHistorico(deQuem, 'assistant', 'Iniciou fluxo NOVO_CLIENTE');
         state.iniciarTimer(deQuem);
     }
 
@@ -112,7 +112,7 @@ module.exports = function criarFluxoNovoCliente(ctx) {
         }
 
         state.cancelarTimer(deQuem);
-        dbIniciarAtendimento(deQuem);
+        await dbIniciarAtendimento(deQuem);
 
         // ─── plano ────────────────────────────────────────
         if (etapa === 'plano') {
@@ -258,7 +258,6 @@ module.exports = function criarFluxoNovoCliente(ctx) {
             const corrigiu = ['não','nao','errado','corrigir','mudar','alterar','errei'].some(p => t.includes(p));
 
             if (confirmou) {
-                // Dados completos
                 const dadosSalvar = {
                     nome: dados.nome,
                     cpf: dados.cpf,
@@ -270,16 +269,16 @@ module.exports = function criarFluxoNovoCliente(ctx) {
                     telefone: deQuem.replace('@c.us','').replace(/^55/,''),
                 };
                 
-                dbSalvarNovoCliente(deQuem, dadosSalvar);
+                // 🔥 FIREBASE: Salva novo cliente usando a função do banco
+                await dbSalvarNovoCliente(deQuem, dadosSalvar);
                 
                 // =====================================================
                 // AGENDAMENTO DA INSTALAÇÃO
                 // =====================================================
-                const dias = gerarDiasInstalacao();
+                const dias = await gerarDiasInstalacao();
                 
                 if (dias.length === 0) {
-                    // Se não tiver dias, cria chamado normal
-                    abrirChamadoComMotivo(deQuem, dados.nome, 'Nova instalação (sem data disponível)');
+                    await abrirChamadoComMotivo(deQuem, dados.nome, 'Nova instalação (sem data disponível)');
                     
                     const previsao = atendenteDisponivel() ? 'em breve' : proximoAtendimento();
                     await client.sendMessage(deQuem,
@@ -289,7 +288,6 @@ module.exports = function criarFluxoNovoCliente(ctx) {
                         `Bem-vindo à JMENET! 🎉`
                     );
                 } else {
-                    // Mostra opções de dia para instalação
                     state.avancar(deQuem, 'aguardando_dia_instalacao', { 
                         dadosSalvar,
                         diasDisponiveis: dias 
@@ -298,7 +296,7 @@ module.exports = function criarFluxoNovoCliente(ctx) {
                     await client.sendMessage(deQuem, formatarMensagemDiasInstalacao(dias));
                 }
                 
-                dbSalvarHistorico(deQuem, 'assistant', 'Novo cliente cadastrado com sucesso.');
+                await dbSalvarHistorico(deQuem, 'assistant', 'Novo cliente cadastrado com sucesso.');
                 
             } else if (corrigiu) {
                 state.iniciar(deQuem, 'novoCliente', 'plano', {});
@@ -326,17 +324,15 @@ module.exports = function criarFluxoNovoCliente(ctx) {
                 if (index >= 0 && index < dias.length) {
                     const diaEscolhido = dias[index];
                     
-                    // Agenda a instalação
-                    db.prepare(`
-                        INSERT INTO instalacoes_agendadas 
-                            (numero, nome, data, endereco, status)
-                        VALUES (?, ?, ?, ?, 'agendado')
-                    `).run(
-                        deQuem, 
-                        dados.dadosSalvar.nome, 
-                        diaEscolhido.dataBanco, 
-                        dados.dadosSalvar.endereco
-                    );
+                    // 🔥 FIREBASE: Agenda a instalação
+                    await firebaseDb.collection('instalacoes_agendadas').add({
+                        numero: deQuem,
+                        nome: dados.dadosSalvar.nome,
+                        data: diaEscolhido.dataBanco,
+                        endereco: dados.dadosSalvar.endereco,
+                        status: 'agendado',
+                        criado_em: new Date().toISOString()
+                    });
                     
                     state.encerrarFluxo(deQuem);
                     
@@ -348,9 +344,8 @@ module.exports = function criarFluxoNovoCliente(ctx) {
                         `Bem-vindo à JMENET! 🎉`
                     );
                     
-                    // Notifica administradores
                     for (const adm of ADMINISTRADORES) {
-                        client.sendMessage(adm,
+                        await client.sendMessage(adm,
                             `📅 *NOVA INSTALAÇÃO AGENDADA*\n\n` +
                             `👤 Cliente: ${dados.dadosSalvar.nome}\n` +
                             `📱 Número: ${deQuem.replace('@c.us', '')}\n` +
@@ -361,7 +356,7 @@ module.exports = function criarFluxoNovoCliente(ctx) {
                         ).catch(() => {});
                     }
                     
-                    dbSalvarHistorico(deQuem, 'assistant', `Instalação agendada para ${diaEscolhido.label}`);
+                    await dbSalvarHistorico(deQuem, 'assistant', `Instalação agendada para ${diaEscolhido.label}`);
                     return;
                 }
             }

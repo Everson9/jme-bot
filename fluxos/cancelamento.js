@@ -1,15 +1,15 @@
 'use strict';
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// FLUXO CANCELAMENTO — VERSÃO REFATORADA
+// FLUXO CANCELAMENTO — VERSÃO FIREBASE
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module.exports = function criarFluxoCancelamento(ctx) {
     const {
-        client, db,
+        client, db: firebaseDb, banco,
         state, P, ADMINISTRADORES,
         dbSalvarHistorico, dbIniciarAtendimento, dbEncerrarAtendimento,
         buscarStatusCliente, normalizarTexto,
-        utils,  // NOVO: utilitários compartilhados
+        utils,
     } = ctx;
 
     const MOTIVOS = {
@@ -26,7 +26,7 @@ module.exports = function criarFluxoCancelamento(ctx) {
         const prNome = nome ? nome.split(' ')[0] : null;
 
         state.iniciar(deQuem, 'cancelamento', 'aguardando_motivo', { nome });
-        dbIniciarAtendimento(deQuem);
+        await dbIniciarAtendimento(deQuem);
 
         const saudacao = prNome ? `Olá, ${prNome}! ` : 'Olá! ';
         await client.sendMessage(deQuem,
@@ -39,7 +39,7 @@ module.exports = function criarFluxoCancelamento(ctx) {
             `5️⃣ Outro motivo`
         );
         
-        dbSalvarHistorico(deQuem, 'assistant', 'Solicitação de cancelamento iniciada.');
+        await dbSalvarHistorico(deQuem, 'assistant', 'Solicitação de cancelamento iniciada.');
         state.iniciarTimer(deQuem);
     }
 
@@ -50,7 +50,7 @@ module.exports = function criarFluxoCancelamento(ctx) {
         const textoL = texto.toLowerCase();
 
         state.cancelarTimer(deQuem);
-        dbIniciarAtendimento(deQuem);
+        await dbIniciarAtendimento(deQuem);
 
         // ─── aguardando_motivo ────────────────────────────
         if (etapa === 'aguardando_motivo') {
@@ -104,7 +104,7 @@ module.exports = function criarFluxoCancelamento(ctx) {
             if (negou) {
                 state.encerrarFluxo(deQuem);
                 await client.sendMessage(deQuem, `${P}Que ótimo! Cancelamento descartado. Se precisar de algo é só chamar! 😊`);
-                dbSalvarHistorico(deQuem, 'assistant', 'Cancelamento descartado pelo cliente.');
+                await dbSalvarHistorico(deQuem, 'assistant', 'Cancelamento descartado pelo cliente.');
                 state.iniciarTimer(deQuem);
                 return;
             }
@@ -115,37 +115,33 @@ module.exports = function criarFluxoCancelamento(ctx) {
                 return;
             }
 
-            // Busca cliente na base pelo telefone
+            // 🔥 FIREBASE: Busca cliente na base pelo telefone
             const numeroBusca = deQuem.replace('@c.us', '').replace(/^55/, '');
-            const clienteBase = db.prepare(`
-                SELECT id, nome, telefone, endereco, plano, dia_vencimento, base_id
-                FROM clientes_base
-                WHERE replace(replace(telefone, '-', ''), ' ', '') LIKE ?
-                LIMIT 1
-            `).get('%' + numeroBusca.slice(-8));
+            
+            // Usa a função do banco para buscar cliente por telefone
+            const clienteBase = await banco.buscarClientePorTelefone(numeroBusca);
 
             const nome = dados.nome || clienteBase?.nome || 'Não identificado';
 
-            // Registra na tabela de cancelamentos
-            db.prepare(`
-                INSERT INTO cancelamentos
-                    (cliente_id, base_id, nome, telefone, numero_whatsapp, endereco, plano, dia_vencimento, motivo, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'solicitado')
-            `).run(
-                clienteBase?.id || null,
-                clienteBase?.base_id || null,
-                nome,
-                clienteBase?.telefone || deQuem.replace('@c.us', ''),
-                deQuem,
-                clienteBase?.endereco || null,
-                clienteBase?.plano || null,
-                clienteBase?.dia_vencimento || null,
-                dados.motivo || 'Não informado'
-            );
+            // 🔥 FIREBASE: Registra na tabela de cancelamentos
+            await firebaseDb.collection('cancelamentos').add({
+                cliente_id: clienteBase?.id || null,
+                base_id: clienteBase?.base_id || null,
+                nome: nome,
+                telefone: clienteBase?.telefone || deQuem.replace('@c.us', ''),
+                numero_whatsapp: deQuem,
+                endereco: clienteBase?.endereco || null,
+                plano: clienteBase?.plano || null,
+                dia_vencimento: clienteBase?.dia_vencimento || null,
+                motivo: dados.motivo || 'Não informado',
+                status: 'solicitado',
+                solicitado_em: new Date().toISOString()
+            });
 
-            // Remove da base de clientes
+            // 🔥 FIREBASE: Remove da base de clientes
             if (clienteBase?.id) {
-                db.prepare('DELETE FROM clientes_base WHERE id = ?').run(clienteBase.id);
+                await firebaseDb.collection('clientes_base').doc(clienteBase.id).delete();
+                console.log(`🗑️ Cliente ${nome} removido da base (cancelamento)`);
             }
 
             state.encerrarFluxo(deQuem);
@@ -157,11 +153,11 @@ module.exports = function criarFluxoCancelamento(ctx) {
                 `Se mudar de ideia, é só nos chamar! Obrigado por ter sido nosso cliente. 🙏`
             );
             
-            dbSalvarHistorico(deQuem, 'assistant', 'Cancelamento confirmado e registrado.');
+            await dbSalvarHistorico(deQuem, 'assistant', 'Cancelamento confirmado e registrado.');
 
             // Notifica ADM
             for (const adm of ADMINISTRADORES) {
-                client.sendMessage(adm,
+                await client.sendMessage(adm,
                     `❌ *SOLICITAÇÃO DE CANCELAMENTO*\n\n` +
                     `👤 *Nome:* ${nome}\n` +
                     `📱 *Número:* ${deQuem.replace('@c.us', '')}\n` +
@@ -172,16 +168,13 @@ module.exports = function criarFluxoCancelamento(ctx) {
                 ).catch(() => {});
             }
 
-            dbEncerrarAtendimento(deQuem, 'cancelamento');
+            await dbEncerrarAtendimento(deQuem, 'cancelamento');
             return;
         }
     }
 
-    // No final do arquivo cancelamento.js
-// Verifique os nomes: provavelmente iniciarNovoCliente e handleNovoCliente
-
-return { 
-    iniciar,  // ← CERTO! (usa o nome da função que você tem)
-    handle     // ← CERTO!
-};
+    return { 
+        iniciar,
+        handle
+    };
 };

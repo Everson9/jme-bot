@@ -55,11 +55,18 @@ export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
     setSalvando(true);
     setErro(null);
     try {
+      // ✅ Rota correta para editar cliente
       const r = await fetch(`${API}/api/bases/${baseId}/clientes/${cliente.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...form, dia_vencimento: parseInt(form.dia_vencimento) }),
       });
+      
+      if (!r.ok) {
+        const errorText = await r.text();
+        throw new Error(`HTTP ${r.status}: ${errorText}`);
+      }
+      
       const json = await r.json();
       if (json.id) {
         onSalvo(json);
@@ -68,7 +75,8 @@ export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
         setErro(json.erro || "Erro ao salvar");
       }
     } catch (e) {
-      setErro("Falha de conexão");
+      console.error('Erro ao salvar cliente:', e);
+      setErro("Falha de conexão: " + e.message);
     }
     setSalvando(false);
   };

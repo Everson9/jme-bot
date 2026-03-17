@@ -39,7 +39,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
     if (!base?.id) return;
     if (!silencioso) setLoading(true);
     try {
-      const r = await fetch(`${API}/api/bases/${base.id}/clientes-enriquecidos`);
+      const r = await fetch(`${API}/api/bases/${base.id}/clientes`);
       setClientes(await r.json());
     } catch (e) {
       console.error(e);
@@ -49,7 +49,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
 
   useEffect(() => {
     carregar();
-    const t = setInterval(() => carregar(true), 30000);
+    const t = setInterval(() => carregar(true), 300000);
     return () => clearInterval(t);
   }, [carregar]);
 

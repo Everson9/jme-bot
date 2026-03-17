@@ -1,11 +1,11 @@
 'use strict';
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// FLUXO FINANCEIRO / PAGAMENTO — VERSÃO FINAL
+// FLUXO FINANCEIRO / PAGAMENTO — VERSÃO FIREBASE
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module.exports = function criarFluxoFinanceiro(ctx) {
     const {
-        client, db,
+        client, db: firebaseDb, banco,
         dbSalvarHistorico, dbIniciarAtendimento,
         state,
         ADMINISTRADORES, P,
@@ -18,7 +18,6 @@ module.exports = function criarFluxoFinanceiro(ctx) {
         abrirChamadoComMotivo,
     } = ctx;
 
-    // Usa o Map global compartilhado via ctx
     const _fotosPendentes = ctx.fotosPendentes;
 
     const FORMAS_PAGAMENTO = {
@@ -31,7 +30,6 @@ module.exports = function criarFluxoFinanceiro(ctx) {
     async function iniciar(deQuem, msg, intencaoEspecifica = null) {
         const dadosCliente = await buscarStatusCliente(deQuem);
         
-        // Se já veio com intenção específica, vai direto
         if (intencaoEspecifica) {
             switch(intencaoEspecifica) {
                 case 'PIX':
@@ -45,20 +43,18 @@ module.exports = function criarFluxoFinanceiro(ctx) {
             }
         }
 
-        // Cliente já está pago
         if (dadosCliente && dadosCliente.status === 'pago') {
             const prNome = dadosCliente.nome ? dadosCliente.nome.split(' ')[0] : null;
             const msgStatus = prNome
                 ? `${P}Boa notícia, ${prNome}! Aqui no sistema consta que sua fatura está em dia. ✅`
                 : `${P}Boa notícia! Aqui no sistema consta que sua fatura está em dia. ✅`;
             await client.sendMessage(deQuem, msgStatus);
-            dbSalvarHistorico(deQuem, 'assistant', msgStatus);
-            dbIniciarAtendimento(deQuem);
+            await dbSalvarHistorico(deQuem, 'assistant', msgStatus);
+            await dbIniciarAtendimento(deQuem);
             state.iniciarTimer(deQuem);
             return;
         }
 
-        // Mostra menu de opções
         const msgStatus = dadosCliente
             ? (dadosCliente.nome 
                 ? `${P}${dadosCliente.nome.split(' ')[0]}, encontrei seu cadastro! 😊\n\nConsta uma fatura com vencimento no dia *${dadosCliente.aba.replace('Data ','')}* ainda em aberto.\n\nQuer efetuar o pagamento agora? Escolha a forma que preferir:`
@@ -80,8 +76,8 @@ module.exports = function criarFluxoFinanceiro(ctx) {
             dadosCliente 
         });
         
-        dbSalvarHistorico(deQuem, 'assistant', 'Opções de pagamento apresentadas.');
-        dbIniciarAtendimento(deQuem);
+        await dbSalvarHistorico(deQuem, 'assistant', 'Opções de pagamento apresentadas.');
+        await dbIniciarAtendimento(deQuem);
         state.iniciarTimer(deQuem);
     }
 
@@ -92,15 +88,15 @@ module.exports = function criarFluxoFinanceiro(ctx) {
         await client.sendMessage(deQuem, `jmetelecomnt@gmail.com`, { linkPreview: false });
         await new Promise(r => setTimeout(r, 800));
         await client.sendMessage(deQuem, `+5581987500456`, { linkPreview: false });
-        dbSalvarHistorico(deQuem, 'assistant', 'Chave PIX enviada.');
+        await dbSalvarHistorico(deQuem, 'assistant', 'Chave PIX enviada.');
         state.iniciarTimer(deQuem);
     }
 
     async function iniciarBoleto(deQuem, dadosCliente) {
         state.encerrarFluxo(deQuem);
-        abrirChamadoComMotivo(deQuem, dadosCliente?.nome || null, 'Financeiro — boleto');
+        await abrirChamadoComMotivo(deQuem, dadosCliente?.nome || null, 'Financeiro — boleto');
         await client.sendMessage(deQuem, `${P}Certo! Vou chamar o atendente para gerar e te enviar o boleto. Aguarda um instante! 😊`);
-        dbSalvarHistorico(deQuem, 'assistant', 'Boleto solicitado.');
+        await dbSalvarHistorico(deQuem, 'assistant', 'Boleto solicitado.');
     }
 
     async function iniciarCarne(deQuem, dadosCliente) {
@@ -110,12 +106,29 @@ module.exports = function criarFluxoFinanceiro(ctx) {
             state.avancar(deQuem, 'carne_nome');
             await client.sendMessage(deQuem, `${P}Claro! Para solicitar o carnê, pode me dizer seu *nome completo* primeiro? 😊`);
         } else {
-            db.prepare(`DELETE FROM carne_solicitacoes WHERE numero = ? AND status = 'solicitado'`).run(deQuem);
-            db.prepare(`INSERT INTO carne_solicitacoes (numero, nome) VALUES (?, ?)`).run(deQuem, nome);
+            // 🔥 FIREBASE: Deleta solicitações anteriores
+            const anteriores = await firebaseDb.collection('carne_solicitacoes')
+                .where('numero', '==', deQuem)
+                .where('status', '==', 'solicitado')
+                .get();
+            
+            const batch = firebaseDb.batch();
+            anteriores.docs.forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
+
+            // 🔥 FIREBASE: Cria nova solicitação
+            await firebaseDb.collection('carne_solicitacoes').add({
+                numero: deQuem,
+                nome: nome,
+                status: 'solicitado',
+                origem: 'whatsapp',
+                solicitado_em: new Date().toISOString()
+            });
+
             state.avancar(deQuem, 'carne_endereco', { nome });
             await client.sendMessage(deQuem, `${P}Certo, ${nome.split(' ')[0]}! Pode me confirmar seu endereço para entrega? (Rua, número, bairro)`);
         }
-        dbSalvarHistorico(deQuem, 'assistant', 'Iniciou solicitação de carnê.');
+        await dbSalvarHistorico(deQuem, 'assistant', 'Iniciou solicitação de carnê.');
         state.iniciarTimer(deQuem);
     }
 
@@ -129,7 +142,7 @@ module.exports = function criarFluxoFinanceiro(ctx) {
             state.avancar(deQuem, 'dinheiro_nome');
             await client.sendMessage(deQuem, `${P}Combinado! Pode me dizer seu nome completo?`);
         }
-        dbSalvarHistorico(deQuem, 'assistant', 'Iniciou coleta em dinheiro.');
+        await dbSalvarHistorico(deQuem, 'assistant', 'Iniciou coleta em dinheiro.');
         state.iniciarTimer(deQuem);
     }
 
@@ -141,23 +154,20 @@ module.exports = function criarFluxoFinanceiro(ctx) {
         const temFoto = msg.hasMedia && msg.type === 'image';
 
         state.cancelarTimer(deQuem);
-        dbIniciarAtendimento(deQuem);
+        await dbIniciarAtendimento(deQuem);
 
         // ─── aguardando_escolha ──────────────────────────
         if (etapa === 'aguardando_escolha') {
             const t = texto.toLowerCase();
 
-            // ✅ Cliente diz que já pagou ou enviou comprovante
             if (t.includes('feito') || t.includes('paguei') || t.includes('pagamento realizado') || 
                 t.includes('já paguei') || t.includes('pago') || t.includes('efetuei') ||
                 t.includes('comprovante') || t.includes('enviei')) {
                 
-                // ✅ Verifica se já tem comprovante pendente
                 if (_fotosPendentes?.has(deQuem)) {
                     console.log(`📷 Comprovante pendente detectado para ${deQuem}`);
                     const msgComprovante = _fotosPendentes.get(deQuem);
                     
-                    // Processa o comprovante
                     const analise = await analisarImagem(msgComprovante);
                     
                     if (analise && analise.categoria === 'comprovante') {
@@ -170,20 +180,23 @@ module.exports = function criarFluxoFinanceiro(ctx) {
                             );
                             _fotosPendentes.delete(deQuem);
                             
-                            try { db.prepare(`INSERT INTO log_comprovantes (numero) VALUES (?)`).run(deQuem); } catch(_){}
+                            // 🔥 FIREBASE: Log de comprovante
+                            await firebaseDb.collection('log_comprovantes').add({
+                                numero: deQuem,
+                                recebido_em: new Date().toISOString()
+                            });
                             
                             for (const adm of ADMINISTRADORES) {
-                                client.sendMessage(adm,
+                                await client.sendMessage(adm,
                                     `✅ *BAIXA VIA PIX (após cliente avisar)*\n\n👤 ${baixa?.nomeCliente || dados.nome || 'N/A'}\n📱 ${deQuem.replace('@c.us','')}`
                                 ).catch(() => {});
                             }
                             return;
                         } else {
-                            // Comprovante inválido
                             await client.sendMessage(deQuem, 
                                 `${P}Recebi seu comprovante, mas não consegui validar automaticamente. Vou encaminhar para um atendente verificar. 😊`
                             );
-                            abrirChamadoComMotivo(deQuem, dados.nome || dadosCliente?.nome, 'Financeiro — comprovante suspeito');
+                            await abrirChamadoComMotivo(deQuem, dados.nome || dadosCliente?.nome, 'Financeiro — comprovante suspeito');
                             state.encerrarFluxo(deQuem);
                             _fotosPendentes.delete(deQuem);
                             return;
@@ -191,7 +204,6 @@ module.exports = function criarFluxoFinanceiro(ctx) {
                     }
                 }
                 
-                // Se não achou comprovante pendente, pede para enviar
                 await client.sendMessage(deQuem, 
                     `${P}Entendi que você já realizou o pagamento! 😊\n\n` +
                     `Pode me enviar o *comprovante*? (foto ou PDF)\n\n` +
@@ -205,7 +217,6 @@ module.exports = function criarFluxoFinanceiro(ctx) {
                 return;
             }
 
-            // Código existente (escolha de forma de pagamento)
             const escolhaNum = FORMAS_PAGAMENTO[texto.trim()];
             let escolha = escolhaNum || null;
 
@@ -239,7 +250,7 @@ module.exports = function criarFluxoFinanceiro(ctx) {
             
             if (tentativas >= 3) {
                 state.encerrarFluxo(deQuem);
-                abrirChamadoComMotivo(deQuem, dados.nome, 'Financeiro — cliente não conseguiu escolher');
+                await abrirChamadoComMotivo(deQuem, dados.nome, 'Financeiro — cliente não conseguiu escolher');
                 await client.sendMessage(deQuem, `${P}Não consegui entender a forma de pagamento. Vou chamar um atendente para te ajudar! 😊`);
                 return;
             }
@@ -260,17 +271,21 @@ module.exports = function criarFluxoFinanceiro(ctx) {
                         state.encerrarFluxo(deQuem);
                         await client.sendMessage(deQuem, `${P}Comprovante recebido e pagamento confirmado! ✅ Já dei baixa no sistema. Obrigado! 😊`);
                         
-                        try { db.prepare(`INSERT INTO log_comprovantes (numero) VALUES (?)`).run(deQuem); } catch(_){}
+                        // 🔥 FIREBASE: Log de comprovante
+                        await firebaseDb.collection('log_comprovantes').add({
+                            numero: deQuem,
+                            recebido_em: new Date().toISOString()
+                        });
                         
                         for (const adm of ADMINISTRADORES) {
-                            client.sendMessage(adm,
+                            await client.sendMessage(adm,
                                 `✅ *BAIXA VIA PIX*\n\n👤 ${baixa?.nomeCliente || dados.nome || 'N/A'}\n📱 ${deQuem.replace('@c.us','')}\n💰 R$ ${analise.valor || 'N/A'}\n📅 ${analise.data || 'N/A'}`
                             ).catch(() => {});
                         }
                     } else {
                         state.encerrarFluxo(deQuem);
                         await client.sendMessage(deQuem, `${P}Recebi o comprovante, mas não consegui validar automaticamente. Vou encaminhar para o atendente verificar! 😊`);
-                        abrirChamadoComMotivo(deQuem, dados.nome, 'Financeiro — comprovante suspeito');
+                        await abrirChamadoComMotivo(deQuem, dados.nome, 'Financeiro — comprovante suspeito');
                     }
                 } else {
                     await client.sendMessage(deQuem, `${P}Não consegui identificar o comprovante nessa imagem. Pode me enviar o comprovante de pagamento?`);
@@ -278,7 +293,6 @@ module.exports = function criarFluxoFinanceiro(ctx) {
                 return;
             }
             
-            // Mensagem comum após enviar pix
             await client.sendMessage(deQuem, `${P}Assim que realizar o pagamento, pode me enviar o comprovante por aqui para eu dar baixa! 😊`);
             state.iniciarTimer(deQuem);
             return;
@@ -294,8 +308,24 @@ module.exports = function criarFluxoFinanceiro(ctx) {
                 return;
             }
             
-            db.prepare(`DELETE FROM carne_solicitacoes WHERE numero = ? AND status = 'solicitado'`).run(deQuem);
-            db.prepare(`INSERT INTO carne_solicitacoes (numero, nome) VALUES (?, ?)`).run(deQuem, nomeLimpo);
+            // 🔥 FIREBASE: Deleta solicitações anteriores
+            const anteriores = await firebaseDb.collection('carne_solicitacoes')
+                .where('numero', '==', deQuem)
+                .where('status', '==', 'solicitado')
+                .get();
+            
+            const batch = firebaseDb.batch();
+            anteriores.docs.forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
+
+            // 🔥 FIREBASE: Cria nova solicitação
+            await firebaseDb.collection('carne_solicitacoes').add({
+                numero: deQuem,
+                nome: nomeLimpo,
+                status: 'solicitado',
+                origem: 'whatsapp',
+                solicitado_em: new Date().toISOString()
+            });
             
             state.avancar(deQuem, 'carne_endereco', { nome: nomeLimpo });
             await client.sendMessage(deQuem, `${P}Obrigado, ${nomeLimpo.split(' ')[0]}! Agora pode me informar seu *endereço completo* para entrega? 😊`);
@@ -312,12 +342,24 @@ module.exports = function criarFluxoFinanceiro(ctx) {
                 return;
             }
             
-            db.prepare(`UPDATE carne_solicitacoes SET endereco = ? WHERE numero = ? AND status = 'solicitado' ORDER BY id DESC LIMIT 1`).run(endereco, deQuem);
+            // 🔥 FIREBASE: Atualiza endereço na solicitação mais recente
+            const solicitacoes = await firebaseDb.collection('carne_solicitacoes')
+                .where('numero', '==', deQuem)
+                .where('status', '==', 'solicitado')
+                .orderBy('solicitado_em', 'desc')
+                .limit(1)
+                .get();
+            
+            if (!solicitacoes.empty) {
+                await solicitacoes.docs[0].ref.update({
+                    endereco: endereco
+                });
+            }
             
             state.encerrarFluxo(deQuem);
             
             for (const adm of ADMINISTRADORES) {
-                client.sendMessage(adm,
+                await client.sendMessage(adm,
                     `📋 *SOLICITAÇÃO DE CARNÊ FÍSICO*\n\n` +
                     `👤 ${dados.nome || deQuem.replace('@c.us','')}\n` +
                     `📱 ${deQuem.replace('@c.us','')}\n` +
@@ -327,7 +369,7 @@ module.exports = function criarFluxoFinanceiro(ctx) {
             
             const msgFinal = `Perfeito${dados.nome ? ', '+dados.nome.split(' ')[0] : ''}! Sua solicitação de carnê físico foi registrada. ✅\n\nAssim que estiver pronto, entraremos em contato! 😊`;
             await client.sendMessage(deQuem, `${P}${msgFinal}`);
-            dbSalvarHistorico(deQuem, 'assistant', msgFinal);
+            await dbSalvarHistorico(deQuem, 'assistant', msgFinal);
             return;
         }
 
@@ -359,14 +401,14 @@ module.exports = function criarFluxoFinanceiro(ctx) {
             const nome = dados.nome;
             state.encerrarFluxo(deQuem);
             
-            abrirChamadoComMotivo(deQuem, nome, 'Financeiro — coleta em dinheiro', { endereco });
+            await abrirChamadoComMotivo(deQuem, nome, 'Financeiro — coleta em dinheiro', { endereco });
             
             const msgFinal = atendenteDisponivel()
                 ? `Perfeito${nome ? ', '+nome.split(' ')[0] : ''}! Registrei tudo. O atendente vai confirmar o horário de passagem em breve! 😊`
                 : `Perfeito${nome ? ', '+nome.split(' ')[0] : ''}! Registrei tudo. O atendente confirma o horário ${proximoAtendimento()}. 😊`;
             
             await client.sendMessage(deQuem, `${P}${msgFinal}`);
-            dbSalvarHistorico(deQuem, 'assistant', msgFinal);
+            await dbSalvarHistorico(deQuem, 'assistant', msgFinal);
             return;
         }
 
@@ -381,11 +423,11 @@ module.exports = function criarFluxoFinanceiro(ctx) {
             }
             
             state.encerrarFluxo(deQuem);
-            abrirChamadoComMotivo(deQuem, nomeLimpo, 'Pagamento em dinheiro — já acertado com cliente');
+            await abrirChamadoComMotivo(deQuem, nomeLimpo, 'Pagamento em dinheiro — já acertado com cliente');
             
             const msgFinal = `Perfeito, ${nomeLimpo.split(' ')[0]}! 😊 Avisamos o atendente para passar aí e buscar o pagamento. Qualquer dúvida é só chamar!`;
             await client.sendMessage(deQuem, `${P}${msgFinal}`);
-            dbSalvarHistorico(deQuem, 'assistant', msgFinal);
+            await dbSalvarHistorico(deQuem, 'assistant', msgFinal);
             return;
         }
     }

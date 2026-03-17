@@ -1,16 +1,16 @@
 'use strict';
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// FLUXO PROMESSA DE PAGAMENTO — VERSÃO REFATORADA
+// FLUXO PROMESSA DE PAGAMENTO — VERSÃO FIREBASE
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 module.exports = function criarFluxoPromessa(ctx) {
     const {
-        client, db,
+        client, db: firebaseDb, banco,
         dbSalvarHistorico, dbIniciarAtendimento,
         state,
         ADMINISTRADORES, P,
         normalizarTexto, buscarStatusCliente,
-        utils,  // NOVO: utilitários compartilhados
+        utils,
     } = ctx;
 
     async function iniciar(deQuem, msg) {
@@ -47,8 +47,8 @@ module.exports = function criarFluxoPromessa(ctx) {
             }
         }
         
-        dbIniciarAtendimento(deQuem);
-        dbSalvarHistorico(deQuem, 'assistant', 'Iniciou fluxo PROMESSA');
+        await dbIniciarAtendimento(deQuem);
+        await dbSalvarHistorico(deQuem, 'assistant', 'Iniciou fluxo PROMESSA');
         state.iniciarTimer(deQuem);
     }
 
@@ -59,7 +59,7 @@ module.exports = function criarFluxoPromessa(ctx) {
         const textoLower = texto.toLowerCase();
 
         state.cancelarTimer(deQuem);
-        dbIniciarAtendimento(deQuem);
+        await dbIniciarAtendimento(deQuem);
 
         // ─── aguardando_nome ──────────────────────────────
         if (etapa === 'aguardando_nome') {
@@ -117,25 +117,30 @@ module.exports = function criarFluxoPromessa(ctx) {
                 
                 state.encerrarFluxo(deQuem);
 
-                // Registra promessa no banco
-                db.prepare(`INSERT INTO promessas (numero, nome, data_promessa, status) VALUES (?, ?, ?, 'pendente')`)
-                  .run(deQuem, nome || null, dataPromessa);
+                // 🔥 FIREBASE: Registra promessa no banco
+                await firebaseDb.collection('promessas').add({
+                    numero: deQuem,
+                    nome: nome || null,
+                    data_promessa: dataPromessa,
+                    status: 'pendente',
+                    notificado: 0,
+                    criado_em: new Date().toISOString()
+                });
 
-                // Atualiza cliente na base
+                // 🔥 FIREBASE: Busca cliente pelo nome
                 const numLimpo = deQuem.replace('@c.us','').replace(/^55/,'');
-                const clienteBase = db.prepare(`
-                    SELECT id FROM clientes_base
-                    WHERE REPLACE(REPLACE(REPLACE(telefone,'-',''),' ',''),'()','') LIKE ?
-                    LIMIT 1
-                `).get('%' + numLimpo.slice(-8) + '%');
+                const clientes = await banco.buscarClientePorTelefone(numLimpo);
+                const clienteBase = clientes || null;
                 
                 if (clienteBase) {
-                    db.prepare(`UPDATE clientes_base SET status = 'promessa', atualizado_em = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pendente'`).run(clienteBase.id);
+                    await firebaseDb.collection('clientes_base').doc(clienteBase.id).update({
+                        status: 'promessa',
+                        atualizado_em: new Date().toISOString()
+                    });
                 }
 
-                // Notifica admins
                 for (const adm of ADMINISTRADORES) {
-                    client.sendMessage(adm,
+                    await client.sendMessage(adm,
                         `🤝 *Promessa de Pagamento Registrada!*\n\n` +
                         `Cliente: ${deQuem.replace('@c.us','')}\n` +
                         `Nome: ${nome || 'não identificado'}\n` +
@@ -147,12 +152,11 @@ module.exports = function criarFluxoPromessa(ctx) {
                 const msgFinal = `Perfeito${prNome ? ', '+prNome : ''}! Registrei sua promessa de pagamento para o dia *${dataPromessa}*. 😊\n\nNão esquece, tá? Se precisar de algo é só chamar!`;
                 
                 await client.sendMessage(deQuem, `${P}${msgFinal}`);
-                dbSalvarHistorico(deQuem, 'assistant', msgFinal);
+                await dbSalvarHistorico(deQuem, 'assistant', msgFinal);
                 state.iniciarTimer(deQuem);
                 return;
             }
 
-            // Resposta ambígua - tenta extrair nova data
             const novaData = await utils.extrairDataPromessa(texto);
             if (novaData) {
                 state.avancar(deQuem, 'aguardando_confirmacao', { dataPromessa: novaData });
@@ -167,15 +171,8 @@ module.exports = function criarFluxoPromessa(ctx) {
         }
     }
 
-    // No final do arquivo promessa.js
-// Verifique os nomes das funções no início do arquivo
-// Provavelmente tem: async function iniciarPromessa(...) e async function handlePromessa(...)
-
-// No final:
-// No final do arquivo promessa.js
-return { 
-    iniciar,                       // ← função iniciar do próprio fluxo
-    handle,                         // ← função handle do próprio fluxo
-    extrairDataPromessa: utils.extrairDataPromessa  // ← função do utils
-};
+    return { 
+        iniciar,
+        handle
+    };
 };

@@ -1,31 +1,44 @@
 // routes/agendamentos.js
 module.exports = function setupRotasAgendamentos(app, ctx) {
-    const { db, banco } = ctx;
+    const { db: firebaseDb, banco } = ctx;
 
     // Listar agendamentos com filtros
-    app.get('/api/agendamentos', (req, res) => {
+    app.get('/api/agendamentos', async (req, res) => {
         try {
             const { data, status } = req.query;
-            let sql = 'SELECT * FROM agendamentos WHERE 1=1';
-            const params = [];
+            let query = firebaseDb.collection('agendamentos');
             
-            // CORREÇÃO: Aspas duplas por fora, aspas simples no 'now' por dentro para o SQLite
+            // Filtro por data
             if (data === 'hoje') {
-                sql += " AND data = date('now')";
+                const hoje = new Date().toISOString().split('T')[0];
+                query = query.where('data', '==', hoje);
             } else if (data === 'amanha') {
-                sql += " AND data = date('now', '+1 day')";
+                const amanha = new Date();
+                amanha.setDate(amanha.getDate() + 1);
+                query = query.where('data', '==', amanha.toISOString().split('T')[0]);
             } else if (data === 'semana') {
-                sql += " AND data BETWEEN date('now') AND date('now', '+7 days')";
+                const hoje = new Date().toISOString().split('T')[0];
+                const semana = new Date();
+                semana.setDate(semana.getDate() + 7);
+                query = query.where('data', '>=', hoje)
+                            .where('data', '<=', semana.toISOString().split('T')[0]);
             }
             
+            // Filtro por status
             if (status && status !== 'todos') {
-                sql += ' AND status = ?';
-                params.push(status);
+                query = query.where('status', '==', status);
             }
             
-            sql += ' ORDER BY data ASC, periodo ASC';
+            const snapshot = await query
+                .orderBy('data', 'asc')
+                .orderBy('periodo', 'asc')
+                .get();
             
-            const agendamentos = db.prepare(sql).all(...params);
+            const agendamentos = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            
             res.json(agendamentos);
         } catch (error) {
             console.error('Erro ao listar agendamentos:', error);
@@ -34,7 +47,7 @@ module.exports = function setupRotasAgendamentos(app, ctx) {
     });
 
     // Ver disponibilidade para os próximos dias
-    app.get('/api/agendamentos/disponibilidade', (req, res) => {
+    app.get('/api/agendamentos/disponibilidade', async (req, res) => {
         try {
             const dias = [];
             const hoje = new Date();
@@ -49,8 +62,8 @@ module.exports = function setupRotasAgendamentos(app, ctx) {
                 const dataBanco = data.toISOString().split('T')[0];
                 const diaSemana = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'][data.getDay()];
                 
-                const manha = banco.agendamentos.verificarDisponibilidade(dataBanco, 'manha');
-                const tarde = banco.agendamentos.verificarDisponibilidade(dataBanco, 'tarde');
+                const manha = await banco.agendamentos.verificarDisponibilidade(dataBanco, 'manha');
+                const tarde = await banco.agendamentos.verificarDisponibilidade(dataBanco, 'tarde');
                 
                 // Só mostra se tiver pelo menos 1 vaga
                 if (manha.disponivel || tarde.disponivel) {
@@ -67,13 +80,31 @@ module.exports = function setupRotasAgendamentos(app, ctx) {
                 if (dias.length >= 7) break; // Mostra no máximo 7 dias
             }
             
+            // Contagens totais
             const hojeStr = new Date().toISOString().split('T')[0];
             const amanhaStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+            const semanaStr = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+            
+            const hojeSnapshot = await firebaseDb.collection('agendamentos')
+                .where('data', '==', hojeStr)
+                .where('status', '==', 'agendado')
+                .get();
+            
+            const amanhaSnapshot = await firebaseDb.collection('agendamentos')
+                .where('data', '==', amanhaStr)
+                .where('status', '==', 'agendado')
+                .get();
+            
+            const semanaSnapshot = await firebaseDb.collection('agendamentos')
+                .where('data', '>=', hojeStr)
+                .where('data', '<=', semanaStr)
+                .where('status', '==', 'agendado')
+                .get();
             
             res.json({
-                hoje: db.prepare("SELECT COUNT(*) as total FROM agendamentos WHERE data = date('now') AND status = 'agendado'").get().total,
-                amanha: db.prepare("SELECT COUNT(*) as total FROM agendamentos WHERE data = date('now', '+1 day') AND status = 'agendado'").get().total,
-                semana: db.prepare("SELECT COUNT(*) as total FROM agendamentos WHERE data BETWEEN date('now') AND date('now', '+7 days') AND status = 'agendado'").get().total,
+                hoje: hojeSnapshot.size,
+                amanha: amanhaSnapshot.size,
+                semana: semanaSnapshot.size,
                 proximosDias: dias
             });
         } catch (error) {
@@ -83,9 +114,11 @@ module.exports = function setupRotasAgendamentos(app, ctx) {
     });
 
     // Marcar como concluído
-    app.post('/api/agendamentos/:id/concluir', (req, res) => {
+    app.post('/api/agendamentos/:id/concluir', async (req, res) => {
         try {
-            db.prepare("UPDATE agendamentos SET status = 'concluido' WHERE id = ?").run(req.params.id);
+            await firebaseDb.collection('agendamentos').doc(req.params.id).update({
+                status: 'concluido'
+            });
             res.json({ ok: true });
         } catch (error) {
             res.status(500).json({ erro: error.message });
@@ -93,9 +126,11 @@ module.exports = function setupRotasAgendamentos(app, ctx) {
     });
 
     // Cancelar agendamento
-    app.post('/api/agendamentos/:id/cancelar', (req, res) => {
+    app.post('/api/agendamentos/:id/cancelar', async (req, res) => {
         try {
-            db.prepare("UPDATE agendamentos SET status = 'cancelado' WHERE id = ?").run(req.params.id);
+            await firebaseDb.collection('agendamentos').doc(req.params.id).update({
+                status: 'cancelado'
+            });
             res.json({ ok: true });
         } catch (error) {
             res.status(500).json({ erro: error.message });
