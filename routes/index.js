@@ -478,23 +478,131 @@ app.get('/api/status', (req, res) => {
         }, 100);
     });
 
-    app.get('/api/cobrar/agenda', async (req, res) => {
+    // =====================================================
+// ROTA DE AGENDA OTIMIZADA (RÁPIDA)
+// =====================================================
+app.get('/api/cobrar/agenda', async (req, res) => {
+    try {
         const agora = new Date();
         const mes = agora.getMonth() + 1;
         const ano = agora.getFullYear();
         const dia = agora.getDate();
+        
+        console.log(`📅 Buscando agenda otimizada para ${mes}/${ano}`);
+        
+        // 🔥 1. UMA CONSULTA: busca TODOS os logs do mês
+        const inicioMes = `${ano}-${String(mes).padStart(2, '0')}-01`;
+        const fimMes = `${ano}-${String(mes).padStart(2, '0')}-31`;
+        
+        const logsSnapshot = await firebaseDb.collection('log_cobrancas')
+            .where('data_envio', '>=', inicioMes)
+            .where('data_envio', '<=', fimMes)
+            .get();
+        
+        console.log(`   📊 ${logsSnapshot.size} registros encontrados`);
+        
+        // 🔥 2. Organiza os logs por dia
         const agenda = {};
-
-        for (let d = 1; d <= 31; d++) {
-            const entradas = await obterAgendaDia(d, mes, ano);
-            if (entradas.length > 0) agenda[d] = entradas;
-        }
-
+        
+        logsSnapshot.docs.forEach(doc => {
+            const c = doc.data();
+            const diaLog = parseInt(c.data_envio.split('-')[2]);
+            
+            if (!agenda[diaLog]) agenda[diaLog] = [];
+            
+            // Agrupa por data_vencimento e tipo
+            const existente = agenda[diaLog].find(e => 
+                e.data === c.data_vencimento && e.tipo === (c.tipo || 'auto')
+            );
+            
+            if (existente) {
+                existente.clientes++;
+            } else {
+                agenda[diaLog].push({
+                    data: c.data_vencimento,
+                    tipo: c.tipo || 'auto',
+                    clientes: 1,
+                    status: 'realizado',
+                    origem: c.origem || 'auto'
+                });
+            }
+        });
+        
+        // 🔥 3. Busca pendência (outra consulta)
         const pendenciaDoc = await firebaseDb.collection('config').doc('cobranca_adiada').get();
         const pendencia = pendenciaDoc.exists ? pendenciaDoc.data().valor : null;
-
-        res.json({ agenda, diaAtual: dia, mes, ano, pendencia });
-    });
+        
+        // Adiciona pendência no dia
+        if (pendencia && pendencia.dia && pendencia.mes === mes && pendencia.ano === ano) {
+            if (!agenda[pendencia.dia]) agenda[pendencia.dia] = [];
+            
+            pendencia.entradas?.forEach(entrada => {
+                // Evita duplicar se já foi realizado
+                const jaExiste = agenda[pendencia.dia].some(e => 
+                    e.data === entrada.data && e.tipo === entrada.tipo && e.status === 'realizado'
+                );
+                
+                if (!jaExiste) {
+                    agenda[pendencia.dia].push({
+                        data: entrada.data,
+                        tipo: entrada.tipo,
+                        clientes: entrada.clientes || 0,
+                        status: 'pendente',
+                        motivo: pendencia.motivoBloqueio
+                    });
+                }
+            });
+        }
+        
+        // 🔥 4. Busca previsões para dias 10,20,30 (3 consultas)
+        const diasVencimento = [10, 20, 30];
+        
+        for (const diaVenc of diasVencimento) {
+            // Pula se já tem registro neste dia
+            if (agenda[diaVenc]?.length > 0) continue;
+            
+            const clientesSnapshot = await firebaseDb.collection('clientes')
+                .where('dia_vencimento', '==', diaVenc)
+                .get();
+            
+            const pendentes = clientesSnapshot.docs.filter(doc => 
+                doc.data().status === 'pendente'
+            ).length;
+            
+            if (pendentes > 0) {
+                if (!agenda[diaVenc]) agenda[diaVenc] = [];
+                
+                // Define se é futuro, hoje ou passado
+                let status = 'futuro';
+                if (diaVenc < dia) status = 'passado';
+                if (diaVenc === dia) status = 'hoje';
+                
+                agenda[diaVenc].push({
+                    data: String(diaVenc),
+                    tipo: 'previsao',
+                    clientes: pendentes,
+                    status: status,
+                    total_clientes: clientesSnapshot.size
+                });
+            }
+        }
+        
+        console.log(`   ✅ Agenda montada com ${Object.keys(agenda).length} dias`);
+        
+        res.json({ 
+            agenda, 
+            diaAtual: dia, 
+            mes, 
+            ano, 
+            pendencia,
+            consultas: logsSnapshot.size + 1 + diasVencimento.length // Só pra debug
+        });
+        
+    } catch (error) {
+        console.error('❌ Erro na agenda:', error);
+        res.status(500).json({ erro: error.message });
+    }
+});
 
     // =====================================================
     // ROTAS DE PROMESSAS

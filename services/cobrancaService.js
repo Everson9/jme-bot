@@ -39,13 +39,6 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null) {
             return 0;
         }
         
-        // Registra na agenda
-        const agendaRef = await firebaseDb.collection('cobrancas_agendadas').add({
-            data_disparo: agoraISO, data_vencimento: data,
-            tipo: tipo || 'auto', total_clientes: clientesSnapshot.size,
-            status: 'iniciado', criado_em: agoraISO
-        });
-        
         let enviadas = 0, falhas = 0, ignorados = 0;
         
         for (const doc of clientesSnapshot.docs) {
@@ -77,9 +70,14 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null) {
                 if (resultado.sucesso) {
                     await enviarChavesPix(client, resultado.numero, nome);
                     await firebaseDb.collection('log_cobrancas').add({
-                        numero: resultado.numero, nome: cliente.nome,
-                        data_vencimento: data, data_envio: hojeStr,
-                        tipo: tipo || 'auto', enviado_em: agoraISO, status: 'enviado'
+                        numero: resultado.numero, 
+                        nome: cliente.nome,
+                        data_vencimento: data, 
+                        data_envio: hojeStr,
+                        tipo: tipo || 'auto',
+                        origem: tipo ? 'manual' : 'auto', // 🔥 MARCA SE FOI MANUAL
+                        enviado_em: agoraISO, 
+                        status: 'enviado'
                     });
                     enviadas++; enviado = true;
                     break;
@@ -89,16 +87,19 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null) {
             if (!enviado) {
                 falhas++;
                 await firebaseDb.collection('log_cobrancas').add({
-                    numero: telefoneLimpo + '@c.us', nome: cliente.nome,
-                    data_vencimento: data, data_envio: hojeStr,
-                    tipo: tipo || 'auto', status: 'falha'
+                    numero: telefoneLimpo + '@c.us', 
+                    nome: cliente.nome,
+                    data_vencimento: data, 
+                    data_envio: hojeStr,
+                    tipo: tipo || 'auto',
+                    origem: tipo ? 'manual' : 'auto',
+                    status: 'falha'
                 });
             }
             
             if (enviado) await new Promise(r => setTimeout(r, 2000));
         }
         
-        await agendaRef.update({ status: 'concluido', enviadas, falhas, ignorados });
         return enviadas;
         
     } catch (error) {
@@ -109,26 +110,153 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null) {
 
 async function obterAgendaDia(firebaseDb, dia, mes, ano) {
     try {
-        const dataStr = `${ano}-${String(mes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
-        const snapshot = await firebaseDb.collection('cobrancas_agendadas')
-            .where('data_disparo', '>=', dataStr + 'T00:00:00')
-            .where('data_disparo', '<=', dataStr + 'T23:59:59')
+        const diaStr = String(dia).padStart(2, '0');
+        const mesStr = String(mes).padStart(2, '0');
+        const dataBusca = `${ano}-${mesStr}-${diaStr}`;
+        const hoje = new Date();
+        const hojeDia = hoje.getDate();
+        const hojeMes = hoje.getMonth() + 1;
+        const hojeAno = hoje.getFullYear();
+        
+        console.log(`🔍 Buscando agenda para: ${dataBusca}`);
+        
+        // =====================================================
+        // 1️⃣ BUSCA COBRANÇAS JÁ REALIZADAS (HISTÓRICO)
+        // =====================================================
+        const enviadasSnapshot = await firebaseDb.collection('log_cobrancas')
+            .where('data_envio', '==', dataBusca)
             .get();
         
-        if (snapshot.empty) return [];
+        console.log(`   📤 Cobranças realizadas: ${enviadasSnapshot.size} registros`);
         
+        // =====================================================
+        // 2️⃣ BUSCA PENDÊNCIA (COBRANÇA ADIADA/NEGADA)
+        // =====================================================
+        const pendenciaDoc = await firebaseDb.collection('config').doc('cobranca_adiada').get();
+        const pendencia = pendenciaDoc.exists ? pendenciaDoc.data().valor : null;
+        
+        const temPendenciaHoje = pendencia && 
+            pendencia.dia === dia && 
+            pendencia.mes === mes && 
+            pendencia.ano === ano;
+        
+        // =====================================================
+        // 3️⃣ DIAS DE VENCIMENTO (10, 20, 30)
+        // =====================================================
+        const diasVencimento = [10, 20, 30];
+        const isDiaVencimento = diasVencimento.includes(dia);
+        
+        // =====================================================
+        // 4️⃣ MAPA DE RESULTADOS
+        // =====================================================
         const grupos = {};
-        snapshot.docs.forEach(doc => {
+        
+        // 🔥 PRIMEIRO: Adiciona cobranças que JÁ FORAM FEITAS (histórico)
+        enviadasSnapshot.docs.forEach(doc => {
             const c = doc.data();
-            const chave = `${c.data_vencimento}_${c.tipo}`;
-            if (!grupos[chave]) grupos[chave] = { data: c.data_vencimento, tipo: c.tipo, total: 0, enviados: 0 };
-            grupos[chave].total++;
-            if (c.status === 'enviado') grupos[chave].enviados++;
+            const chave = `${c.data_vencimento}_${c.tipo || 'auto'}`;
+            
+            grupos[chave] = {
+                data: c.data_vencimento,
+                tipo: c.tipo || 'auto',
+                clientes: 1, // Cada registro é um cliente
+                status: 'realizado',
+                origem: c.origem || 'auto', // 'manual' ou 'auto'
+                enviado_em: c.enviado_em
+            };
         });
         
-        return Object.values(grupos);
+        // 🔥 SEGUNDO: Adiciona pendência de hoje (se existir)
+        if (temPendenciaHoje && pendencia.entradas) {
+            pendencia.entradas.forEach(entrada => {
+                const chave = `${entrada.data}_${entrada.tipo}_pendente`;
+                
+                grupos[chave] = {
+                    data: entrada.data,
+                    tipo: entrada.tipo,
+                    clientes: entrada.clientes || 0,
+                    status: 'pendente',
+                    motivo: pendencia.motivoBloqueio
+                };
+            });
+        }
+        
+        // 🔥 TERCEIRO: Para dias de vencimento, calcula TODAS as etapas
+        if (isDiaVencimento) {
+            // Busca clientes deste dia
+            const clientesSnapshot = await firebaseDb.collection('clientes')
+                .where('dia_vencimento', '==', dia)
+                .get();
+            
+            const totalClientes = clientesSnapshot.size;
+            const pendentes = clientesSnapshot.docs.filter(doc => 
+                doc.data().status === 'pendente'
+            ).length;
+            
+            if (totalClientes > 0) {
+                // Calcula TODAS as datas de cobrança para este dia de vencimento
+                const datasCobranca = [
+                    { dia: dia - 1, tipo: 'lembrete', desc: 'Lembrete (D-1)' },
+                    { dia: dia + 3, tipo: 'atraso', desc: 'Atraso (D+3)' },
+                    { dia: dia + 5, tipo: 'atraso_final', desc: 'Atraso Final (D+5)' },
+                    { dia: dia + 7, tipo: 'reconquista', desc: 'Reconquista (D+7)' },
+                    { dia: dia + 10, tipo: 'reconquista_final', desc: 'Reconquista Final (D+10)' }
+                ];
+                
+                // Ajusta para próximo mês se passar de 31
+                datasCobranca.forEach(item => {
+                    let diaCobranca = item.dia;
+                    let mesCobranca = mes;
+                    let anoCobranca = ano;
+                    
+                    if (diaCobranca > 31) {
+                        diaCobranca = diaCobranca - 31;
+                        mesCobranca = mes + 1;
+                        if (mesCobranca > 12) {
+                            mesCobranca = 1;
+                            anoCobranca = ano + 1;
+                        }
+                    }
+                    
+                    // Só mostra se for o dia que estamos consultando
+                    if (diaCobranca === dia && mesCobranca === mes && anoCobranca === ano) {
+                        // Verifica se já foi realizado
+                        const jaRealizado = Object.values(grupos).some(g => 
+                            g.data === String(dia) && g.tipo === item.tipo
+                        );
+                        
+                        if (!jaRealizado) {
+                            // Verifica se é passado, presente ou futuro
+                            const dataCobranca = new Date(anoCobranca, mesCobranca - 1, diaCobranca);
+                            const hojeDate = new Date(hojeAno, hojeMes - 1, hojeDia);
+                            
+                            let status = 'futuro';
+                            if (dataCobranca < hojeDate) status = 'passado';
+                            if (dataCobranca.toDateString() === hojeDate.toDateString()) status = 'hoje';
+                            
+                            const chave = `${dia}_${item.tipo}_previsto`;
+                            grupos[chave] = {
+                                data: String(dia),
+                                tipo: item.tipo,
+                                descricao: item.desc,
+                                clientes: pendentes,
+                                total_clientes: totalClientes,
+                                status: status,
+                                data_prevista: `${diaCobranca}/${mesCobranca}/${anoCobranca}`
+                            };
+                        }
+                    }
+                });
+            }
+        }
+        
+        const resultado = Object.values(grupos);
+        console.log(`   ✅ Total na agenda: ${resultado.length} itens`);
+        
+        return resultado;
+        
     } catch (error) {
-        console.error('Erro na agenda:', error);
+        console.error('❌ Erro na agenda:', error);
         return [];
     }
 }

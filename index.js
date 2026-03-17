@@ -275,22 +275,34 @@ app.get('/qr', async (req, res) => {
 // =====================================================
 // CONTEXTO PARA ROTAS E FLUXOS
 // =====================================================
+// =====================================================
+// CONTEXTO PARA ROTAS E FLUXOS
+// =====================================================
 const ctxRotas = {
-    db: firebaseDb, banco, state, client, ADMINISTRADORES,
+    db: firebaseDb, 
+    banco, 
+    state, 
+    client, 
+    ADMINISTRADORES,
     dbRelatorio: banco.dbRelatorio,
     dbListarChamados: banco.dbListarChamados,
     dbAtualizarChamado: banco.dbAtualizarChamado,
     dbSalvarAtendimentoHumano: banco.dbSalvarAtendimentoHumano,
     dbRemoverAtendimentoHumano: banco.dbRemoverAtendimentoHumano,
     botAtivo,
-    botIniciadoEm, situacaoRede, previsaoRetorno,
-    horarioFuncionamento, horarioCobranca,
+    botIniciadoEm, 
+    situacaoRede, 
+    previsaoRetorno,
+    horarioFuncionamento, 
+    horarioCobranca,
     dispararCobrancaReal: (data, tipo) => dispararCobrancaReal(client, firebaseDb, data, tipo),
+    // 🔥 CORREÇÃO: Passa firebaseDb corretamente para a função
     obterAgendaDia: (dia, mes, ano) => obterAgendaDia(firebaseDb, dia, mes, ano),
     executarMigracao: () => ({}),
     isentarMesEntrada: () => {},
     verificarPromessasVencidas: () => 0,
-    fs, path
+    fs, 
+    path
 };
 
 require('./routes/index')(app, ctxRotas);
@@ -316,6 +328,23 @@ client.on('message', async (msg) => {
         const texto = msg.body || '';
         const args = texto.split(' ');
         const comando = args[0].toLowerCase();
+
+        // Dentro da parte de COMANDOS ADMIN, adicione:
+if (comando === '!cobrar-sim' || comando === '!cobrar-nao') {
+    const votacaoId = args[1];
+    const resposta = comando === '!cobrar-sim' ? 'aprovado' : 'negado';
+    
+    await firebaseDb.collection('votacoes').doc(votacaoId).update({
+        status: 'respondido',
+        resolvido: true,
+        resultado: resposta,
+        respondido_por: deQuem,
+        respondido_em: new Date().toISOString()
+    });
+    
+    return msg.reply(`✅ Voto registrado: ${resposta === 'aprovado' ? 'SIM' : 'NÃO'}`);
+}
+
         
         if (comando === '!bot') {
             if (args[1] === 'off') { botAtivo = false; return msg.reply("🔴 *IA DESATIVADA.*"); }
