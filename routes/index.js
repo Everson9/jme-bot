@@ -52,17 +52,29 @@ module.exports = function setupRoutes(app, ctx) {
     // =====================================================
     // STATUS DO BOT
     // =====================================================
-    app.get('/api/status', (req, res) => {
-        res.json({
-            botAtivo,
-            online: botIniciadoEm ? true : false,
-            iniciadoEm: botIniciadoEm,
-            atendimentosAtivos: state?.stats()?.atendimentoHumano || 0,
-            situacaoRede,
-            previsaoRetorno,
-        });
-    });
-
+    // =====================================================
+// STATUS DO BOT - CORRIGIDO
+// =====================================================
+// =====================================================
+// STATUS DO BOT - COM LOGS PARA DEBUG
+// =====================================================
+app.get('/api/status', (req, res) => {
+    console.log('📊 ROTA /api/status CHAMADA');
+    console.log('   botIniciadoEm no ctx:', ctx.botIniciadoEm);
+    console.log('   botAtivo no ctx:', ctx.botAtivo);
+    
+    const response = {
+        botAtivo: ctx.botAtivo,
+        online: ctx.botIniciadoEm ? true : false,
+        iniciadoEm: ctx.botIniciadoEm,
+        atendimentosAtivos: state?.stats()?.atendimentoHumano || 0,
+        situacaoRede: ctx.situacaoRede,
+        previsaoRetorno: ctx.previsaoRetorno,
+    };
+    
+    console.log('   resposta:', response);
+    res.json(response);
+});
     // =====================================================
     // ROTA PARA LIGAR/DESLIGAR O BOT
     // =====================================================
