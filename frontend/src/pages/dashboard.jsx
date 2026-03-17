@@ -21,7 +21,8 @@ export function PageDashboard({ status, refetch }) {
   const { data: resumoBases } = useFetch("/api/dashboard/resumo-bases", 30000);
   const { data: caixaHoje } = useFetch("/api/dashboard/caixa-hoje", 20000);
   const { data: alertas } = useFetch("/api/dashboard/alertas", 30000);
-  const { data: status } = useFetch("/api/status", 10000);
+  // 🔥 CORREÇÃO: renomeei de 'status' para 'botStatus' para não conflitar com o parâmetro
+  const { data: botStatus } = useFetch("/api/status", 10000);
 
   const statsEstados = estados?.stats || { porFluxo: {}, atendimentoHumano: 0 };
   
@@ -203,16 +204,16 @@ React.useEffect(() => {
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
               <div style={{
                 width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
-                background: status?.online ? "#22c55e" : "#ef4444",
-                boxShadow: status?.online ? "0 0 8px #22c55e88" : "none"
+                background: botStatus?.online ? "#22c55e" : "#ef4444",  // 🔥 TROQUEI status POR botStatus
+                boxShadow: botStatus?.online ? "0 0 8px #22c55e88" : "none" // 🔥 TROQUEI status POR botStatus
               }} />
-              <span style={{ fontSize: 22, fontWeight: 800, color: status?.online ? "#22c55e" : "#ef4444" }}>
-                {status?.online ? "Online" : "Offline"}
+              <span style={{ fontSize: 22, fontWeight: 800, color: botStatus?.online ? "#22c55e" : "#ef4444" }}> {/* 🔥 TROQUEI */}
+                {botStatus?.online ? "Online" : "Offline"} {/* 🔥 TROQUEI */}
               </span>
             </div>
-            {status?.iniciadoEm && (
+            {botStatus?.iniciadoEm && ( // 🔥 TROQUEI
               <div style={{ fontSize: 11, color: "#475569", marginBottom: 14 }}>
-                desde {fmtDate(status.iniciadoEm)}
+                desde {fmtDate(botStatus.iniciadoEm)} {/* 🔥 TROQUEI */}
               </div>
             )}
             <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, marginBottom: 8 }}>
@@ -243,8 +244,8 @@ React.useEffect(() => {
           </Card>
 
           <PainelRede
-            situacaoRede={status?.situacaoRede}
-            previsaoRetorno={status?.previsaoRetorno}
+            situacaoRede={botStatus?.situacaoRede} // 🔥 TROQUEI
+            previsaoRetorno={botStatus?.previsaoRetorno} // 🔥 TROQUEI
             onAtualizar={refetch}
           />
 
