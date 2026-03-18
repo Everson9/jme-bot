@@ -23,7 +23,7 @@ const { enviarMensagemSegura } = require('./services/whatsappService');
 const { analisarImagem } = require('./services/midiaService');
 const { transcreverAudio } = require('./services/audioService');
 const { horaLocal, atendenteDisponivel, proximoAtendimento, falarSinalAmigavel, redeNormal } = require('./services/utilsService');
-const sseService = require('./services/sseService'); // 🔥 NOVO: SSE Service
+const sseService = require('./services/sseService');
 const {
     processarMensagem,
     handleIdentificacao,
@@ -70,7 +70,7 @@ const utils = criarUtils(groqChatFallback);
 const classificador = criarClassificador(groqChatFallback);
 const detectorMultiplas = criarDetectorMultiplas(groqChatFallback);
 
-const ADMINISTRADORES = ['558184636954@c.us', '558186650773@c.us'];
+const ADMINISTRADORES = ['558184636954@c.us', ''];  //558186650773@c.us
 const FUNCIONARIOS = ['558185937690@c.us', '558198594699@c.us', '558184597727@c.us', '558184065116@c.us']; 
 const chavePixExibicao = "jmetelecomnt@gmail.com";
 
@@ -105,6 +105,11 @@ const DEBOUNCE_AUDIO = 10000;
 const DEBOUNCE_MIDIA = 6000;
 
 let _fluxoSuporte, _fluxoFinanceiro, _fluxoPromessa, _fluxoNovoCliente, _fluxoCancelamento;
+
+// =====================================================
+// CONTEXTO PARA PROCESSAMENTO DE MENSAGENS (NOVO!)
+// =====================================================
+let messageContext = {}; // Será preenchido após inicialização dos fluxos
 
 // =====================================================
 // FUNÇÕES AUXILIARES RESTANTES (PEQUENAS)
@@ -259,13 +264,12 @@ const client = new Client({
 client.on('qr', (qr) => { ultimoQR = qr; console.log('📱 QR Code gerado. Acesse /qr para escanear.'); });
 client.on('ready', () => { 
     console.log('✅ WhatsApp conectado e pronto!'); 
-    sseService.broadcast(); // 🔥 NOVO: Avisa que ficou online
+    sseService.broadcast();
 });
 
-// 🔥 NOVO: Detectar desconexão
 client.on('disconnected', (reason) => {
     console.log('❌ WhatsApp desconectado:', reason);
-    sseService.broadcast(); // 🔥 NOVO: Avisa que caiu
+    sseService.broadcast();
 });
 
 // =====================================================
@@ -282,7 +286,6 @@ app.get('/qr', async (req, res) => {
     catch (err) { res.status(500).send('Erro ao gerar QR.'); }
 });
 
-// 🔥 NOVO: Rota SSE
 app.get('/api/status-stream', (req, res) => {
     sseService.handleConnection(req, res);
 });
@@ -316,13 +319,141 @@ const ctxRotas = {
     path
 };
 
-// 🔥 NOVO: Inicializa SSE com o contexto
 sseService.init(ctxRotas);
 
 require('./routes/index')(app, ctxRotas);
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`🌐 Painel rodando em http://localhost:${PORT}`));
+
+// =====================================================
+// INICIALIZAÇÃO DOS FLUXOS
+// =====================================================
+function inicializarFluxos() {
+    const ctx = {
+        client, db: firebaseDb, banco, state, ADMINISTRADORES,
+        P, chavePixExibicao, situacaoRede: () => situacaoRede,
+        previsaoRetorno: () => previsaoRetorno, falarSinalAmigavel, redeNormal,
+        atendenteDisponivel: () => atendenteDisponivel(horarioFuncionamento),
+        proximoAtendimento: () => proximoAtendimento(horarioFuncionamento),
+        horaLocal, analisarImagem, groqChatFallback,
+        normalizarTexto: utils.normalizarTexto || (t => t),
+        buscarStatusCliente: banco.buscarStatusCliente,
+        darBaixaAutomatica, abrirChamadoComMotivo, utils,
+        classificador, detectorMultiplas,
+        iniciarFluxoPorIntencao: (i, d, m) => iniciarFluxoPorIntencao(i, d, m),
+        verificarETransferir, fotosPendentes,
+        dbLog: banco.dbLog, dbSalvarHistorico: banco.dbSalvarHistorico,
+        dbCarregarHistorico: banco.dbCarregarHistorico,
+        dbIniciarAtendimento: banco.dbIniciarAtendimento,
+        dbEncerrarAtendimento: banco.dbEncerrarAtendimento,
+        dbSalvarNovoCliente: banco.dbSalvarNovoCliente,
+        dbAbrirChamado: banco.dbAbrirChamado,
+        dbAtualizarChamado: banco.dbAtualizarChamado,
+    };
+
+    _fluxoSuporte     = criarFluxoSuporte(ctx);
+    _fluxoFinanceiro  = criarFluxoFinanceiro(ctx);
+    _fluxoPromessa    = criarFluxoPromessa(ctx);
+    _fluxoNovoCliente = criarFluxoNovoCliente(ctx);
+    _fluxoCancelamento = criarFluxoCancelamento(ctx);
+
+    // 🔥 NOVO: Preenche o messageContext com todas as dependências
+    messageContext = {
+        state, banco, client, utils, classificador, detectorMultiplas,
+        verificarETransferir, 
+        responderComIA: (d, m) => responderComIA(d, m, { banco, client, groqChatFallback }),
+        iniciarFluxoPorIntencao: (i, d, m) => iniciarFluxoPorIntencao(i, d, m),
+        handleIdentificacao: (d, m) => handleIdentificacao(d, m, {
+            state, banco, client, utils, verificarETransferir,
+            processarAposIdentificacao: (d, n, o, i) => processarAposIdentificacao(d, n, o, i, {
+                banco, state, client, iniciarFluxoPorIntencao, redeNormal, falarSinalAmigavel
+            })
+        }),
+        abrirChamadoComMotivo, darBaixaAutomatica,
+        processingLock, filaEspera, P, logErro, metrics, processarFila
+    };
+
+    console.log('✅ Fluxos inicializados!');
+}
+
+async function iniciarFluxoPorIntencao(intencao, deQuem, msg) {
+    switch(intencao) {
+        case 'SUPORTE': await _fluxoSuporte.iniciar(deQuem, msg); break;
+        case 'FINANCEIRO': case 'PIX': case 'BOLETO': case 'CARNE': case 'DINHEIRO':
+            await _fluxoFinanceiro.iniciar(deQuem, msg, intencao); break;
+        case 'PROMESSA': await _fluxoPromessa.iniciar(deQuem, msg); break;
+        case 'NOVO_CLIENTE': await _fluxoNovoCliente.iniciar(deQuem); break;
+        case 'CANCELAMENTO': await _fluxoCancelamento.iniciar(deQuem, msg); break;
+        case 'SAUDACAO':
+            const h = horaLocal();
+            const saudacao = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
+            const resp = `${saudacao}! Como posso te ajudar hoje?\n\n1️⃣ Suporte\n2️⃣ Financeiro\n3️⃣ Planos`;
+            await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\n${resp}`);
+            await banco.dbSalvarHistorico(deQuem, 'assistant', resp);
+            await banco.dbIniciarAtendimento(deQuem);
+            break;
+        default: await responderComIA(deQuem, msg, { banco, client, groqChatFallback });
+    }
+}
+
+// =====================================================
+// FUNÇÕES DE FILA
+// =====================================================
+function processarFila(deQuem) {
+    const fila = filaEspera.get(deQuem) || [];
+    if (fila.length > 0) {
+        const proxima = fila.shift();
+        if (fila.length === 0) filaEspera.delete(deQuem);
+        else filaEspera.set(deQuem, fila);
+        // 🔥 CORRIGIDO: Usa messageContext
+        setImmediate(() => processarMensagem(deQuem, proxima, messageContext));
+    }
+}
+
+function agendarProcessamento(deQuem, delay) {
+    if (debounceTimers.has(deQuem)) clearTimeout(debounceTimers.get(deQuem));
+    const timer = setTimeout(async () => {
+        const fila = mensagensPendentes.get(deQuem) || [];
+        mensagensPendentes.delete(deQuem);
+        debounceTimers.delete(deQuem);
+        if (fila.length === 0) return;
+        if (state.isAtendimentoHumano(deQuem)) return;
+
+        const temAudio = fila.some(f => ['audio','ptt'].includes(f.tipo));
+        const temMidia = fila.some(f => ['image','document'].includes(f.tipo));
+        const textos = fila.filter(f => f.tipo === 'texto').map(f => f.msg.body || '').filter(Boolean);
+
+        if (temAudio) {
+            const transcricoes = [];
+            for (const item of fila.filter(f => ['audio','ptt'].includes(f.tipo))) {
+                const t = await transcreverAudio(item.msg, process.env.GROQ_API_KEY);
+                if (t) transcricoes.push(t);
+            }
+            const tudoJunto = [...transcricoes, ...textos].join(' ').trim();
+            if (!tudoJunto) {
+                const transferiu = await verificarETransferir(deQuem, 'Não entendeu áudio');
+                if (transferiu) return;
+                await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\nNão consegui entender o áudio. Poderia digitar?`);
+                return;
+            }
+            const msgFake = { body: tudoJunto, from: deQuem, hasMedia: false };
+            // 🔥 CORRIGIDO: Usa messageContext
+            await processarMensagem(deQuem, msgFake, messageContext);
+        } else if (temMidia) {
+            const itemMidia = fila.find(f => ['image','document'].includes(f.tipo));
+            // 🔥 CORRIGIDO: Usa messageContext
+            await processarMensagem(deQuem, itemMidia.msg, messageContext);
+        } else {
+            const textoJunto = textos.join(' ').trim();
+            if (!textoJunto) return;
+            const msgCombinada = { ...fila[fila.length - 1].msg, body: textoJunto };
+            // 🔥 CORRIGIDO: Usa messageContext
+            await processarMensagem(deQuem, msgCombinada, messageContext);
+        }
+    }, delay);
+    debounceTimers.set(deQuem, timer);
+}
 
 // =====================================================
 // EVENTO DE MENSAGEM (SIMPLIFICADO)
@@ -361,12 +492,12 @@ client.on('message', async (msg) => {
         if (comando === '!bot') {
             if (args[1] === 'off') { 
                 botAtivo = false; 
-                sseService.broadcast(); // 🔥 NOVO
+                sseService.broadcast();
                 return msg.reply("🔴 *IA DESATIVADA.*"); 
             }
             if (args[1] === 'on') { 
                 botAtivo = true; 
-                sseService.broadcast(); // 🔥 NOVO
+                sseService.broadcast();
                 return msg.reply("🟢 *IA ATIVADA.*"); 
             }
         }
@@ -392,7 +523,7 @@ client.on('message', async (msg) => {
             situacaoRede = novoStatus; 
             previsaoRetorno = previsao;
             
-            sseService.broadcast(); // 🔥 NOVO
+            sseService.broadcast();
             
             try {
                 await firebaseDb.collection('config').doc('situacao_rede').set({ valor: novoStatus });
@@ -451,19 +582,8 @@ client.on('message', async (msg) => {
     if (tipo === 'outro' || tipo === 'image' || (msg.hasMedia && msg.mimetype === 'application/pdf')) {
         const processado = await processarMidiaAutomatico(deQuem, msg);
         if (processado) return;
-        await processarMensagem(deQuem, msg, {
-            state, banco, client, utils, classificador, detectorMultiplas,
-            verificarETransferir, responderComIA: (d, m) => responderComIA(d, m, { banco, client, groqChatFallback }),
-            iniciarFluxoPorIntencao: (i, d, m) => iniciarFluxoPorIntencao(i, d, m),
-            handleIdentificacao: (d, m) => handleIdentificacao(d, m, {
-                state, banco, client, utils, verificarETransferir,
-                processarAposIdentificacao: (d, n, o, i) => processarAposIdentificacao(d, n, o, i, {
-                    banco, state, client, iniciarFluxoPorIntencao, redeNormal, falarSinalAmigavel
-                })
-            }),
-            abrirChamadoComMotivo, darBaixaAutomatica,
-            processingLock, filaEspera, P, logErro, metrics, processarFila
-        });
+        // 🔥 CORRIGIDO: Usa messageContext
+        await processarMensagem(deQuem, msg, messageContext);
         return;
     }
 
@@ -478,115 +598,6 @@ client.on('message', async (msg) => {
     if (state.cancelarTimer) state.cancelarTimer(deQuem);
     agendarProcessamento(deQuem, delay);
 });
-
-// =====================================================
-// FUNÇÕES DE FILA
-// =====================================================
-function processarFila(deQuem) {
-    const fila = filaEspera.get(deQuem) || [];
-    if (fila.length > 0) {
-        const proxima = fila.shift();
-        if (fila.length === 0) filaEspera.delete(deQuem);
-        else filaEspera.set(deQuem, fila);
-        setImmediate(() => processarMensagem(deQuem, proxima));
-    }
-}
-
-function agendarProcessamento(deQuem, delay) {
-    if (debounceTimers.has(deQuem)) clearTimeout(debounceTimers.get(deQuem));
-    const timer = setTimeout(async () => {
-        const fila = mensagensPendentes.get(deQuem) || [];
-        mensagensPendentes.delete(deQuem);
-        debounceTimers.delete(deQuem);
-        if (fila.length === 0) return;
-        if (state.isAtendimentoHumano(deQuem)) return;
-
-        const temAudio = fila.some(f => ['audio','ptt'].includes(f.tipo));
-        const temMidia = fila.some(f => ['image','document'].includes(f.tipo));
-        const textos = fila.filter(f => f.tipo === 'texto').map(f => f.msg.body || '').filter(Boolean);
-
-        if (temAudio) {
-            const transcricoes = [];
-            for (const item of fila.filter(f => ['audio','ptt'].includes(f.tipo))) {
-                const t = await transcreverAudio(item.msg, process.env.GROQ_API_KEY);
-                if (t) transcricoes.push(t);
-            }
-            const tudoJunto = [...transcricoes, ...textos].join(' ').trim();
-            if (!tudoJunto) {
-                const transferiu = await verificarETransferir(deQuem, 'Não entendeu áudio');
-                if (transferiu) return;
-                await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\nNão consegui entender o áudio. Poderia digitar?`);
-                return;
-            }
-            const msgFake = { body: tudoJunto, from: deQuem, hasMedia: false };
-            await processarMensagem(deQuem, msgFake);
-        } else if (temMidia) {
-            const itemMidia = fila.find(f => ['image','document'].includes(f.tipo));
-            await processarMensagem(deQuem, itemMidia.msg);
-        } else {
-            const textoJunto = textos.join(' ').trim();
-            if (!textoJunto) return;
-            const msgCombinada = { ...fila[fila.length - 1].msg, body: textoJunto };
-            await processarMensagem(deQuem, msgCombinada);
-        }
-    }, delay);
-    debounceTimers.set(deQuem, timer);
-}
-
-// =====================================================
-// INICIALIZAÇÃO DOS FLUXOS
-// =====================================================
-function inicializarFluxos() {
-    const ctx = {
-        client, db: firebaseDb, banco, state, ADMINISTRADORES,
-        P, chavePixExibicao, situacaoRede: () => situacaoRede,
-        previsaoRetorno: () => previsaoRetorno, falarSinalAmigavel, redeNormal,
-        atendenteDisponivel: () => atendenteDisponivel(horarioFuncionamento),
-        proximoAtendimento: () => proximoAtendimento(horarioFuncionamento),
-        horaLocal, analisarImagem, groqChatFallback,
-        normalizarTexto: utils.normalizarTexto || (t => t),
-        buscarStatusCliente: banco.buscarStatusCliente,
-        darBaixaAutomatica, abrirChamadoComMotivo, utils,
-        classificador, detectorMultiplas,
-        iniciarFluxoPorIntencao: (i, d, m) => iniciarFluxoPorIntencao(i, d, m),
-        verificarETransferir, fotosPendentes,
-        dbLog: banco.dbLog, dbSalvarHistorico: banco.dbSalvarHistorico,
-        dbCarregarHistorico: banco.dbCarregarHistorico,
-        dbIniciarAtendimento: banco.dbIniciarAtendimento,
-        dbEncerrarAtendimento: banco.dbEncerrarAtendimento,
-        dbSalvarNovoCliente: banco.dbSalvarNovoCliente,
-        dbAbrirChamado: banco.dbAbrirChamado,
-        dbAtualizarChamado: banco.dbAtualizarChamado,
-    };
-
-    _fluxoSuporte     = criarFluxoSuporte(ctx);
-    _fluxoFinanceiro  = criarFluxoFinanceiro(ctx);
-    _fluxoPromessa    = criarFluxoPromessa(ctx);
-    _fluxoNovoCliente = criarFluxoNovoCliente(ctx);
-    _fluxoCancelamento = criarFluxoCancelamento(ctx);
-
-    console.log('✅ Fluxos inicializados!');
-}
-
-async function iniciarFluxoPorIntencao(intencao, deQuem, msg) {
-    switch(intencao) {
-        case 'SUPORTE': await _fluxoSuporte.iniciar(deQuem, msg); break;
-        case 'FINANCEIRO': case 'PIX': case 'BOLETO': case 'CARNE': case 'DINHEIRO':
-            await _fluxoFinanceiro.iniciar(deQuem, msg, intencao); break;
-        case 'PROMESSA': await _fluxoPromessa.iniciar(deQuem, msg); break;
-        case 'NOVO_CLIENTE': await _fluxoNovoCliente.iniciar(deQuem); break;
-        case 'CANCELAMENTO': await _fluxoCancelamento.iniciar(deQuem, msg); break;
-        case 'SAUDACAO':
-            const h = horaLocal();
-            const saudacao = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
-            const resp = `${saudacao}! Como posso te ajudar hoje?\n\n1️⃣ Suporte\n2️⃣ Financeiro\n3️⃣ Planos`;
-            await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\n${resp}`);
-            await banco.dbSalvarHistorico(deQuem, 'assistant', resp);
-            await banco.dbIniciarAtendimento(deQuem);
-            break;
-        default: await responderComIA(deQuem, msg, { banco, client, groqChatFallback });
-    }
-}
 
 // =====================================================
 // COBRANÇA AUTOMÁTICA

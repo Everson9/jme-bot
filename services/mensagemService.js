@@ -1,4 +1,10 @@
 // services/mensagemService.js
+
+// 🔥 NOVO: Constantes com dados do PIX
+const NOME_TITULAR_PIX = "ERIVALDO CLEMENTINO DA SILVA";
+const CHAVE_EMAIL = "jmetelecomnt@gmail.com";
+const CHAVE_TELEFONE = "+55 81 98750-0456";
+
 function gerarMensagemCobranca(nome, data, tipo) {
     const saudacao = nome ? `Olá *${nome}*` : 'Olá';
     
@@ -44,13 +50,15 @@ async function enviarChavesPix(client, deQuem, nome) {
     const nomeCliente = nome ? nome.split(' ')[0] : '';
     const saudacao = nomeCliente ? `${nomeCliente}, aqui` : 'Aqui';
     
+    // 🔥 Mensagem PRINCIPAL com o nome do titular
     const mensagemPix = 
         `🤖 *JMENET TELECOM*\n\n` +
         `${saudacao} estão as nossas chaves PIX para pagamento:\n\n` +
         `📱 *Chave 1 (Email):*\n` +
-        `jmetelecomnt@gmail.com\n\n` +
+        `${CHAVE_EMAIL}\n\n` +
         `📲 *Chave 2 (Telefone):*\n` +
-        `+55 81 98750-0456\n\n` +
+        `${CHAVE_TELEFONE}\n\n` +
+        `👤 *Titular:* ${NOME_TITULAR_PIX}\n\n` + // 🔥 NOME ADICIONADO AQUI!
         `💡 *Como pagar:*\n` +
         `1. Abra o app do seu banco\n` +
         `2. Escolha a opção PIX\n` +
@@ -63,15 +71,55 @@ async function enviarChavesPix(client, deQuem, nome) {
     await client.sendMessage(deQuem, mensagemPix);
     await new Promise(r => setTimeout(r, 1000));
     
+    // 🔥 Mensagem de cópia TAMBÉM com o nome
     const mensagemApenasChaves = 
         `📋 *CHAVES PIX PARA CÓPIA*\n\n` +
         `📱 *Email:*\n` +
-        `jmetelecomnt@gmail.com\n\n` +
+        `${CHAVE_EMAIL}\n\n` +
         `📲 *Telefone:*\n` +
-        `+55 81 98750-0456\n\n` +
+        `${CHAVE_TELEFONE}\n\n` +
+        `👤 *Titular:* ${NOME_TITULAR_PIX}\n\n` + // 🔥 NOME AQUI TAMBÉM
         `Basta copiar e colar no seu banco! ✅`;
     
     await client.sendMessage(deQuem, mensagemApenasChaves);
 }
 
-module.exports = { gerarMensagemCobranca, enviarChavesPix };
+// 🔥 NOVA FUNÇÃO: Detecta se cliente perguntou sobre PIX e responde
+async function responderPerguntaPix(client, deQuem, pergunta, nomeCliente = null) {
+    const perguntaLower = pergunta.toLowerCase();
+    
+    // Palavras-chave que indicam pergunta sobre PIX
+    const palavrasChave = [
+        'pix', 'chave', 'transferência', 'transferencia', 
+        'depositar', 'depósito', 'deposito', 'qual o pix',
+        'qual pix', 'qual a chave', 'email para pix', 
+        'telefone para pix', 'pagamento', 'pagar'
+    ];
+    
+    const detectouPix = palavrasChave.some(palavra => perguntaLower.includes(palavra));
+    
+    if (!detectouPix) {
+        return false; // Não é pergunta sobre PIX
+    }
+    
+    // Se detectou, envia as chaves com o nome do titular
+    const saudacao = nomeCliente ? `${nomeCliente.split(' ')[0]}, ` : '';
+    
+    const mensagem = 
+        `🤖 *Assistente JMENET*\n\n` +
+        `${saudacao}claro! Aqui estão as informações para pagamento via PIX:\n\n` +
+        `📱 *Email:*\n${CHAVE_EMAIL}\n\n` +
+        `📲 *Telefone:*\n${CHAVE_TELEFONE}\n\n` +
+        `👤 *Titular:* ${NOME_TITULAR_PIX}\n\n` +
+        `💰 *Valor:* Consulte sua fatura\n\n` +
+        `Após o pagamento, envie o *comprovante* aqui para confirmarmos! ✅`;
+    
+    await client.sendMessage(deQuem, mensagem);
+    return true; // Respondeu
+}
+
+module.exports = { 
+    gerarMensagemCobranca, 
+    enviarChavesPix,
+    responderPerguntaPix  // 🔥 Exporta a nova função
+};
