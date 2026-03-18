@@ -104,7 +104,8 @@ async function processarMensagem(deQuem, msg, ctx) {
             );
             
             if (continua) {
-                await delegarParaFluxo(fluxoAtivo, deQuem, msg);
+                // 🔥 CORREÇÃO: Passando ctx como 4º parâmetro
+                await delegarParaFluxo(fluxoAtivo, deQuem, msg, ctx);
             } else {
                 state.encerrarFluxo(deQuem);
                 await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\nEntendi! Vou te ajudar com isso.`);
@@ -239,7 +240,7 @@ async function handleIdentificacao(deQuem, msg, ctx) {
         const clientes = await banco.buscarClientePorNome(texto);
         
         if (clientes.length === 1) {
-            await processarAposIdentificacao(deQuem, clientes[0].nome, dados.msgOriginal, dados.intencoes);
+            await processarAposIdentificacao(deQuem, clientes[0].nome, dados.msgOriginal, dados.intencoes, ctx);
             return;
         }
         
@@ -275,7 +276,7 @@ async function handleIdentificacao(deQuem, msg, ctx) {
         
         const cliente = await banco.buscarClientePorCPF(cpf);
         if (cliente) {
-            await processarAposIdentificacao(deQuem, cliente.nome, dados.msgOriginal, dados.intencoes);
+            await processarAposIdentificacao(deQuem, cliente.nome, dados.msgOriginal, dados.intencoes, ctx);
             return;
         }
         
@@ -300,7 +301,7 @@ async function handleIdentificacao(deQuem, msg, ctx) {
         
         const cliente = await banco.buscarClientePorTelefone(telefone);
         if (cliente) {
-            await processarAposIdentificacao(deQuem, cliente.nome, dados.msgOriginal, dados.intencoes);
+            await processarAposIdentificacao(deQuem, cliente.nome, dados.msgOriginal, dados.intencoes, ctx);
             return;
         }
         
