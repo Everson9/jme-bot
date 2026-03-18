@@ -6,7 +6,6 @@ import { useFetch } from '../hooks/useFetch';
 import { Card } from '../components/Card';
 import { Spinner } from '../components/Spinner';
 import { DonutClientes } from '../components/DonutClientes';
-import { PainelRede } from '../components/PainelRede';
 import { DarkTooltip } from '../components/DarkTooltip';
 import { fmtDate, fmtDia } from '../utils/formatadores';
 
@@ -23,27 +22,6 @@ export function PageDashboard({ status, refetch }) {
   const { data: resumoBases } = useFetch("/api/dashboard/resumo-bases");
   const { data: caixaHoje } = useFetch("/api/dashboard/caixa-hoje");
   const { data: alertas } = useFetch("/api/dashboard/alertas");
-  
-  // 🔥 SSE para status do bot (tempo real)
-  const [botStatus, setBotStatus] = useState(null);
-
-  useEffect(() => {
-    const eventSource = new EventSource(API + '/api/status-stream');
-    
-    eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      setBotStatus(data);
-    };
-    
-    eventSource.onerror = (error) => {
-      console.error('SSE error:', error);
-      eventSource.close();
-    };
-    
-    return () => {
-      eventSource.close();
-    };
-  }, []);
 
   const statsEstados = estados?.stats || { porFluxo: {}, atendimentoHumano: 0 };
   
@@ -90,7 +68,68 @@ export function PageDashboard({ status, refetch }) {
 
       {alertas && (alertas.promessasHoje > 0 || alertas.promessasAmanha > 0 || alertas.inadimplentes > 0 || alertas.chamadosAbertos > 0) && (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
-          {/* ... seus alertas ... */}
+          {alertas.promessasHoje > 0 && (
+            <div onClick={() => navigate("/promessas")} style={{
+              flex: 1, minWidth: 180, display: "flex", alignItems: "center", gap: 12,
+              padding: "12px 16px", borderRadius: 10, background: "rgba(239,68,68,.08)",
+              border: "1px solid rgba(239,68,68,.3)", cursor: "pointer"
+            }}>
+              <span style={{ fontSize: 22 }}>🔴</span>
+              <div>
+                <div style={{ fontWeight: 700, color: "#f87171", fontSize: 13 }}>
+                  {alertas.promessasHoje} promessa{alertas.promessasHoje !== 1 ? "s" : ""} vence hoje
+                </div>
+                <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
+                  {alertas.promessasHojeDetalhe?.map(p => p.nome?.split(" ")[0]).join(", ")}
+                </div>
+              </div>
+            </div>
+          )}
+          {alertas.promessasAmanha > 0 && (
+            <div onClick={() => navigate("/promessas")} style={{
+              flex: 1, minWidth: 180, display: "flex", alignItems: "center", gap: 12,
+              padding: "12px 16px", borderRadius: 10, background: "rgba(245,158,11,.08)",
+              border: "1px solid rgba(245,158,11,.25)", cursor: "pointer"
+            }}>
+              <span style={{ fontSize: 22 }}>⚠️</span>
+              <div>
+                <div style={{ fontWeight: 700, color: "#f59e0b", fontSize: 13 }}>
+                  {alertas.promessasAmanha} promessa{alertas.promessasAmanha !== 1 ? "s" : ""} vence amanhã
+                </div>
+                <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>acompanhar pagamento</div>
+              </div>
+            </div>
+          )}
+          {alertas.inadimplentes > 0 && (
+            <div onClick={() => navigate("/inadimplentes")} style={{
+              flex: 1, minWidth: 180, display: "flex", alignItems: "center", gap: 12,
+              padding: "12px 16px", borderRadius: 10, background: "rgba(239,68,68,.05)",
+              border: "1px solid rgba(239,68,68,.18)", cursor: "pointer"
+            }}>
+              <span style={{ fontSize: 22 }}>❌</span>
+              <div>
+                <div style={{ fontWeight: 700, color: "#f87171", fontSize: 13 }}>
+                  {alertas.inadimplentes} inadimplente{alertas.inadimplentes !== 1 ? "s" : ""} (+5 dias)
+                </div>
+                <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>ver relatório</div>
+              </div>
+            </div>
+          )}
+          {alertas.chamadosAbertos > 0 && (
+            <div onClick={() => navigate("/chamados")} style={{
+              flex: 1, minWidth: 180, display: "flex", alignItems: "center", gap: 12,
+              padding: "12px 16px", borderRadius: 10, background: "rgba(251,191,36,.05)",
+              border: "1px solid rgba(251,191,36,.18)", cursor: "pointer"
+            }}>
+              <span style={{ fontSize: 22 }}>🔧</span>
+              <div>
+                <div style={{ fontWeight: 700, color: "#fbbf24", fontSize: 13 }}>
+                  {alertas.chamadosAbertos} chamado{alertas.chamadosAbertos !== 1 ? "s" : ""} aberto há +24h
+                </div>
+                <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>ver chamados</div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -156,55 +195,9 @@ export function PageDashboard({ status, refetch }) {
 
         {/* Coluna Meio */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <Card style={{ padding: "18px 20px" }}>
-            <SectionLabel text="Bot WhatsApp" icon="🤖" />
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-              <div style={{
-                width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
-                background: botStatus?.online ? "#22c55e" : "#ef4444",
-                boxShadow: botStatus?.online ? "0 0 8px #22c55e88" : "none"
-              }} />
-              <span style={{ fontSize: 22, fontWeight: 800, color: botStatus?.online ? "#22c55e" : "#ef4444" }}>
-                {botStatus?.online ? "Online" : "Offline"}
-              </span>
-            </div>
-            {botStatus?.iniciadoEm && (
-              <div style={{ fontSize: 11, color: "#475569", marginBottom: 14 }}>
-                desde {fmtDate(botStatus.iniciadoEm)}
-              </div>
-            )}
-            <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, marginBottom: 8 }}>
-              Conversas ativas agora
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {Object.entries(statsEstados.porFluxo || {})
-                .filter(([, v]) => v > 0)
-                .map(([fluxo, count]) => (
-                  <div key={fluxo} onClick={() => navigate("/estados")} style={{
-                    padding: "4px 10px", borderRadius: 6, background: "#1a1d2e",
-                    border: "1px solid #2d3148", cursor: "pointer", fontSize: 12, display: "flex", gap: 6
-                  }}>
-                    <span style={{ color: "#94a3b8" }}>{fluxoLabels[fluxo] || fluxo}</span>
-                    <span style={{ fontWeight: 800, color: "#e2e8f0" }}>{count}</span>
-                  </div>
-                ))}
-              {(statsEstados?.atendimentoHumano ?? 0) > 0 && (
-                <div onClick={() => navigate("/estados")} style={{
-                  padding: "4px 10px", borderRadius: 6, background: "rgba(56,189,248,.08)",
-                  border: "1px solid rgba(56,189,248,.2)", cursor: "pointer", fontSize: 12, display: "flex", gap: 6
-                }}>
-                  <span style={{ color: "#38bdf8" }}>👤 Humano</span>
-                  <span style={{ fontWeight: 800, color: "#38bdf8" }}>{statsEstados.atendimentoHumano}</span>
-                </div>
-              )}
-            </div>
-          </Card>
-
-          <PainelRede
-            situacaoRede={botStatus?.situacaoRede}
-            previsaoRetorno={botStatus?.previsaoRetorno}
-            onAtualizar={refetch}
-          />
+          
+          {/* 🔥 CARD DO BOT REMOVIDO! */}
+          {/* 🔥 PAINEL REDE REMOVIDO! */}
 
           <Card style={{ padding: "18px 20px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>

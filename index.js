@@ -377,6 +377,28 @@ function inicializarFluxos() {
     console.log('✅ Fluxos inicializados!');
 }
 
+app.get('/api/status', (req, res) => {
+    console.log('📊 ROTA /api/status CHAMADA');
+    console.log('   👤 User-Agent:', req.headers['user-agent']);
+    console.log('   🔗 Referer:', req.headers['referer'] || 'Nenhum');
+    console.log('   🌐 Origin:', req.headers['origin'] || 'Nenhuma');
+    console.log('   📱 IP:', req.ip);
+    console.log('   botIniciadoEm no ctx:', ctx.botIniciadoEm);
+    console.log('   botAtivo no ctx:', ctx.botAtivo);
+    
+    const response = {
+        botAtivo: ctx.botAtivo,
+        online: ctx.botIniciadoEm ? true : false,
+        iniciadoEm: ctx.botIniciadoEm,
+        atendimentosAtivos: ctx.state?.stats()?.atendimentoHumano || 0,
+        situacaoRede: ctx.situacaoRede,
+        previsaoRetorno: ctx.previsaoRetorno,
+    };
+    
+    console.log('   resposta:', response);
+    res.json(response);
+});
+
 async function iniciarFluxoPorIntencao(intencao, deQuem, msg) {
     switch(intencao) {
         case 'SUPORTE': await _fluxoSuporte.iniciar(deQuem, msg); break;
