@@ -23,6 +23,7 @@ const { enviarMensagemSegura } = require('./services/whatsappService');
 const { analisarImagem } = require('./services/midiaService');
 const { transcreverAudio } = require('./services/audioService');
 const { horaLocal, atendenteDisponivel, proximoAtendimento, falarSinalAmigavel, redeNormal } = require('./services/utilsService');
+const sseService = require('./services/sseService'); // 🔥 NOVO: SSE Service
 const {
     processarMensagem,
     handleIdentificacao,
@@ -256,7 +257,16 @@ const client = new Client({
 });
 
 client.on('qr', (qr) => { ultimoQR = qr; console.log('📱 QR Code gerado. Acesse /qr para escanear.'); });
-client.on('ready', () => { console.log('✅ WhatsApp conectado e pronto!'); });
+client.on('ready', () => { 
+    console.log('✅ WhatsApp conectado e pronto!'); 
+    sseService.broadcast(); // 🔥 NOVO: Avisa que ficou online
+});
+
+// 🔥 NOVO: Detectar desconexão
+client.on('disconnected', (reason) => {
+    console.log('❌ WhatsApp desconectado:', reason);
+    sseService.broadcast(); // 🔥 NOVO: Avisa que caiu
+});
 
 // =====================================================
 // CONFIGURAÇÃO DO EXPRESS
@@ -272,9 +282,11 @@ app.get('/qr', async (req, res) => {
     catch (err) { res.status(500).send('Erro ao gerar QR.'); }
 });
 
-// =====================================================
-// CONTEXTO PARA ROTAS E FLUXOS
-// =====================================================
+// 🔥 NOVO: Rota SSE
+app.get('/api/status-stream', (req, res) => {
+    sseService.handleConnection(req, res);
+});
+
 // =====================================================
 // CONTEXTO PARA ROTAS E FLUXOS
 // =====================================================
@@ -296,7 +308,6 @@ const ctxRotas = {
     horarioFuncionamento, 
     horarioCobranca,
     dispararCobrancaReal: (data, tipo) => dispararCobrancaReal(client, firebaseDb, data, tipo),
-    // 🔥 CORREÇÃO: Passa firebaseDb corretamente para a função
     obterAgendaDia: (dia, mes, ano) => obterAgendaDia(firebaseDb, dia, mes, ano),
     executarMigracao: () => ({}),
     isentarMesEntrada: () => {},
@@ -304,6 +315,9 @@ const ctxRotas = {
     fs, 
     path
 };
+
+// 🔥 NOVO: Inicializa SSE com o contexto
+sseService.init(ctxRotas);
 
 require('./routes/index')(app, ctxRotas);
 
@@ -329,26 +343,32 @@ client.on('message', async (msg) => {
         const args = texto.split(' ');
         const comando = args[0].toLowerCase();
 
-        // Dentro da parte de COMANDOS ADMIN, adicione:
-if (comando === '!cobrar-sim' || comando === '!cobrar-nao') {
-    const votacaoId = args[1];
-    const resposta = comando === '!cobrar-sim' ? 'aprovado' : 'negado';
-    
-    await firebaseDb.collection('votacoes').doc(votacaoId).update({
-        status: 'respondido',
-        resolvido: true,
-        resultado: resposta,
-        respondido_por: deQuem,
-        respondido_em: new Date().toISOString()
-    });
-    
-    return msg.reply(`✅ Voto registrado: ${resposta === 'aprovado' ? 'SIM' : 'NÃO'}`);
-}
-
+        if (comando === '!cobrar-sim' || comando === '!cobrar-nao') {
+            const votacaoId = args[1];
+            const resposta = comando === '!cobrar-sim' ? 'aprovado' : 'negado';
+            
+            await firebaseDb.collection('votacoes').doc(votacaoId).update({
+                status: 'respondido',
+                resolvido: true,
+                resultado: resposta,
+                respondido_por: deQuem,
+                respondido_em: new Date().toISOString()
+            });
+            
+            return msg.reply(`✅ Voto registrado: ${resposta === 'aprovado' ? 'SIM' : 'NÃO'}`);
+        }
         
         if (comando === '!bot') {
-            if (args[1] === 'off') { botAtivo = false; return msg.reply("🔴 *IA DESATIVADA.*"); }
-            if (args[1] === 'on') { botAtivo = true; return msg.reply("🟢 *IA ATIVADA.*"); }
+            if (args[1] === 'off') { 
+                botAtivo = false; 
+                sseService.broadcast(); // 🔥 NOVO
+                return msg.reply("🔴 *IA DESATIVADA.*"); 
+            }
+            if (args[1] === 'on') { 
+                botAtivo = true; 
+                sseService.broadcast(); // 🔥 NOVO
+                return msg.reply("🟢 *IA ATIVADA.*"); 
+            }
         }
         if (comando === '!status') {
             return msg.reply(
@@ -367,8 +387,12 @@ if (comando === '!cobrar-sim' || comando === '!cobrar-nao') {
             let previsao = 'sem previsão';
             if (args.length > 2) previsao = args.slice(2).join(' ').replace(/["']/g, '');
             
-            ctxRotas.situacaoRede = novoStatus; ctxRotas.previsaoRetorno = previsao;
-            situacaoRede = novoStatus; previsaoRetorno = previsao;
+            ctxRotas.situacaoRede = novoStatus; 
+            ctxRotas.previsaoRetorno = previsao;
+            situacaoRede = novoStatus; 
+            previsaoRetorno = previsao;
+            
+            sseService.broadcast(); // 🔥 NOVO
             
             try {
                 await firebaseDb.collection('config').doc('situacao_rede').set({ valor: novoStatus });

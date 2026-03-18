@@ -13,18 +13,14 @@ import { fmtDate, fmtDia } from '../utils/formatadores';
 export function PageDashboard({ status, refetch }) {
   const navigate = useNavigate();
   
-  const { data: fluxoClientes } = useFetch("/api/dashboard/fluxo-clientes", 30000);
-  const { data: atend } = useFetch("/api/graficos/atendimentos", 60000);
-  const { data: cobr } = useFetch("/api/graficos/cobrancas", 60000);
-  const { data: estados } = useFetch("/api/estados", 10000);
-  const { data: bases } = useFetch("/api/bases", 30000);
-  const { data: resumoBases } = useFetch("/api/dashboard/resumo-bases", 30000);
-  const { data: caixaHoje } = useFetch("/api/dashboard/caixa-hoje", 20000);
-  const { data: alertas } = useFetch("/api/dashboard/alertas", 30000);
-  // 🔥 CORREÇÃO: renomeei de 'status' para 'botStatus' para não conflitar com o parâmetro
-  // ANTES (com refresh a cada 10 segundos)
-
-
+  const { data: fluxoClientes } = useFetch("/api/dashboard/fluxo-clientes");
+  const { data: atend } = useFetch("/api/graficos/atendimentos");
+  const { data: cobr } = useFetch("/api/graficos/cobrancas");
+  const { data: estados } = useFetch("/api/estados");
+  const { data: bases } = useFetch("/api/bases");
+  const { data: resumoBases } = useFetch("/api/dashboard/resumo-bases");
+  const { data: caixaHoje } = useFetch("/api/dashboard/caixa-hoje");
+  const { data: alertas } = useFetch("/api/dashboard/alertas");
 // DEPOIS (sem refresh automático)
 const { data: botStatus } = useFetch("/api/status");
 
