@@ -23,7 +23,7 @@ export function PageDashboard({ status, refetch }) {
   const { data: alertas } = useFetch("/api/dashboard/alertas", 30000);
   // 🔥 CORREÇÃO: renomeei de 'status' para 'botStatus' para não conflitar com o parâmetro
   // ANTES (com refresh a cada 10 segundos)
-const { data: botStatus } = useFetch("/api/status", 10000);
+
 
 // DEPOIS (sem refresh automático)
 const { data: botStatus } = useFetch("/api/status");
