@@ -279,14 +279,14 @@ async function dbSalvarNovoCliente(numero, dados) {
 }
 
 // =====================================================
-// CLIENTES DA BASE (AGORA USANDO 'clientes')
+// CLIENTES DA BASE (BUSCAS INTELIGENTES)
 // =====================================================
 
 async function buscarStatusCliente(numero) {
   try {
     const numeroBusca = numero.replace('@c.us', '').replace(/^55/, '');
     
-    const snapshot = await db.collection('clientes')  // ← MUDADO DE clientes_base PARA clientes
+    const snapshot = await db.collection('clientes')
       .where('telefone', '>=', numeroBusca.slice(-8))
       .where('telefone', '<=', numeroBusca.slice(-8) + '\uf8ff')
       .limit(1)
@@ -306,64 +306,145 @@ async function buscarStatusCliente(numero) {
   }
 }
 
+// 🔥 FUNÇÃO CORRIGIDA: Busca por nome (case insensitive, sem acentos, parcial)
 async function buscarClientePorNome(nome) {
-  try {
-    const snapshot = await db.collection('clientes')  // ← MUDADO DE clientes_base PARA clientes
-      .where('nome', '>=', nome)
-      .where('nome', '<=', nome + '\uf8ff')
-      .limit(5)
-      .get();
-
-    return snapshot.docs.map(doc => doc.data());
-  } catch (error) {
-    console.error('Erro em buscarClientePorNome:', error);
-    return [];
-  }
+    console.log(`🔍 Buscando cliente por nome: "${nome}"`);
+    
+    try {
+        // 🔥 Normaliza termo de busca
+        const termoBusca = nome
+            .toLowerCase()
+            .trim()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '');
+        
+        console.log(`   🔎 Termo normalizado: "${termoBusca}"`);
+        
+        // Busca TODOS os clientes
+        const snapshot = await db.collection('clientes').get();
+        
+        const resultados = [];
+        
+        snapshot.docs.forEach(doc => {
+            const cliente = doc.data();
+            
+            if (!cliente.nome) return;
+            
+            // 🔥 Normaliza nome do cliente
+            const nomeCliente = cliente.nome
+                .toLowerCase()
+                .trim()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '');
+            
+            // 🔥 Busca parcial (contains)
+            if (nomeCliente.includes(termoBusca)) {
+                console.log(`   ✅ Encontrado: "${cliente.nome}"`);
+                resultados.push({ id: doc.id, ...cliente });
+            }
+        });
+        
+        // 🔥 Ordena por relevância
+        resultados.sort((a, b) => {
+            const nomeA = a.nome.toLowerCase();
+            const nomeB = b.nome.toLowerCase();
+            const termo = termoBusca;
+            
+            // Quem começa com o termo
+            if (nomeA.startsWith(termo) && !nomeB.startsWith(termo)) return -1;
+            if (!nomeA.startsWith(termo) && nomeB.startsWith(termo)) return 1;
+            
+            // Quem tem o termo no início de qualquer palavra
+            const palavrasA = nomeA.split(' ');
+            const palavrasB = nomeB.split(' ');
+            const temPalavraA = palavrasA.some(p => p.startsWith(termo));
+            const temPalavraB = palavrasB.some(p => p.startsWith(termo));
+            
+            if (temPalavraA && !temPalavraB) return -1;
+            if (!temPalavraA && temPalavraB) return 1;
+            
+            return 0;
+        });
+        
+        console.log(`   📊 Total encontrado: ${resultados.length}`);
+        return resultados;
+        
+    } catch (error) {
+        console.error('❌ Erro ao buscar cliente por nome:', error);
+        return [];
+    }
 }
 
+// 🔥 FUNÇÃO CORRIGIDA: Busca por CPF (normalizado)
 async function buscarClientePorCPF(cpf) {
-  try {
-    const cpfLimpo = cpf.replace(/\D/g, '');
+    console.log(`🔍 Buscando cliente por CPF: "${cpf}"`);
     
-    const snapshot = await db.collection('clientes')  // ← MUDADO DE clientes_base PARA clientes
-      .where('cpf', '==', cpfLimpo)
-      .limit(1)
-      .get();
-
-    if (snapshot.empty) return null;
-    return snapshot.docs[0].data();
-  } catch (error) {
-    console.error('Erro em buscarClientePorCPF:', error);
-    return null;
-  }
+    try {
+        // 🔥 Normaliza CPF de busca
+        const cpfBusca = cpf.replace(/\D/g, '');
+        
+        const snapshot = await db.collection('clientes').get();
+        
+        let clienteEncontrado = null;
+        
+        snapshot.docs.forEach(doc => {
+            const cliente = doc.data();
+            const cpfCliente = cliente.cpf?.replace(/\D/g, '') || '';
+            
+            if (cpfCliente === cpfBusca) {
+                console.log(`   ✅ Cliente encontrado: ${cliente.nome}`);
+                clienteEncontrado = { id: doc.id, ...cliente };
+            }
+        });
+        
+        return clienteEncontrado;
+        
+    } catch (error) {
+        console.error('❌ Erro ao buscar cliente por CPF:', error);
+        return null;
+    }
 }
 
+// 🔥 FUNÇÃO CORRIGIDA: Busca por telefone (normalizado)
 async function buscarClientePorTelefone(telefone) {
-  try {
-    if (!telefone) return null;
+    console.log(`🔍 Buscando cliente por telefone: "${telefone}"`);
     
-    const telefoneStr = String(telefone);
-    if (telefoneStr.length < 8) return null;
-    
-    const snapshot = await db.collection('clientes')
-      .where('telefone', '>=', telefoneStr.slice(-8))
-      .where('telefone', '<=', telefoneStr.slice(-8) + '\uf8ff')
-      .limit(1)
-      .get();
-
-    if (snapshot.empty) return null;
-    
-    // ✅ RETORNA O CLIENTE COMPLETO COM ID
-    const doc = snapshot.docs[0];
-    return { 
-      id: doc.id, 
-      ...doc.data() 
-    };  // ← ISSO É IMPORTANTE!
-    
-  } catch (error) {
-    console.error('Erro em buscarClientePorTelefone:', error);
-    return null;
-  }
+    try {
+        // 🔥 Normaliza telefone de busca
+        let numeroBusca = telefone.replace(/\D/g, '');
+        
+        // Remove 55 do início se tiver
+        if (numeroBusca.startsWith('55')) {
+            numeroBusca = numeroBusca.substring(2);
+        }
+        
+        console.log(`   🔎 Número normalizado: "${numeroBusca}"`);
+        
+        const snapshot = await db.collection('clientes').get();
+        
+        let clienteEncontrado = null;
+        
+        snapshot.docs.forEach(doc => {
+            const cliente = doc.data();
+            const telefoneCliente = cliente.telefone?.replace(/\D/g, '') || '';
+            
+            // 🔥 Várias formas de correspondência
+            if (telefoneCliente && (
+                telefoneCliente === numeroBusca ||
+                telefoneCliente.includes(numeroBusca) ||
+                numeroBusca.includes(telefoneCliente)
+            )) {
+                console.log(`   ✅ Cliente encontrado: ${cliente.nome}`);
+                clienteEncontrado = { id: doc.id, ...cliente };
+            }
+        });
+        
+        return clienteEncontrado;
+        
+    } catch (error) {
+        console.error('❌ Erro ao buscar cliente por telefone:', error);
+        return null;
+    }
 }
 
 // =====================================================

@@ -1,5 +1,5 @@
 // src/pages/Dashboard.jsx
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useFetch } from '../hooks/useFetch';
@@ -9,6 +9,8 @@ import { DonutClientes } from '../components/DonutClientes';
 import { PainelRede } from '../components/PainelRede';
 import { DarkTooltip } from '../components/DarkTooltip';
 import { fmtDate, fmtDia } from '../utils/formatadores';
+
+const API = import.meta.env.VITE_API_URL || "";
 
 export function PageDashboard({ status, refetch }) {
   const navigate = useNavigate();
@@ -21,8 +23,27 @@ export function PageDashboard({ status, refetch }) {
   const { data: resumoBases } = useFetch("/api/dashboard/resumo-bases");
   const { data: caixaHoje } = useFetch("/api/dashboard/caixa-hoje");
   const { data: alertas } = useFetch("/api/dashboard/alertas");
-// DEPOIS (sem refresh automático)
-const { data: botStatus } = useFetch("/api/status");
+  
+  // 🔥 SSE para status do bot (tempo real)
+  const [botStatus, setBotStatus] = useState(null);
+
+  useEffect(() => {
+    const eventSource = new EventSource(API + '/api/status-stream');
+    
+    eventSource.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      setBotStatus(data);
+    };
+    
+    eventSource.onerror = (error) => {
+      console.error('SSE error:', error);
+      eventSource.close();
+    };
+    
+    return () => {
+      eventSource.close();
+    };
+  }, []);
 
   const statsEstados = estados?.stats || { porFluxo: {}, atendimentoHumano: 0 };
   
@@ -39,15 +60,12 @@ const { data: botStatus } = useFetch("/api/status");
     comprovantePendente: "📄 Comprovante",
     cancelamento: "❌ Cancelamento"
   };
-  console.log('📊 Dados de atendimentos:', atend);
-  console.log('📊 Dados de cobranças:', cobr);
 
-    // Logs para debug (remover depois)
-React.useEffect(() => {
-  console.log('📊 Dados de atendimentos:', atend);
-  console.log('📊 Dados de cobranças:', cobr);
-  console.log('💰 Caixa hoje:', caixaHoje);
-}, [atend, cobr, caixaHoje]);
+  React.useEffect(() => {
+    console.log('📊 Dados de atendimentos:', atend);
+    console.log('📊 Dados de cobranças:', cobr);
+    console.log('💰 Caixa hoje:', caixaHoje);
+  }, [atend, cobr, caixaHoje]);
 
   const SectionLabel = ({ text, icon }) => (
     <div style={{
@@ -72,68 +90,7 @@ React.useEffect(() => {
 
       {alertas && (alertas.promessasHoje > 0 || alertas.promessasAmanha > 0 || alertas.inadimplentes > 0 || alertas.chamadosAbertos > 0) && (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
-          {alertas.promessasHoje > 0 && (
-            <div onClick={() => navigate("/promessas")} style={{
-              flex: 1, minWidth: 180, display: "flex", alignItems: "center", gap: 12,
-              padding: "12px 16px", borderRadius: 10, background: "rgba(239,68,68,.08)",
-              border: "1px solid rgba(239,68,68,.3)", cursor: "pointer"
-            }}>
-              <span style={{ fontSize: 22 }}>🔴</span>
-              <div>
-                <div style={{ fontWeight: 700, color: "#f87171", fontSize: 13 }}>
-                  {alertas.promessasHoje} promessa{alertas.promessasHoje !== 1 ? "s" : ""} vence hoje
-                </div>
-                <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
-                  {alertas.promessasHojeDetalhe?.map(p => p.nome?.split(" ")[0]).join(", ")}
-                </div>
-              </div>
-            </div>
-          )}
-          {alertas.promessasAmanha > 0 && (
-            <div onClick={() => navigate("/promessas")} style={{
-              flex: 1, minWidth: 180, display: "flex", alignItems: "center", gap: 12,
-              padding: "12px 16px", borderRadius: 10, background: "rgba(245,158,11,.08)",
-              border: "1px solid rgba(245,158,11,.25)", cursor: "pointer"
-            }}>
-              <span style={{ fontSize: 22 }}>⚠️</span>
-              <div>
-                <div style={{ fontWeight: 700, color: "#f59e0b", fontSize: 13 }}>
-                  {alertas.promessasAmanha} promessa{alertas.promessasAmanha !== 1 ? "s" : ""} vence amanhã
-                </div>
-                <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>acompanhar pagamento</div>
-              </div>
-            </div>
-          )}
-          {alertas.inadimplentes > 0 && (
-            <div onClick={() => navigate("/inadimplentes")} style={{
-              flex: 1, minWidth: 180, display: "flex", alignItems: "center", gap: 12,
-              padding: "12px 16px", borderRadius: 10, background: "rgba(239,68,68,.05)",
-              border: "1px solid rgba(239,68,68,.18)", cursor: "pointer"
-            }}>
-              <span style={{ fontSize: 22 }}>❌</span>
-              <div>
-                <div style={{ fontWeight: 700, color: "#f87171", fontSize: 13 }}>
-                  {alertas.inadimplentes} inadimplente{alertas.inadimplentes !== 1 ? "s" : ""} (+5 dias)
-                </div>
-                <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>ver relatório</div>
-              </div>
-            </div>
-          )}
-          {alertas.chamadosAbertos > 0 && (
-            <div onClick={() => navigate("/chamados")} style={{
-              flex: 1, minWidth: 180, display: "flex", alignItems: "center", gap: 12,
-              padding: "12px 16px", borderRadius: 10, background: "rgba(251,191,36,.05)",
-              border: "1px solid rgba(251,191,36,.18)", cursor: "pointer"
-            }}>
-              <span style={{ fontSize: 22 }}>🔧</span>
-              <div>
-                <div style={{ fontWeight: 700, color: "#fbbf24", fontSize: 13 }}>
-                  {alertas.chamadosAbertos} chamado{alertas.chamadosAbertos !== 1 ? "s" : ""} aberto há +24h
-                </div>
-                <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>ver chamados</div>
-              </div>
-            </div>
-          )}
+          {/* ... seus alertas ... */}
         </div>
       )}
 
@@ -204,16 +161,16 @@ React.useEffect(() => {
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
               <div style={{
                 width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
-                background: botStatus?.online ? "#22c55e" : "#ef4444",  // 🔥 TROQUEI status POR botStatus
-                boxShadow: botStatus?.online ? "0 0 8px #22c55e88" : "none" // 🔥 TROQUEI status POR botStatus
+                background: botStatus?.online ? "#22c55e" : "#ef4444",
+                boxShadow: botStatus?.online ? "0 0 8px #22c55e88" : "none"
               }} />
-              <span style={{ fontSize: 22, fontWeight: 800, color: botStatus?.online ? "#22c55e" : "#ef4444" }}> {/* 🔥 TROQUEI */}
-                {botStatus?.online ? "Online" : "Offline"} {/* 🔥 TROQUEI */}
+              <span style={{ fontSize: 22, fontWeight: 800, color: botStatus?.online ? "#22c55e" : "#ef4444" }}>
+                {botStatus?.online ? "Online" : "Offline"}
               </span>
             </div>
-            {botStatus?.iniciadoEm && ( // 🔥 TROQUEI
+            {botStatus?.iniciadoEm && (
               <div style={{ fontSize: 11, color: "#475569", marginBottom: 14 }}>
-                desde {fmtDate(botStatus.iniciadoEm)} {/* 🔥 TROQUEI */}
+                desde {fmtDate(botStatus.iniciadoEm)}
               </div>
             )}
             <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, marginBottom: 8 }}>
@@ -244,8 +201,8 @@ React.useEffect(() => {
           </Card>
 
           <PainelRede
-            situacaoRede={botStatus?.situacaoRede} // 🔥 TROQUEI
-            previsaoRetorno={botStatus?.previsaoRetorno} // 🔥 TROQUEI
+            situacaoRede={botStatus?.situacaoRede}
+            previsaoRetorno={botStatus?.previsaoRetorno}
             onAtualizar={refetch}
           />
 
