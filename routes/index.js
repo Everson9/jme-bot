@@ -605,228 +605,227 @@ app.get('/api/cobrar/agenda', async (req, res) => {
 });
 
     // =====================================================
-    // ROTAS DE PROMESSAS
-    // =====================================================
+// ROTAS DE PROMESSAS
+// =====================================================
 
-    app.get('/api/promessas', async (req, res) => {
-        try {
-            const { status } = req.query;
-            let query = firebaseDb.collection('promessas');
-            
-            if (status && status !== 'todos') {
-                query = query.where('status', '==', status);
-            }
-            
-            const snapshot = await query
-                .orderBy('criado_em', 'desc')
-                .limit(200)
-                .get();
-            
-            const promessas = await Promise.all(snapshot.docs.map(async doc => {
-                const promessa = { id: doc.id, ...doc.data() };
-                
-                const numero = promessa.numero?.replace('@c.us', '').replace('55', '');
-                const cliente = await banco.buscarClientePorTelefone(numero);
-                
-                if (cliente) {
-                    promessa.dia_vencimento = cliente.dia_vencimento;
-                    
-// Verifica se base_id existe E se não é uma string vazia/nula
-if (cliente.base_id && typeof cliente.base_id === 'string' && cliente.base_id.trim() !== '') {
+app.get('/api/promessas', async (req, res) => {
     try {
-        const baseDoc = await firebaseDb.collection('bases').doc(cliente.base_id).get();
-        if (baseDoc.exists) {
-            promessa.base_nome = baseDoc.data().nome;
+        const { status } = req.query;
+        let query = firebaseDb.collection('promessas');
+        
+        if (status && status !== 'todos') {
+            query = query.where('status', '==', status);
         }
-    } catch (docError) {
-        console.error(`Erro ao buscar base_id ${cliente.base_id}:`, docError);
-        // Opcional: define um nome padrão ou ignora
-    }
-}
+        
+        const snapshot = await query
+            .orderBy('criado_em', 'desc')
+            .limit(200)
+            .get();
+        
+        const promessas = await Promise.all(snapshot.docs.map(async doc => {
+            const promessa = { id: doc.id, ...doc.data() };
+            
+            const numero = promessa.numero?.replace('@c.us', '').replace('55', '');
+            const cliente = await banco.buscarClientePorTelefone(numero);
+            
+            if (cliente) {
+                promessa.dia_vencimento = cliente.dia_vencimento;
+                
+                // Verifica se base_id existe E se não é uma string vazia/nula
+                if (cliente.base_id && typeof cliente.base_id === 'string' && cliente.base_id.trim() !== '') {
+                    try {
+                        const baseDoc = await firebaseDb.collection('bases').doc(cliente.base_id).get();
+                        if (baseDoc.exists) {
+                            promessa.base_nome = baseDoc.data().nome;
+                        }
+                    } catch (docError) {
+                        console.error(`Erro ao buscar base_id ${cliente.base_id}:`, docError);
+                        // Opcional: define um nome padrão ou ignora
                     }
                 }
-                
-                return promessa;
-            }));
-            
-            const seteDiasAtras = new Date();
-            seteDiasAtras.setDate(seteDiasAtras.getDate() - 7);
-            
-            const promessasFiltradas = (!status || status === 'todos') 
-                ? promessas.filter(p => 
-                    p.status === 'pendente' || 
-                    (p.status !== 'pendente' && new Date(p.criado_em) >= seteDiasAtras)
-                  )
-                : promessas;
-            
-            res.json(promessasFiltradas);
-        } catch (error) {
-            console.error('Erro ao buscar promessas:', error);
-            res.status(500).json({ erro: error.message });
-        }
-    });
-
-    app.post('/api/promessas/:id/pago', async (req, res) => {
-        try {
-            const { id } = req.params;
-            
-            const promessaRef = firebaseDb.collection('promessas').doc(id);
-            const promessaDoc = await promessaRef.get();
-            
-            if (!promessaDoc.exists) {
-                return res.status(404).json({ erro: 'Promessa não encontrada' });
             }
             
-            const promessa = promessaDoc.data();
+            return promessa;
+        }));
+        
+        const seteDiasAtras = new Date();
+        seteDiasAtras.setDate(seteDiasAtras.getDate() - 7);
+        
+        const promessasFiltradas = (!status || status === 'todos') 
+            ? promessas.filter(p => 
+                p.status === 'pendente' || 
+                (p.status !== 'pendente' && new Date(p.criado_em) >= seteDiasAtras)
+              )
+            : promessas;
+        
+        res.json(promessasFiltradas);
+    } catch (error) {
+        console.error('Erro ao buscar promessas:', error);
+        res.status(500).json({ erro: error.message });
+    }
+});
+
+app.post('/api/promessas/:id/pago', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const promessaRef = firebaseDb.collection('promessas').doc(id);
+        const promessaDoc = await promessaRef.get();
+        
+        if (!promessaDoc.exists) {
+            return res.status(404).json({ erro: 'Promessa não encontrada' });
+        }
+        
+        const promessa = promessaDoc.data();
+        
+        await promessaRef.update({
+            status: 'pago',
+            pago_em: new Date().toISOString()
+        });
+        
+        if (promessa.nome) {
+            const clientes = await banco.buscarClientePorNome(promessa.nome);
+            const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
             
-            await promessaRef.update({
-                status: 'pago',
-                pago_em: new Date().toISOString()
-            });
-            
-            if (promessa.nome) {
-                const clientes = await banco.buscarClientePorNome(promessa.nome);
-                const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
+            if (cliente) {
+                await firebaseDb.collection('clientes').doc(cliente.id).update({
+                    status: 'pago',
+                    atualizado_em: new Date().toISOString()
+                });
                 
-                if (cliente) {
-                    await firebaseDb.collection('clientes').doc(cliente.id).update({
+                const hoje = new Date();
+                const mesRef = `${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
+                
+                await firebaseDb.collection('clientes')
+                    .doc(cliente.id)
+                    .collection('historico_pagamentos')
+                    .doc(mesRef)
+                    .set({
+                        referencia: mesRef,
                         status: 'pago',
+                        forma_pagamento: 'Promessa',
+                        pago_em: new Date().toISOString(),
+                        data_vencimento: cliente.dia_vencimento || 10
+                    }, { merge: true });
+            }
+        }
+        
+        res.json({ ok: true, mensagem: 'Promessa marcada como paga' });
+    } catch (error) {
+        console.error('Erro ao marcar promessa como paga:', error);
+        res.status(500).json({ erro: error.message });
+    }
+});
+
+app.post('/api/promessas/:id/cancelar', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const promessaRef = firebaseDb.collection('promessas').doc(id);
+        const promessaDoc = await promessaRef.get();
+        
+        if (!promessaDoc.exists) {
+            return res.status(404).json({ erro: 'Promessa não encontrada' });
+        }
+        
+        const promessa = promessaDoc.data();
+        
+        await promessaRef.update({
+            status: 'cancelada'
+        });
+        
+        if (promessa.nome) {
+            const clientes = await banco.buscarClientePorNome(promessa.nome);
+            const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
+            
+            if (cliente) {
+                const clienteDoc = await firebaseDb.collection('clientes').doc(cliente.id).get();
+                if (clienteDoc.exists && clienteDoc.data().status === 'promessa') {
+                    await firebaseDb.collection('clientes').doc(cliente.id).update({
+                        status: 'pendente',
                         atualizado_em: new Date().toISOString()
                     });
-                    
-                    const hoje = new Date();
-                    const mesRef = `${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
-                    
-                    await firebaseDb.collection('clientes')
-                        .doc(cliente.id)
-                        .collection('historico_pagamentos')
-                        .doc(mesRef)
-                        .set({
-                            referencia: mesRef,
-                            status: 'pago',
-                            forma_pagamento: 'Promessa',
-                            pago_em: new Date().toISOString(),
-                            data_vencimento: cliente.dia_vencimento || 10
-                        }, { merge: true });
                 }
             }
-            
-            res.json({ ok: true, mensagem: 'Promessa marcada como paga' });
-        } catch (error) {
-            console.error('Erro ao marcar promessa como paga:', error);
-            res.status(500).json({ erro: error.message });
         }
-    });
+        
+        res.json({ ok: true, mensagem: 'Promessa cancelada' });
+    } catch (error) {
+        console.error('Erro ao cancelar promessa:', error);
+        res.status(500).json({ erro: error.message });
+    }
+});
 
-    app.post('/api/promessas/:id/cancelar', async (req, res) => {
-        try {
-            const { id } = req.params;
-            
-            const promessaRef = firebaseDb.collection('promessas').doc(id);
-            const promessaDoc = await promessaRef.get();
-            
-            if (!promessaDoc.exists) {
-                return res.status(404).json({ erro: 'Promessa não encontrada' });
-            }
-            
-            const promessa = promessaDoc.data();
-            
-            await promessaRef.update({
-                status: 'cancelada'
-            });
-            
-            if (promessa.nome) {
-                const clientes = await banco.buscarClientePorNome(promessa.nome);
-                const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
-                
-                if (cliente) {
-                    const clienteDoc = await firebaseDb.collection('clientes').doc(cliente.id).get();
-                    if (clienteDoc.exists && clienteDoc.data().status === 'promessa') {
-                        await firebaseDb.collection('clientes').doc(cliente.id).update({
-                            status: 'pendente',
-                            atualizado_em: new Date().toISOString()
-                        });
-                    }
-                }
-            }
-            
-            res.json({ ok: true, mensagem: 'Promessa cancelada' });
-        } catch (error) {
-            console.error('Erro ao cancelar promessa:', error);
-            res.status(500).json({ erro: error.message });
+app.post('/api/promessas', async (req, res) => {
+    try {
+        const { nome, numero, data_promessa, cliente_id } = req.body;
+        
+        if (!data_promessa) {
+            return res.status(400).json({ erro: 'data_promessa obrigatória' });
         }
-    });
-
-    app.post('/api/promessas', async (req, res) => {
-        try {
-            const { nome, numero, data_promessa, cliente_id } = req.body;
+        
+        const numWpp = numero ? (numero.replace(/\D/g,'').replace(/^0/,'55') + '@c.us') : null;
+        
+        const promessaRef = await firebaseDb.collection('promessas').add({
+            numero: numWpp || null,
+            nome: nome || null,
+            data_promessa: data_promessa,
+            status: 'pendente',
+            criado_em: new Date().toISOString()
+        });
+        
+        if (cliente_id) {
+            const clienteRef = firebaseDb.collection('clientes').doc(cliente_id);
+            const clienteDoc = await clienteRef.get();
             
-            if (!data_promessa) {
-                return res.status(400).json({ erro: 'data_promessa obrigatória' });
+            if (clienteDoc.exists && clienteDoc.data().status === 'pendente') {
+                await clienteRef.update({
+                    status: 'promessa',
+                    atualizado_em: new Date().toISOString()
+                });
             }
+        } else if (nome) {
+            const clientes = await banco.buscarClientePorNome(nome);
+            const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
             
-            const numWpp = numero ? (numero.replace(/\D/g,'').replace(/^0/,'55') + '@c.us') : null;
-            
-            const promessaRef = await firebaseDb.collection('promessas').add({
-                numero: numWpp || null,
-                nome: nome || null,
-                data_promessa: data_promessa,
-                status: 'pendente',
-                criado_em: new Date().toISOString()
-            });
-            
-            if (cliente_id) {
-                const clienteRef = firebaseDb.collection('clientes').doc(cliente_id);
-                const clienteDoc = await clienteRef.get();
-                
+            if (cliente) {
+                const clienteDoc = await firebaseDb.collection('clientes').doc(cliente.id).get();
                 if (clienteDoc.exists && clienteDoc.data().status === 'pendente') {
-                    await clienteRef.update({
+                    await firebaseDb.collection('clientes').doc(cliente.id).update({
                         status: 'promessa',
                         atualizado_em: new Date().toISOString()
                     });
                 }
-            } else if (nome) {
-                const clientes = await banco.buscarClientePorNome(nome);
-                const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
-                
-                if (cliente) {
-                    const clienteDoc = await firebaseDb.collection('clientes').doc(cliente.id).get();
-                    if (clienteDoc.exists && clienteDoc.data().status === 'pendente') {
-                        await firebaseDb.collection('clientes').doc(cliente.id).update({
-                            status: 'promessa',
-                            atualizado_em: new Date().toISOString()
-                        });
-                    }
-                }
             }
-            
-            res.json({ ok: true, id: promessaRef.id });
-        } catch (error) {
-            console.error('Erro ao criar promessa:', error);
-            res.status(500).json({ erro: error.message });
         }
-    });
+        
+        res.json({ ok: true, id: promessaRef.id });
+    } catch (error) {
+        console.error('Erro ao criar promessa:', error);
+        res.status(500).json({ erro: error.message });
+    }
+});
 
-    app.post('/api/promessas/verificar', (req, res) => {
-        try {
-            if (verificarPromessasVencidas) {
-                verificarPromessasVencidas();
-            }
-            res.json({ ok: true, msg: 'Verificação executada' });
-        } catch (error) {
-            res.status(500).json({ erro: error.message });
+app.post('/api/promessas/verificar', (req, res) => {
+    try {
+        if (verificarPromessasVencidas) {
+            verificarPromessasVencidas();
         }
-    });
+        res.json({ ok: true, msg: 'Verificação executada' });
+    } catch (error) {
+        res.status(500).json({ erro: error.message });
+    }
+});
 
-    app.delete('/api/promessas/:id', async (req, res) => {
-        try {
-            const { id } = req.params;
-            await firebaseDb.collection('promessas').doc(id).delete();
-            res.json({ ok: true });
-        } catch (error) {
-            res.status(500).json({ erro: error.message });
-        }
-    });
+app.delete('/api/promessas/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        await firebaseDb.collection('promessas').doc(id).delete();
+        res.json({ ok: true });
+    } catch (error) {
+        res.status(500).json({ erro: error.message });
+    }
+});
 
     // =====================================================
     // ROTAS DE LOGS
