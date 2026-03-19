@@ -631,11 +631,18 @@ app.get('/api/cobrar/agenda', async (req, res) => {
                 if (cliente) {
                     promessa.dia_vencimento = cliente.dia_vencimento;
                     
-                    if (cliente.base_id) {
-                        const baseDoc = await firebaseDb.collection('bases').doc(cliente.base_id).get();
-                        if (baseDoc.exists) {
-                            promessa.base_nome = baseDoc.data().nome;
-                        }
+// Verifica se base_id existe E se não é uma string vazia/nula
+if (cliente.base_id && typeof cliente.base_id === 'string' && cliente.base_id.trim() !== '') {
+    try {
+        const baseDoc = await firebaseDb.collection('bases').doc(cliente.base_id).get();
+        if (baseDoc.exists) {
+            promessa.base_nome = baseDoc.data().nome;
+        }
+    } catch (docError) {
+        console.error(`Erro ao buscar base_id ${cliente.base_id}:`, docError);
+        // Opcional: define um nome padrão ou ignora
+    }
+}
                     }
                 }
                 
