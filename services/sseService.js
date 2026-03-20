@@ -6,21 +6,28 @@ class SSEService {
         this.currentStatus = null;
     }
 
-    // Inicializa com o contexto
-    init(ctx) {
-        this.ctx = ctx;
-    }
+    init(ctx) { this.ctx = ctx; }
 
-    // Adiciona um cliente
     addClient(res) {
         this.clients.push(res);
         console.log(`📡 SSE: Cliente conectado. Total: ${this.clients.length}`);
     }
 
-    // Remove um cliente
     removeClient(res) {
         this.clients = this.clients.filter(client => client !== res);
         console.log(`📡 SSE: Cliente desconectado. Total: ${this.clients.length}`);
+    }
+
+    // Notifica o front que um recurso específico mudou
+    // O front escuta o evento e recarrega apenas aquela página/dado
+    // Exemplo: sseService.notificar('clientes') → front recarrega clientes
+    // Exemplo: sseService.notificar('chamados') → front recarrega chamados
+    notificar(recurso) {
+        const data = `event: update\ndata: ${JSON.stringify({ recurso, ts: Date.now() })}\n\n`;
+        this.clients.forEach(client => {
+            try { client.write(data); } catch(_) {}
+        });
+        console.log(`📡 SSE: notificação [${recurso}]`);
     }
 
     // Pega o status atual

@@ -1,6 +1,6 @@
 // src/pages/SGP.jsx
 import React, { useState } from 'react';
-import { useFetch } from '../hooks/useFetch';
+import { useSSEData } from '../hooks/useSSEData';
 import { Card } from '../components/Card';
 import { Spinner } from '../components/Spinner';
 import { Badge } from '../components/Badge';
@@ -8,7 +8,7 @@ import { Badge } from '../components/Badge';
 const API = import.meta.env.VITE_API_URL || "";
 
 export function PageSGP() {
-  const { data: planilha, loading, refetch } = useFetch("/api/planilha/resumo", 30000);
+  const { data: planilha, loading, refetch } = useSSEData("/api/planilha/resumo", "clientes");
   const [confirmando, setConfirmando] = useState({});
   const [confirmados, setConfirmados] = useState({});
 

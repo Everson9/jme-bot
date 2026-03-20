@@ -1,13 +1,13 @@
 // src/pages/Cancelamentos.jsx
 import React, { useState } from 'react';
-import { useFetch } from '../hooks/useFetch';
+import { useSSEData } from '../hooks/useSSEData';
 import { Card } from '../components/Card';
 import { Spinner } from '../components/Spinner';
 
 const API = import.meta.env.VITE_API_URL || "";
 
 export function PageCancelamentos() {
-  const { data, loading, refetch } = useFetch("/api/cancelamentos", 15000);
+  const { data, loading, refetch } = useSSEData("/api/cancelamentos", "cancelamentos");
   const [filtro, setFiltro] = useState("todos");
 
   const cancelamentos = data || [];
@@ -205,4 +205,4 @@ export function PageCancelamentos() {
       </Card>
     </div>
   );
-}
+} 

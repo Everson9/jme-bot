@@ -8,7 +8,7 @@ import { fmtDate, fmtTel } from '../utils/formatadores';
 const API = import.meta.env.VITE_API_URL || "";
 
 export function PageCarne() {
-  const { data, loading, refetch } = useFetch("/api/carne", 15000);
+  const { data, loading, refetch } = useFetch("/api/carne");
   const [filtro, setFiltro] = useState("pendentes");
   const [atualizando, setAtualizando] = useState({});
 

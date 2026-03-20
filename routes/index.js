@@ -1089,7 +1089,8 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 atualizado_em: new Date().toISOString()
             });
         }
-        
+        if (ctx.sseService) ctx.sseService.notificar('clientes');
+        if (ctx.sseService) ctx.sseService.notificar('alertas');
         res.json({ ok: true });
     } catch (error) {
         console.error('Erro ao dar baixa:', error);
@@ -1273,7 +1274,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 status: status,
                 atualizado_em: new Date().toISOString()
             });
-            
+            if (ctx.sseService) ctx.sseService.notificar('clientes');
             res.json({ ok: true, status });
         } catch (error) {
             console.error('Erro ao atualizar status:', error);
@@ -1350,7 +1351,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
         const { id } = req.params;
         try {
             await banco.dbAtualizarChamado(id, 'fechado');
-            
+            if (ctx.sseService) ctx.sseService.notificar('chamados');
             const chamadoDoc = await firebaseDb.collection('chamados').doc(id).get();
             if (chamadoDoc.exists) {
                 const chamado = chamadoDoc.data();
@@ -1465,6 +1466,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 status: 'confirmado',
                 confirmado_em: new Date().toISOString()
             });
+            if (ctx.sseService) ctx.sseService.notificar('cancelamentos');
 
             if (cancel.cliente_id) {
                 await firebaseDb.collection('clientes').doc(cancel.cliente_id).update({
@@ -2082,6 +2084,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 status: 'entregue',
                 entregue_em: new Date().toISOString()
             });
+            if (ctx.sseService) ctx.sseService.notificar('carne');
             
             if (botIniciadoEm && sol.numero) {
                 await client.sendMessage(sol.numero,

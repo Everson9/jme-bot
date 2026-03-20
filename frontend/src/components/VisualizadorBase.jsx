@@ -49,8 +49,8 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
 
   useEffect(() => {
     carregar();
-    const t = setInterval(() => carregar(true), 30000); // 30s — capta baixas do WhatsApp
-    return () => clearInterval(t);
+    // Sem polling automático — evita leituras desnecessárias no Firebase
+    // O botão ↻ permite atualizar manualmente quando precisar
   }, [carregar]);
 
   // Resetar página quando filtros mudarem

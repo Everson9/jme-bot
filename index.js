@@ -179,6 +179,7 @@ async function processarMidiaAutomatico(deQuem, msg) {
                 ).catch(() => {});
             }
             sseService.broadcast();
+            sseService.notificar('clientes');
             return true;
         } else {
             // Não achou pelo telefone — pede o nome
@@ -275,13 +276,10 @@ const client = new Client({
 });
 
 client.on('qr', (qr) => { ultimoQR = qr; console.log('📱 QR Code gerado. Acesse /qr para escanear.'); });
-client.on('ready', () => { 
-    console.log('✅ WhatsApp conectado e pronto!'); 
-    sseService.broadcast();
-});
 
 client.on('disconnected', (reason) => {
     console.log('❌ WhatsApp desconectado:', reason);
+    botIniciadoEm = null; // marca como offline
     sseService.broadcast();
 });
 
@@ -636,6 +634,7 @@ client.on('message_create', async (msg) => {
     if (!state.isAtendimentoHumano(para)) {
         state.setAtendimentoHumano(para, true);
         await banco.dbSalvarAtendimentoHumano(para).catch(() => {});
+        sseService.notificar('estados');
         console.log(`👤 Admin assumiu conversa com ${para.replace('@c.us','')} automaticamente`);
     }
     
@@ -902,6 +901,24 @@ setInterval(async () => {
         await ctxRotas.verificarPromessasVencidas().catch(() => {});
     }
 
+    // Reset de atendimentos humanos todo dia às 20h (fim do expediente)
+    if (horaBR === 20 && minBR === 0) {
+        try {
+            const atendimentos = await banco.dbCarregarAtendimentosHumanos();
+            if (atendimentos.length > 0) {
+                for (const a of atendimentos) {
+                    state.setAtendimentoHumano(a.numero, false);
+                    state.encerrarFluxo(a.numero);
+                    await banco.dbRemoverAtendimentoHumano(a.numero).catch(() => {});
+                }
+                sseService.broadcast();
+                console.log(`🔄 Reset de ${atendimentos.length} atendimento(s) humano(s) ao fim do expediente`);
+            }
+        } catch(e) {
+            console.error('Erro no reset de atendimentos:', e);
+        }
+    }
+
     if (diaBR === 1 && horaBR === 0 && minBR === 5) {
         console.log('📅 Reset mensal: voltando clientes pagos para pendente...');
         try {
@@ -970,7 +987,8 @@ setInterval(async () => {
 // =====================================================
 client.on('ready', async () => {
     inicializarFluxos();
-    ctxRotas.botIniciadoEm = Date.now();
+    ctxRotas.botIniciadoEm = Date.now(); // setter atualiza botIniciadoEm
+    sseService.broadcast(); // agora botIniciadoEm já está setado → online: true
 
     // ── Restaura configurações salvas no Firebase ──────────────────
     try {

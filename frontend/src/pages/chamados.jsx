@@ -1,6 +1,6 @@
 // src/pages/Chamados.jsx
 import React, { useState } from 'react';
-import { useFetch } from '../hooks/useFetch';
+import { useSSEData } from '../hooks/useSSEData';
 import { Card } from '../components/Card';
 import { Spinner } from '../components/Spinner';
 import { fmtTel } from '../utils/formatadores';
@@ -8,7 +8,7 @@ import { fmtTel } from '../utils/formatadores';
 const API = import.meta.env.VITE_API_URL || "";
 
 export function PageChamados() {
-  const { data, loading, refetch } = useFetch("/api/chamados", 15000);
+  const { data, loading, refetch } = useSSEData("/api/chamados", "chamados");
   const [filtro, setFiltro] = useState("todos");
 
   const chamados = data || [];

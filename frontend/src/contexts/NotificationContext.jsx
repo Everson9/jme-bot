@@ -1,6 +1,6 @@
 // src/contexts/NotificationContext.jsx
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { useFetch } from '../hooks/useFetch';
+import { useSSEData } from '../hooks/useSSEData';
 
 const NotificationContext = createContext();
 
@@ -8,8 +8,8 @@ export function NotificationProvider({ children }) {
     const [notifications, setNotifications] = useState([]);
     const [unreadCount, setUnreadCount] = useState(0);
     
-    // Busca alertas a cada 30 segundos
-    const { data: alertas } = useFetch('/api/dashboard/alertas', 30000);
+    // Carrega alertas só ao montar e quando SSE notifica mudança de clientes/chamados/promessas
+    const { data: alertas } = useSSEData('/api/dashboard/alertas', 'alertas');
 
     useEffect(() => {
         if (alertas) {
