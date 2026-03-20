@@ -76,22 +76,75 @@ async function processarMensagem(deQuem, msg, ctx) {
                 await handleIdentificacao(deQuem, msg);
                 return;
             }
+
+            // Menu rápido — aparece quando bot não entendeu 2x seguidas
+            if (fluxoAtivo === 'menu_rapido') {
+                const t = (msg.body || '').trim().toLowerCase();
+                state.atualizar(deQuem, { _naoEntendidos: 0 }); // reset contador
+                state.encerrarFluxo(deQuem);
+                if (t === '1' || t.includes('internet') || t.includes('suporte') || t.includes('sinal')) {
+                    await iniciarFluxoPorIntencao('SUPORTE', deQuem, msg);
+                } else if (t === '2' || t.includes('pix') || t.includes('pagamento') || t.includes('pagar')) {
+                    await iniciarFluxoPorIntencao('FINANCEIRO', deQuem, msg);
+                } else if (t === '3' || t.includes('atendente') || t.includes('humano') || t.includes('pessoa')) {
+                    await abrirChamadoComMotivo(deQuem,
+                        state.getDados(deQuem)?.nomeCliente || null,
+                        'Solicitou atendente pelo menu'
+                    );
+                    await client.sendMessage(deQuem,
+                        `${P}Deixa eu chamar alguém pra te ajudar. 😊 Aguarda um instante!`
+                    );
+                } else {
+                    // Digitou outra coisa — chama atendente direto
+                    await abrirChamadoComMotivo(deQuem,
+                        state.getDados(deQuem)?.nomeCliente || null,
+                        'Mensagem não reconhecida após menu'
+                    );
+                    await client.sendMessage(deQuem,
+                        `${P}Deixa eu chamar alguém pra te ajudar melhor. 😊 Aguarda um instante!`
+                    );
+                }
+                return;
+            }
             
             if (fluxoAtivo === 'aguardando_nome_comprovante') {
                 const nomeLimpo = await utils.extrairNomeDaMensagem(msg.body || '');
                 const dados = state.getDados(deQuem);
-                if (nomeLimpo) {
-                    const cliente = await banco.buscarClientePorNome(nomeLimpo);
-                    if (cliente?.length > 0) {
-                        await darBaixaAutomatica(deQuem, dados.analise);
-                        await client.sendMessage(deQuem, `${P}✅ Pagamento confirmado para ${cliente[0].nome}!`);
-                    } else {
-                        await client.sendMessage(deQuem, `${P}Não encontrei cliente. Vou abrir chamado.`);
-                        abrirChamadoComMotivo(deQuem, nomeLimpo, 'Comprovante sem cadastro', { analise: dados.analise });
-                    }
-                } else {
-                    await client.sendMessage(deQuem, `${P}Não consegui identificar o nome. Digite o nome completo.`);
+                if (!nomeLimpo) {
+                    await client.sendMessage(deQuem, `${P}Não consegui identificar o nome. Pode digitar só o nome e sobrenome do titular? 😊`);
                     return;
+                }
+                const clientes = await banco.buscarClientePorNome(nomeLimpo);
+                if (clientes?.length > 0) {
+                    const clienteEncontrado = clientes[0];
+                    // Dá baixa usando o ID do cliente encontrado pelo nome
+                    await firebaseDb.collection('clientes').doc(clienteEncontrado.id).update({
+                        status: 'pago',
+                        atualizado_em: new Date().toISOString()
+                    });
+                    const hoje = new Date();
+                    const mesRef = `${String(hoje.getMonth()+1).padStart(2,'0')}/${hoje.getFullYear()}`;
+                    await firebaseDb.collection('clientes').doc(clienteEncontrado.id)
+                        .collection('historico_pagamentos').doc(mesRef.replace('/','-'))
+                        .set({ referencia: mesRef, status: 'pago', forma_pagamento: 'Comprovante',
+                               pago_em: hoje.toISOString(), data_vencimento: clienteEncontrado.dia_vencimento || 10,
+                               valor: dados.analise?.valor }, { merge: true });
+                    await banco.dbLogComprovante(deQuem);
+                    await client.sendMessage(deQuem, `${P}Pagamento confirmado para *${clienteEncontrado.nome}*! ✅`);
+                    // Notifica admins no WhatsApp
+                    for (const adm of ctx.ADMINISTRADORES) {
+                        client.sendMessage(adm,
+                            `✅ *BAIXA VIA COMPROVANTE (nome confirmado)*\n\n` +
+                            `👤 ${clienteEncontrado.nome}\n` +
+                            `📱 ${deQuem.replace('@c.us','')}\n` +
+                            `💰 R$ ${dados.analise?.valor || 'N/A'}`
+                        ).catch(() => {});
+                    }
+                    // Atualiza o front via SSE
+                    if (ctx.sseService) ctx.sseService.broadcast();
+                } else {
+                    await client.sendMessage(deQuem, `${P}Não encontrei *${nomeLimpo}* na base. Vou chamar um atendente para verificar. 😊`);
+                    await abrirChamadoComMotivo(deQuem, nomeLimpo, 'Comprovante — titular não encontrado', { analise: dados.analise });
                 }
                 state.encerrarFluxo(deQuem);
                 return;

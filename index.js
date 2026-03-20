@@ -163,20 +163,30 @@ async function processarMidiaAutomatico(deQuem, msg) {
     }
     if (analise.categoria === 'comprovante') {
         const baixa = await darBaixaAutomatica(deQuem, analise);
-        if (baixa.sucesso && baixa.nomeCliente) {
-            await client.sendMessage(deQuem, `${P}Comprovante recebido e pagamento confirmado! ✅`);
+        if (baixa.sucesso) {
+            // Achou pelo telefone — confirma ao cliente e notifica admin
+            await client.sendMessage(deQuem,
+                `${P}Comprovante recebido e pagamento confirmado! ✅\n\n` +
+                `Obrigado, *${baixa.nomeCliente.split(' ')[0]}*! Sua internet já está em dia. 😊`
+            );
             await banco.dbLogComprovante(deQuem);
             for (const adm of ADMINISTRADORES) {
-                client.sendMessage(adm, `✅ *BAIXA AUTOMÁTICA*\n\n👤 ${baixa.nomeCliente}\n📱 ${deQuem.replace('@c.us','')}\n💰 R$ ${analise.valor || 'N/A'}`).catch(() => {});
+                client.sendMessage(adm,
+                    `✅ *BAIXA AUTOMÁTICA VIA COMPROVANTE*\n\n` +
+                    `👤 ${baixa.nomeCliente}\n` +
+                    `📱 ${deQuem.replace('@c.us','')}\n` +
+                    `💰 R$ ${analise.valor || 'N/A'}`
+                ).catch(() => {});
             }
-            return true;
-        } else if (baixa.sucesso && !baixa.nomeCliente) {
-            await client.sendMessage(deQuem, `${P}Recebi seu comprovante! Para confirmar, me informe o *nome completo do titular*.`);
-            state.iniciar(deQuem, 'aguardando_nome_comprovante', 'nome', { analise });
+            sseService.broadcast();
             return true;
         } else {
-            await client.sendMessage(deQuem, `${P}Não consegui validar o comprovante. Vou chamar um atendente.`);
-            abrirChamadoComMotivo(deQuem, null, 'Comprovante inválido', { analise });
+            // Não achou pelo telefone — pede o nome
+            await client.sendMessage(deQuem,
+                `${P}Recebi seu comprovante! 😊\n\n` +
+                `Para dar baixa no sistema, me informe o *nome completo do titular* da internet.`
+            );
+            state.iniciar(deQuem, 'aguardando_nome_comprovante', 'nome', { analise });
             return true;
         }
     }
@@ -463,6 +473,7 @@ function inicializarFluxos() {
         }),
         abrirChamadoComMotivo, darBaixaAutomatica,
         processingLock, filaEspera, P, logErro, metrics, processarFila,
+        ADMINISTRADORES, sseService,
         get situacaoRede() { return situacaoRede; },
         get previsaoRetorno() { return previsaoRetorno; },
     };
@@ -497,6 +508,10 @@ async function iniciarFluxoPorIntencao(intencao, deQuem, msg) {
             return; // não abre suporte
         }
     }
+    // Reseta contador de não-entendidos quando detecta intenção válida
+    if (intencao !== 'OUTRO') {
+        state.atualizar(deQuem, { _naoEntendidos: 0 });
+    }
     switch(intencao) {
         case 'SUPORTE': await _fluxoSuporte.iniciar(deQuem, msg); break;
         case 'FINANCEIRO': case 'PIX': case 'BOLETO': case 'CARNE': case 'DINHEIRO':
@@ -512,7 +527,35 @@ async function iniciarFluxoPorIntencao(intencao, deQuem, msg) {
             await banco.dbSalvarHistorico(deQuem, 'assistant', resp);
             await banco.dbIniciarAtendimento(deQuem);
             break;
-        default: await responderComIA(deQuem, msg, { banco, client, groqChatFallback });
+        default:
+            // Conta mensagens consecutivas não entendidas
+            const dadosNaoEnt = state.getDados(deQuem) || {};
+            const naoEntendidos = (dadosNaoEnt._naoEntendidos || 0) + 1;
+            state.atualizar(deQuem, { _naoEntendidos: naoEntendidos });
+
+            if (naoEntendidos === 2) {
+                // Segunda tentativa — avisa que não entendeu e oferece menu
+                await client.sendMessage(deQuem,
+                    `${P}Hmm, não entendi muito bem. 😅 Pode me dizer com o que precisa de ajuda?\n\n` +
+                    `1️⃣ Problema com a internet\n` +
+                    `2️⃣ Pagamento / PIX\n` +
+                    `3️⃣ Falar com atendente`
+                );
+                state.iniciar(deQuem, 'menu_rapido', 'aguardando_escolha', {});
+            } else if (naoEntendidos >= 3) {
+                // Terceira tentativa — chama atendente
+                state.atualizar(deQuem, { _naoEntendidos: 0 });
+                await client.sendMessage(deQuem,
+                    `${P}Deixa eu chamar alguém pra te ajudar melhor. 😊 Aguarda um instante!`
+                );
+                await abrirChamadoComMotivo(deQuem,
+                    state.getDados(deQuem)?.nomeCliente || null,
+                    'Cliente — mensagem não reconhecida'
+                );
+            } else {
+                // Primeira tentativa — tenta IA
+                await responderComIA(deQuem, msg, { banco, client, groqChatFallback });
+            }
     }
 }
 
@@ -561,8 +604,12 @@ function agendarProcessamento(deQuem, delay) {
             await processarMensagem(deQuem, msgFake, messageContext);
         } else if (temMidia) {
             const itemMidia = fila.find(f => ['image','document'].includes(f.tipo));
-            // 🔥 CORRIGIDO: Usa messageContext
-            await processarMensagem(deQuem, itemMidia.msg, messageContext);
+            // Tenta processar como comprovante primeiro
+            const processado = await processarMidiaAutomatico(deQuem, itemMidia.msg);
+            if (!processado) {
+                // Não era comprovante — processa normalmente (ex: foto do roteador no suporte)
+                await processarMensagem(deQuem, itemMidia.msg, messageContext);
+            }
         } else {
             const textoJunto = textos.join(' ').trim();
             if (!textoJunto) return;
@@ -573,6 +620,33 @@ function agendarProcessamento(deQuem, delay) {
     }, delay);
     debounceTimers.set(deQuem, timer);
 }
+
+// =====================================================
+// MENSAGENS ENVIADAS PELO ADMIN (fromMe)
+// Quando admin digita direto no chat de um cliente, o bot para automaticamente
+// =====================================================
+client.on('message_create', async (msg) => {
+    if (!msg.fromMe) return; // só mensagens enviadas por nós
+    
+    const para = msg.to;
+    if (!para || para.includes('@g.us') || para === 'status@broadcast') return;
+    if (ADMINISTRADORES.includes(para)) return; // conversa entre admins — ignora
+    
+    // Admin digitou para um cliente → assume o atendimento
+    if (!state.isAtendimentoHumano(para)) {
+        state.setAtendimentoHumano(para, true);
+        await banco.dbSalvarAtendimentoHumano(para).catch(() => {});
+        console.log(`👤 Admin assumiu conversa com ${para.replace('@c.us','')} automaticamente`);
+    }
+    
+    // Reinicia o timer de expiração — se admin parar de digitar por 30min, bot volta
+    state.iniciarTimer(para, async (numero) => {
+        state.setAtendimentoHumano(numero, false);
+        state.encerrarFluxo(numero);
+        await banco.dbRemoverAtendimentoHumano(numero).catch(() => {});
+        console.log(`⏰ Atendimento humano expirado para ${numero.replace('@c.us','')} — bot retomou`);
+    }, 30 * 60 * 1000); // 30 minutos sem digitar → bot volta
+});
 
 // =====================================================
 // EVENTO DE MENSAGEM (SIMPLIFICADO)
@@ -700,11 +774,45 @@ client.on('message', async (msg) => {
             }, 100);
             return;
         }
+        // !assumir NUMERO — admin toma a conversa, bot para de responder
+        if (comando === '!assumir') {
+            const numRaw = args[1]?.replace(/\D/g, '');
+            if (!numRaw) return msg.reply('❌ Use: !assumir 819xxxxxxx');
+            const numWpp = (numRaw.startsWith('55') ? numRaw : '55' + numRaw) + '@c.us';
+            state.setAtendimentoHumano(numWpp, true);
+            await banco.dbSalvarAtendimentoHumano(numWpp).catch(() => {});
+            return msg.reply(`✅ Você assumiu o atendimento de *${numRaw}*\nO bot não vai mais responder esse cliente.\n\nQuando terminar: *!liberar ${numRaw}*`);
+        }
+
+        // !liberar NUMERO — devolve a conversa para o bot
+        if (comando === '!liberar') {
+            const numRaw = args[1]?.replace(/\D/g, '');
+            if (!numRaw) return msg.reply('❌ Use: !liberar 819xxxxxxx');
+            const numWpp = (numRaw.startsWith('55') ? numRaw : '55' + numRaw) + '@c.us';
+            state.setAtendimentoHumano(numWpp, false);
+            state.encerrarFluxo(numWpp);
+            await banco.dbRemoverAtendimentoHumano(numWpp).catch(() => {});
+            await client.sendMessage(numWpp,
+                `🤖 *Assistente JMENET*\n\nOlá! Se precisar de algo, é só chamar! 😊`
+            ).catch(() => {});
+            return msg.reply(`✅ Conversa de *${numRaw}* devolvida para o bot.`);
+        }
+
+        // !listar — mostra quem está em atendimento humano
+        if (comando === '!listar') {
+            const stats = state.stats();
+            const humanos = Object.entries(state.todos())
+                .filter(([, v]) => v.atendimentoHumano)
+                .map(([num]) => num.replace('@c.us', '').replace(/^55/, ''));
+            if (humanos.length === 0) return msg.reply('✅ Nenhum cliente em atendimento humano no momento.');
+            return msg.reply(`👤 *EM ATENDIMENTO HUMANO:*\n\n${humanos.map((n, i) => `${i+1}. ${n}`).join('\n')}\n\nUse *!liberar NUMERO* para devolver ao bot.`);
+        }
+
         if (comando === '!ajuda') {
             return msg.reply(
                 `📚 *COMANDOS*\n\n` +
                 `🤖 *!bot on/off*\n📡 *!status*\n🌐 *!rede*\n💰 *!cobrar 10|20|30*\n` +
-                `📋 *!pendentes 10|20|30*`
+                `📋 *!pendentes 10|20|30*\n👤 *!assumir NUMERO*\n🔓 *!liberar NUMERO*\n📋 *!listar*`
             );
         }
         return;
@@ -862,16 +970,46 @@ setInterval(async () => {
 // =====================================================
 client.on('ready', async () => {
     inicializarFluxos();
-    ctxRotas.botIniciadoEm = Date.now(); // setter atualiza botIniciadoEm local automaticamente
-    
+    ctxRotas.botIniciadoEm = Date.now();
+
+    // ── Restaura configurações salvas no Firebase ──────────────────
+    try {
+        const [cfgBot, cfgRede, cfgPrevisao, cfgHorario, cfgCobranca] = await Promise.all([
+            firebaseDb.collection('config').doc('bot_ativo').get(),
+            firebaseDb.collection('config').doc('situacao_rede').get(),
+            firebaseDb.collection('config').doc('previsao_retorno').get(),
+            firebaseDb.collection('config').doc('horario_atendente').get(),
+            firebaseDb.collection('config').doc('horario_cobranca').get(),
+        ]);
+
+        if (cfgBot.exists)      botAtivo = cfgBot.data().valor ?? true;
+        if (cfgRede.exists)     situacaoRede = cfgRede.data().valor ?? 'normal';
+        if (cfgPrevisao.exists) previsaoRetorno = cfgPrevisao.data().valor ?? 'sem previsão';
+        if (cfgHorario.exists)  Object.assign(horarioFuncionamento, cfgHorario.data());
+        if (cfgCobranca.exists) Object.assign(horarioCobranca, cfgCobranca.data());
+
+        console.log(`⚙️  Config restaurada: bot=${botAtivo ? 'ON' : 'OFF'} | rede=${situacaoRede}`);
+    } catch(e) {
+        console.error('⚠️  Erro ao restaurar config:', e.message);
+    }
+
+    // ── Restaura atendimentos humanos abertos ──────────────────────
+    try {
+        const atendimentos = await banco.dbCarregarAtendimentosHumanos();
+        atendimentos.forEach(a => state.setAtendimentoHumano(a.numero, true));
+        if (atendimentos.length > 0) {
+            console.log(`👤 ${atendimentos.length} atendimento(s) humano(s) restaurado(s)`);
+        }
+    } catch(e) {
+        console.error('⚠️  Erro ao restaurar atendimentos:', e.message);
+    }
+
     const NUMERO_TESTE = '558187500456@c.us';
     if (state.limpar) state.limpar(NUMERO_TESTE);
     if (banco.dbLimparHistorico) await banco.dbLimparHistorico(NUMERO_TESTE);
-    
-    botAtivo = true;
-    
+
     console.log(`\n🚀 JMENET: Sistema online!`);
-    console.log(`🤖 Bot IA: LIGADO ✅`);
+    console.log(`🤖 Bot IA: ${botAtivo ? 'LIGADO ✅' : 'DESLIGADO ❌'}`);
     console.log(`📡 Rede: ${situacaoRede} | Previsão: ${previsaoRetorno}`);
     console.log(`🔥 Banco de dados: Firebase Firestore`);
 });

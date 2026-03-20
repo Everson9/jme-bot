@@ -42,12 +42,16 @@ async function analisarImagem(msg, groqChatFallback) {
             },
             body: JSON.stringify({
                 model: "meta-llama/llama-4-scout-17b-16e-instruct",
-                max_tokens: 500,
+                max_tokens: 300,
                 messages: [{
                     role: "user",
                     content: [
                         { type: "image_url", image_url: { url: `data:${media.mimetype};base64,${media.data}` } },
-                        { type: "text", text: `Analise a imagem. Se for comprovante, extraia dados em JSON.` }
+                        { type: "text", text: `Responda SOMENTE com um JSON válido, sem texto antes ou depois, sem markdown.
+Se for comprovante de pagamento PIX ou transferência:
+{"categoria":"comprovante","valido":true,"valor":0.00,"data":"DD/MM/AAAA"}
+Se NÃO for comprovante:
+{"categoria":"outro","valido":false}` }
                     ]
                 }]
             })
@@ -55,8 +59,10 @@ async function analisarImagem(msg, groqChatFallback) {
         
         const data = await response.json();
         const texto = data.choices?.[0]?.message?.content || '';
-        const clean = texto.replace(/```json|```/g, '').trim();
-        return JSON.parse(clean);
+        // Extrai só o JSON mesmo que venha com texto ao redor
+        const jsonMatch = texto.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) return null;
+        return JSON.parse(jsonMatch[0]);
         
     } catch (e) {
         console.error("Erro na análise:", e);

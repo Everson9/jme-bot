@@ -163,53 +163,30 @@ module.exports = function criarFluxoFinanceiro(ctx) {
             if (t.includes('feito') || t.includes('paguei') || t.includes('pagamento realizado') || 
                 t.includes('já paguei') || t.includes('pago') || t.includes('efetuei') ||
                 t.includes('comprovante') || t.includes('enviei')) {
-                
-                if (_fotosPendentes?.has(deQuem)) {
-                    console.log(`📷 Comprovante pendente detectado para ${deQuem}`);
-                    const msgComprovante = _fotosPendentes.get(deQuem);
-                    
-                    const analise = await analisarImagem(msgComprovante);
-                    
-                    if (analise && analise.categoria === 'comprovante') {
-                        const baixa = await darBaixaAutomatica(deQuem, analise);
-                        
-                        if (analise.valido) {
-                            state.encerrarFluxo(deQuem);
-                            await client.sendMessage(deQuem, 
-                                `${P}Comprovante recebido e pagamento confirmado! ✅ Já dei baixa no sistema. Obrigado! 😊`
-                            );
-                            _fotosPendentes.delete(deQuem);
-                            
-                            // 🔥 FIREBASE: Log de comprovante
-                            await firebaseDb.collection('log_comprovantes').add({
-                                numero: deQuem,
-                                recebido_em: new Date().toISOString()
-                            });
-                            
-                            for (const adm of ADMINISTRADORES) {
-                                await client.sendMessage(adm,
-                                    `✅ *BAIXA VIA PIX (após cliente avisar)*\n\n👤 ${baixa?.nomeCliente || dados.nome || 'N/A'}\n📱 ${deQuem.replace('@c.us','')}`
-                                ).catch(() => {});
-                            }
-                            return;
-                        } else {
-                            await client.sendMessage(deQuem, 
-                                `${P}Recebi seu comprovante, mas não consegui validar automaticamente. Vou encaminhar para um atendente verificar. 😊`
-                            );
-                            await abrirChamadoComMotivo(deQuem, dados.nome || dadosCliente?.nome, 'Financeiro — comprovante suspeito');
-                            state.encerrarFluxo(deQuem);
-                            _fotosPendentes.delete(deQuem);
-                            return;
-                        }
-                    }
-                }
-                
-                await client.sendMessage(deQuem, 
-                    `${P}Entendi que você já realizou o pagamento! 😊\n\n` +
-                    `Pode me enviar o *comprovante*? (foto ou PDF)\n\n` +
-                    `Assim que eu receber, já dou baixa no sistema.`
+
+                // Dá baixa direto — admin confere pelo painel depois
+                const nomeCliente = dados.nome || dados.dadosCliente?.nome || null;
+                const baixa = await darBaixaAutomatica(deQuem, {});
+                const nomeExibir = (baixa.sucesso ? baixa.nomeCliente : nomeCliente)?.split(' ')[0] || null;
+                const saudacao = nomeExibir ? `Obrigado, *${nomeExibir}*!` : 'Obrigado!';
+
+                state.encerrarFluxo(deQuem);
+                await client.sendMessage(deQuem,
+                    `${P}${saudacao} Anotamos o pagamento. ✅\n\nQualquer dúvida é só chamar! 😊`
                 );
-                
+
+                // Notifica admin para conferir depois
+                for (const adm of ADMINISTRADORES) {
+                    await client.sendMessage(adm,
+                        `💬 *CLIENTE INFORMOU PAGAMENTO*\n\n` +
+                        `👤 ${baixa.nomeCliente || nomeCliente || 'não identificado'}\n` +
+                        `📱 ${deQuem.replace('@c.us','')}\n` +
+                        `⚠️ Sem comprovante — conferir pelo painel.`
+                    ).catch(() => {});
+                }
+                return;
+
+                // ── código morto abaixo mantido por segurança ──
                 state.avancar(deQuem, 'pix_enviado', { 
                     ...dados,
                     aguardandoComprovante: true 
