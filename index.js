@@ -70,7 +70,7 @@ const utils = criarUtils(groqChatFallback);
 const classificador = criarClassificador(groqChatFallback);
 const detectorMultiplas = criarDetectorMultiplas(groqChatFallback);
 
-const ADMINISTRADORES = ['558184636954@c.us', ''];  //558186650773@c.us
+const ADMINISTRADORES = ['558184636954@c.us'].filter(Boolean);  // adicione mais números aqui
 const FUNCIONARIOS = ['558185937690@c.us', '558198594699@c.us', '558184597727@c.us', '558184065116@c.us']; 
 const chavePixExibicao = "jmetelecomnt@gmail.com";
 
@@ -306,10 +306,15 @@ const ctxRotas = {
     dbAtualizarChamado: banco.dbAtualizarChamado,
     dbSalvarAtendimentoHumano: banco.dbSalvarAtendimentoHumano,
     dbRemoverAtendimentoHumano: banco.dbRemoverAtendimentoHumano,
-    botAtivo,
-    botIniciadoEm, 
-    situacaoRede, 
-    previsaoRetorno,
+    // botAtivo como getter/setter — mantém ctxRotas e variável local sincronizados
+    get botAtivo() { return botAtivo; },
+    set botAtivo(v) { botAtivo = v; },
+    get botIniciadoEm() { return botIniciadoEm; },
+    set botIniciadoEm(v) { botIniciadoEm = v; },
+    get situacaoRede() { return situacaoRede; },
+    set situacaoRede(v) { situacaoRede = v; },
+    get previsaoRetorno() { return previsaoRetorno; },
+    set previsaoRetorno(v) { previsaoRetorno = v; },
     horarioFuncionamento, 
     horarioCobranca,
     dispararCobrancaReal: (data, tipo) => dispararCobrancaReal(client, firebaseDb, data, tipo),
@@ -765,8 +770,7 @@ setInterval(async () => {
 // =====================================================
 client.on('ready', async () => {
     inicializarFluxos();
-    botIniciadoEm = Date.now();
-    ctxRotas.botIniciadoEm = botIniciadoEm;
+    ctxRotas.botIniciadoEm = Date.now(); // setter atualiza botIniciadoEm local automaticamente
     
     const NUMERO_TESTE = '558187500456@c.us';
     if (state.limpar) state.limpar(NUMERO_TESTE);

@@ -66,7 +66,7 @@ module.exports = function setupRotasInstalacoesAgendadas(app, ctx) {
             }
             
             // Adiciona à base de clientes
-            await firebaseDb.collection('clientes_base').add({
+            await firebaseDb.collection('clientes').add({
                 base_id: baseId,
                 dia_vencimento: diaVencimento,
                 numero: instalacao.numero,

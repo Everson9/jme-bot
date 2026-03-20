@@ -1,26 +1,27 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { usePagination } from '../hooks/usePagination';
 import { Pagination } from '../components/Pagination';
+
+const API = import.meta.env.VITE_API_URL || "";
 
 export function PageLogs() {
     const [filtroTipo, setFiltroTipo] = useState('');
     const [filtroNumero, setFiltroNumero] = useState('');
     
-    const fetchLogs = async (page, pageSize) => {
-        const API = import.meta.env.VITE_API_URL || "";
+    // useCallback — sem isso fetchLogs recria a cada render e causa loop infinito
+    const fetchLogs = useCallback(async (page, pageSize) => {
         const offset = (page - 1) * pageSize;
         let url = `${API}/api/logs/bot?limit=${pageSize}&offset=${offset}`;
         if (filtroNumero) url += `&numero=${encodeURIComponent(filtroNumero)}`;
         
         const response = await fetch(url);
         const json = await response.json();
-        // /api/logs/bot retorna { rows, total } — adaptar para usePagination
         return {
             data: json.rows || [],
             total: json.total || 0,
             totalPages: Math.ceil((json.total || 0) / pageSize)
         };
-    };
+    }, [filtroNumero]); // só recria quando o filtro muda
 
     const { 
         data: logs, 

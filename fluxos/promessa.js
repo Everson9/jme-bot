@@ -133,7 +133,7 @@ module.exports = function criarFluxoPromessa(ctx) {
                 const clienteBase = clientes || null;
                 
                 if (clienteBase) {
-                    await firebaseDb.collection('clientes_base').doc(clienteBase.id).update({
+                    await firebaseDb.collection('clientes').doc(clienteBase.id).update({
                         status: 'promessa',
                         atualizado_em: new Date().toISOString()
                     });

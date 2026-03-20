@@ -144,7 +144,7 @@ module.exports = function criarFluxoCancelamento(ctx) {
 
             // 🔥 FIREBASE: Remove da base de clientes
             if (clienteBase?.id) {
-                await firebaseDb.collection('clientes_base').doc(clienteBase.id).delete();
+                await firebaseDb.collection('clientes').doc(clienteBase.id).delete();
                 console.log(`🗑️ Cliente ${nome} removido da base (cancelamento)`);
             }
 
@@ -181,4 +181,4 @@ module.exports = function criarFluxoCancelamento(ctx) {
         iniciar,
         handle
     };
-};  
+};
