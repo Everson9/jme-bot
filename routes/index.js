@@ -1796,25 +1796,35 @@ app.delete('/api/promessas/:id', async (req, res) => {
 
     app.get('/api/dashboard/caixa-hoje', async (req, res) => {
         try {
-            const hoje = new Date().toISOString().split('T')[0];
+            const agora = new Date();
+            const agoraBR = new Date(agora.getTime() - 3 * 60 * 60 * 1000);
+            const hoje = agoraBR.toISOString().split('T')[0]; // UTC-3
             
-            // 1 query via collectionGroup em vez de loop base > cliente > historico
-            // Reduz de ~180 leituras para 2
+            // Busca o documento do mês atual (ID = "MM-AAAA") via collectionGroup
+            // Sem .where() que exige índice — filtra em memória pelo campo pago_em
+            const mm = String(agoraBR.getUTCMonth() + 1).padStart(2, '0');
+            const aaaa = agoraBR.getUTCFullYear();
+            const docId = `${mm}-${aaaa}`; // ex: "03-2026"
+            
             const [pagamentosSnap, clientesSnap] = await Promise.all([
                 firebaseDb.collectionGroup('historico_pagamentos')
-                    .where('status', '==', 'pago')
-                    .where('pago_em', '>=', hoje)
+                    .where('referencia', '==', `${mm}/${aaaa}`) // campo string, sem índice de range
                     .get(),
                 firebaseDb.collection('clientes').get()
             ]);
             
-            // Mapa de clientes por id para lookup O(1)
+            // Mapa de clientes por id
             const clienteMap = {};
             clientesSnap.docs.forEach(d => { clienteMap[d.id] = d.data(); });
             
             const rows = [];
             pagamentosSnap.docs.forEach(doc => {
                 const pagamento = doc.data();
+                // Filtra só os pagos HOJE em memória
+                if (pagamento.status !== 'pago') return;
+                const pagoEm = pagamento.pago_em || '';
+                if (!pagoEm.startsWith(hoje)) return; // compara "2026-03-20"
+                
                 const clienteId = doc.ref.parent.parent?.id;
                 const cliente = clienteMap[clienteId] || {};
                 
@@ -1836,7 +1846,8 @@ app.delete('/api/promessas/:id', async (req, res) => {
             
             rows.sort((a, b) => (b.pago_em || '').localeCompare(a.pago_em || ''));
             res.json(rows);
-        } catch(e) { 
+        } catch(e) {
+            console.error('Erro caixa-hoje:', e.message);
             res.json([]); 
         }
     });
