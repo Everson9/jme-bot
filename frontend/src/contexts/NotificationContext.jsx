@@ -79,7 +79,8 @@ export function NotificationProvider({ children }) {
             notifications,
             unreadCount,
             markAsRead,
-            markAllAsRead
+            markAllAsRead,
+            alertasData: alertas  // dados brutos para o dashboard
         }}>
             {children}
         </NotificationContext.Provider>

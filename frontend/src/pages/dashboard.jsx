@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useFetch } from '../hooks/useFetch';
+import { useNotifications } from '../contexts/NotificationContext';
 import { Card } from '../components/Card';
 import { Spinner } from '../components/Spinner';
 import { DonutClientes } from '../components/DonutClientes';
@@ -22,7 +23,7 @@ export function PageDashboard({ status, refetch }) {
   const { data: bases } = useFetch("/api/bases");
   const { data: resumoBases } = useFetch("/api/dashboard/resumo-bases");
   const { data: caixaHoje } = useFetch("/api/dashboard/caixa-hoje");
-  // alertas vêm do NotificationContext via useNotifications()
+  const { alertasData: alertas } = useNotifications();
   
   // Status do bot vem via SSE do App.jsx (passado como prop 'status')
   const botStatus = status || null;
