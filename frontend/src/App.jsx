@@ -18,7 +18,7 @@ import { PageLogs } from './pages/logs';
 import { PageCobranca } from './pages/cobranca';
 import { PageSGP } from './pages/sgp';
 import { PageNovos } from './pages/novos';
-import { PageQR } from './pages/qr';
+import { PageQR } from './pages/PageQR';
 import { PageEstados } from './pages/estados';
 import { PageInadimplentes } from './pages/inadimplentes';
 import { PageAgendamentos } from './pages/agendamentos';
@@ -35,23 +35,6 @@ function AppContent() {
   useEffect(() => {
     let es = null;
     let sseTimer = null;
-    let pollTimer = null;
-
-    // Polling de fallback — garante que o status atualiza mesmo se SSE atrasar
-    const poll = async () => {
-      try {
-        const r = await fetch(API + '/api/status');
-        if (r.ok) {
-          const data = await r.json();
-          setBotStatus(prev => {
-            // Só atualiza se o SSE ainda não marcou como online
-            if (!prev?.online && data.online) return data;
-            if (prev?.online && !data.online) return data;
-            return prev ?? data;
-          });
-        }
-      } catch(_) {}
-    };
 
     const conectar = () => {
       if (es) { try { es.close(); } catch(_) {} }
@@ -68,12 +51,9 @@ function AppContent() {
     };
 
     conectar();
-    poll(); // imediato
-    pollTimer = setInterval(poll, 10000); // a cada 10s
 
     return () => {
       if (sseTimer) clearTimeout(sseTimer);
-      if (pollTimer) clearInterval(pollTimer);
       if (es) es.close();
     };
   }, []);
