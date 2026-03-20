@@ -510,10 +510,28 @@ client.on('message', async (msg) => {
         const args = texto.split(' ');
         const comando = args[0].toLowerCase();
 
-        if (comando === '!cobrar-sim' || comando === '!cobrar-nao') {
-            const votacaoId = args[1];
-            const resposta = comando === '!cobrar-sim' ? 'aprovado' : 'negado';
-            
+        // !sim ou !nao — responde à última votação pendente
+        if (comando === '!sim' || comando === '!nao' || comando === '!cobrar-sim' || comando === '!cobrar-nao') {
+            const resposta = (comando === '!sim' || comando === '!cobrar-sim') ? 'aprovado' : 'negado';
+
+            // Suporte ao formato antigo com ID explícito
+            let votacaoId = args[1] || null;
+
+            // Sem ID → pega a última votação ativa
+            if (!votacaoId) {
+                const ultimaDoc = await firebaseDb.collection('config').doc('ultima_votacao').get();
+                votacaoId = ultimaDoc.exists ? ultimaDoc.data().votacaoId : null;
+            }
+
+            if (!votacaoId) {
+                return msg.reply('❌ Nenhuma votação ativa no momento.');
+            }
+
+            const votacaoDoc = await firebaseDb.collection('votacoes').doc(votacaoId).get();
+            if (!votacaoDoc.exists || votacaoDoc.data().resolvido) {
+                return msg.reply('❌ Votação não encontrada ou já encerrada.');
+            }
+
             await firebaseDb.collection('votacoes').doc(votacaoId).update({
                 status: 'respondido',
                 resolvido: true,
@@ -521,8 +539,9 @@ client.on('message', async (msg) => {
                 respondido_por: deQuem,
                 respondido_em: new Date().toISOString()
             });
-            
-            return msg.reply(`✅ Voto registrado: ${resposta === 'aprovado' ? 'SIM' : 'NÃO'}`);
+
+            const emoji = resposta === 'aprovado' ? '✅' : '❌';
+            return msg.reply(`${emoji} ${resposta === 'aprovado' ? 'Cobrança autorizada!' : 'Cobrança pulada.'}`);
         }
         
         if (comando === '!bot') {
@@ -644,7 +663,7 @@ setInterval(async () => {
         situacaoRede, previsaoRetorno, () => redeNormal(situacaoRede),
         (data, tipo) => dispararCobrancaReal(client, firebaseDb, data, tipo)
     );
-}, 5 * 60 * 1000);
+}, 2 * 60 * 60 * 1000); // a cada 2 horas
 
 setTimeout(async () => {
     await verificarCobrancasAutomaticas(

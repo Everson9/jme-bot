@@ -3,25 +3,32 @@
 // =====================================================
 // FUNÇÃO PARA PERGUNTAR AOS ADMINS (COM VOTAÇÃO)
 // =====================================================
-async function perguntarAdmins(client, firebaseDb, ADMINISTRADORES, datas, tipo, total, hojeStr) {
+async function perguntarAdmins(client, firebaseDb, ADMINISTRADORES, datas, tipo, total, hojeStr, listaClientes = []) {
     console.log(`🤔 Perguntando aos admins sobre cobrança dia ${datas}...`);
     
-    // Cria um ID único para esta votação
     const votacaoId = `votacao_${Date.now()}`;
-    
-    // Prepara a mensagem
-    const mensagem = 
-        `🤖 *AUTORIZAÇÃO PARA COBRANÇA*\n\n` +
-        `📅 *Datas:* ${datas}\n` +
-        `📋 *Tipo:* ${tipo}\n` +
-        `👥 *Total de clientes:* ${total}\n\n` +
-        `✅ *Para autorizar, qualquer admin responda:*\n` +
-        `!cobrar-sim ${votacaoId}\n\n` +
-        `❌ *Para negar, qualquer admin responda:*\n` +
-        `!cobrar-nao ${votacaoId}\n\n` +
-        `⏳ *Aguardando resposta (5 minutos)...*`;
+    const TIPO_LABEL = {
+        lembrete: '📅 Lembrete (D-1)',
+        atraso: '⚠️ Atraso (D+3)',
+        atraso_final: '🔴 Atraso Final (D+5)',
+        reconquista: '💙 Reconquista (D+7)',
+        reconquista_final: '💔 Última Chance (D+10)',
+    };
 
-    // Envia para todos os admins
+    // Monta lista de nomes
+    const nomes = listaClientes.slice(0, 30).map((c, i) => `${i+1}. ${c.nome}`).join('\n');
+    const extra = listaClientes.length > 30 ? `\n... e mais ${listaClientes.length - 30}` : '';
+
+    const mensagem =
+        `📬 *COBRANÇA AUTOMÁTICA*\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `📅 *Dia ${datas}* — ${TIPO_LABEL[tipo] || tipo}\n` +
+        `👥 *${total} clientes:*\n\n` +
+        `${nomes}${extra}\n\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        `✅ Confirmar: *!sim*\n` +
+        `❌ Pular: *!nao*`;
+
     for (const adm of ADMINISTRADORES) {
         await client.sendMessage(adm, mensagem).catch(() => {});
     }
@@ -34,8 +41,13 @@ async function perguntarAdmins(client, firebaseDb, ADMINISTRADORES, datas, tipo,
         data: hojeStr,
         status: 'aguardando',
         criado_em: new Date().toISOString(),
-        votos: [],
         resolvido: false
+    });
+
+    // Salva último votacaoId ativo para os comandos simplificados !sim e !nao
+    await firebaseDb.collection('config').doc('ultima_votacao').set({
+        votacaoId,
+        criado_em: new Date().toISOString()
     });
     
     // Aguarda resposta (promessa que será resolvida por um listener externo)
@@ -51,26 +63,26 @@ async function perguntarAdmins(client, firebaseDb, ADMINISTRADORES, datas, tipo,
                     if (data.resultado === 'aprovado') {
                         console.log('✅ Votação aprovada');
                         resolve(true);
-                    } else {
-                        console.log('❌ Votação negada');
+                    } else if (data.resultado === 'negado') {
+                        console.log('❌ Votação negada pelo admin');
                         resolve(false);
+                    } else {
+                        // expirado ou outro — não bloqueia
+                        resolve(null);
                     }
                 }
             });
         
-        // Timeout de 5 minutos
+        // Timeout de 5 minutos — expira silenciosamente (não salva cobranca_negada para não bloquear o dia)
         setTimeout(() => {
             unsubscribe();
-            console.log('⏰ Tempo esgotado, assumindo negado');
-            
-            // Marca como expirado no Firebase
+            console.log('⏰ Votação expirada sem resposta — será tentada novamente no próximo ciclo');
             firebaseDb.collection('votacoes').doc(votacaoId).update({
                 status: 'expirado',
                 resolvido: true,
-                resultado: 'negado'
+                resultado: 'expirado'  // diferente de 'negado' — não bloqueia o dia
             }).catch(() => {});
-            
-            resolve(false);
+            resolve(null);  // null = expirou, não negou
         }, 5 * 60 * 1000);
     });
 }
@@ -82,12 +94,15 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
     console.log('⏰ Verificando cobranças automáticas...');
 
     const agora = new Date();
-    const hora = agora.getHours();
-    const dia = agora.getDate();
-    const mes = agora.getMonth() + 1;
-    const ano = agora.getFullYear();
-    const diaSemana = agora.getDay();
-    const hojeStr = agora.toISOString().split('T')[0];
+    // Ajuste para horário de Brasília (UTC-3)
+    const agoraBR = new Date(agora.getTime() - 3 * 60 * 60 * 1000);
+    const hora = agoraBR.getUTCHours();
+    const dia = agoraBR.getUTCDate();
+    const mes = agoraBR.getUTCMonth() + 1;
+    const ano = agoraBR.getUTCFullYear();
+    const diaSemana = agoraBR.getUTCDay();
+    // hojeStr no horário de Brasília
+    const hojeStr = `${ano}-${String(mes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
     
     // =====================================================
     // VERIFICAÇÕES INICIAIS
@@ -115,14 +130,7 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
         return;
     }
     
-    // =====================================================
-    // VERIFICAR SE JÁ FOI NEGADO HOJE
-    // =====================================================
-    const negadoHoje = await firebaseDb.collection('config').doc('cobranca_negada').get();
-    if (negadoHoje.exists && negadoHoje.data().data === hojeStr) {
-        console.log(`⏭️ Cobrança já negada hoje`);
-        return;
-    }
+    // Sem bloqueio por negação — admin pode negar e ser perguntado novamente no próximo ciclo
     
     // =====================================================
     // VERIFICAR DIAS DE VENCIMENTO
@@ -186,7 +194,8 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
                         data: String(venc), 
                         tipo, 
                         clientes: clientesValidos.length,
-                        total_original: clientesSnapshot.size
+                        total_original: clientesSnapshot.size,
+                        lista: clientesValidos  // passa os objetos para exibir nomes
                     });
                 }
             }
@@ -199,30 +208,41 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
     }
     
     // =====================================================
-    // PERGUNTA AOS ADMINS
+    // PERGUNTA AOS ADMINS (uma mensagem com tudo)
     // =====================================================
-    let resumo = `📋 *COBRANÇAS HOJE*\n\n`;
-    cobrancasParaExecutar.forEach(c => {
-        const ignorados = c.total_original - c.clientes;
-        resumo += `📅 Data ${c.data} - ${c.tipo}\n`;
-        resumo += `   👥 ${c.clientes} clientes (${ignorados} ignorados por carnê)\n`;
-    });
-    
-    for (const adm of ADMINISTRADORES) {
-        await client.sendMessage(adm, resumo).catch(() => {});
+    // Para cada grupo separado, manda uma mensagem/votação
+    let algumAutorizado = false;
+    for (const c of cobrancasParaExecutar) {
+        const autorizado = await perguntarAdmins(
+            client, firebaseDb, ADMINISTRADORES,
+            c.data, c.tipo, c.clientes, hojeStr, c.lista || []
+        );
+        if (autorizado === true) algumAutorizado = true;
+        if (autorizado === false) {
+            console.log(`❌ Admin negou cobrança dia ${c.data} (${c.tipo})`);
+            continue;
+        }
+        if (autorizado === null) {
+            console.log(`⏰ Votação expirou para dia ${c.data} (${c.tipo}) — próximo ciclo`);
+            continue;
+        }
+        // Executa imediatamente após aprovação
+        console.log(`✅ Autorizado! Disparando: Data ${c.data} — ${c.tipo}`);
+        await dispararCobrancaReal(client, firebaseDb, c.data, c.tipo);
+        await new Promise(r => setTimeout(r, 2000));
     }
     
-    const total = cobrancasParaExecutar.reduce((acc, c) => acc + c.clientes, 0);
-    const datasStr = cobrancasParaExecutar.map(c => c.data).join(', ');
+    if (!algumAutorizado) return;
+    // Cobranças já disparadas no loop acima
+    const autorizado = true; // dummy para não quebrar o bloco abaixo
     
-    // Pergunta aos admins
-    const autorizado = await perguntarAdmins(
-        client, firebaseDb, ADMINISTRADORES,
-        datasStr, 'automático', total, hojeStr
-    );
-    
+    if (autorizado === null) {
+        console.log('⏰ Votação expirou sem resposta — tentará novamente no próximo ciclo');
+        return;
+    }
+
     if (!autorizado) {
-        console.log('❌ Cobrança negada');
+        console.log('❌ Cobrança negada pelo admin');
         await firebaseDb.collection('config').doc('cobranca_adiada').set({
             valor: { 
                 dia, mes, ano, 
@@ -235,26 +255,11 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
             }
         });
         
-        await firebaseDb.collection('config').doc('cobranca_negada').set({
-            data: hojeStr,
-            motivo: 'negado_admin'
-        });
-        
+        // Não salva bloqueio — será perguntado novamente no próximo ciclo (2h)
         return;
     }
     
-    // =====================================================
-    // EXECUTA AS COBRANÇAS
-    // =====================================================
-    console.log('✅ Autorizado, iniciando cobranças...');
-    
-    for (const c of cobrancasParaExecutar) {
-        console.log(`🚀 Disparando: Data ${c.data} - ${c.tipo} (${c.clientes} clientes)`);
-        await dispararCobrancaReal(client, firebaseDb, c.data, c.tipo);
-        await new Promise(r => setTimeout(r, 2000));
-    }
-    
-    console.log('✅ Todas as cobranças concluídas!');
+    console.log('✅ Todas as cobranças processadas!');
 }
 
 // =====================================================
