@@ -7,12 +7,19 @@ export function PageLogs() {
     const [filtroNumero, setFiltroNumero] = useState('');
     
     const fetchLogs = async (page, pageSize) => {
-        let url = `/api/logs/paginados?page=${page}&limit=${pageSize}`;
-        if (filtroTipo) url += `&tipo=${filtroTipo}`;
+        const API = import.meta.env.VITE_API_URL || "";
+        const offset = (page - 1) * pageSize;
+        let url = `${API}/api/logs/bot?limit=${pageSize}&offset=${offset}`;
         if (filtroNumero) url += `&numero=${encodeURIComponent(filtroNumero)}`;
         
         const response = await fetch(url);
-        return await response.json();
+        const json = await response.json();
+        // /api/logs/bot retorna { rows, total } — adaptar para usePagination
+        return {
+            data: json.rows || [],
+            total: json.total || 0,
+            totalPages: Math.ceil((json.total || 0) / pageSize)
+        };
     };
 
     const { 

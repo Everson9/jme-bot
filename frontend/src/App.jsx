@@ -32,20 +32,29 @@ function AppContent() {
   const [botStatus, setBotStatus] = useState(null);
 
   useEffect(() => {
-    const eventSource = new EventSource(API + '/api/status-stream');
-    
-    eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      setBotStatus(data);
+    let es = null;
+    let timer = null;
+
+    const conectar = () => {
+      if (es) { try { es.close(); } catch(_) {} }
+      es = new EventSource(API + '/api/status-stream');
+
+      es.onmessage = (event) => {
+        try { setBotStatus(JSON.parse(event.data)); } catch(_) {}
+      };
+
+      es.onerror = () => {
+        es.close();
+        // Reconecta após 5s
+        timer = setTimeout(conectar, 5000);
+      };
     };
-    
-    eventSource.onerror = (error) => {
-      console.error('SSE error:', error);
-      eventSource.close();
-    };
-    
+
+    conectar();
+
     return () => {
-      eventSource.close();
+      if (timer) clearTimeout(timer);
+      if (es) es.close();
     };
   }, []);
 

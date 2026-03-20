@@ -462,16 +462,26 @@ async function buscarClientePorTelefone(telefone) {
 
 async function buscarPromessa(nome) {
   try {
+    // Firestore não suporta busca parcial — faz scan e compara normalizado
     const snapshot = await db.collection('promessas')
-      .where('nome', '>=', nome)
-      .where('nome', '<=', nome + '\uf8ff')
       .where('status', '==', 'pendente')
-      .orderBy('criado_em', 'desc')
-      .limit(1)
       .get();
 
     if (snapshot.empty) return null;
-    return snapshot.docs[0].data();
+
+    const nomeNorm = nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    let melhor = null;
+
+    snapshot.docs.forEach(doc => {
+      const p = doc.data();
+      if (!p.nome) return;
+      const pNorm = p.nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (pNorm.includes(nomeNorm) || nomeNorm.includes(pNorm)) {
+        melhor = p;
+      }
+    });
+
+    return melhor;
   } catch (error) {
     console.error('Erro em buscarPromessa:', error);
     return null;

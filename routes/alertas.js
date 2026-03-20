@@ -8,18 +8,23 @@ module.exports = function setupRotasAlertas(app, ctx) {
     app.get('/api/dashboard/alertas', async (req, res) => {
         try {
             const hoje = new Date();
-            const hojeStr = hoje.toISOString().split('T')[0];
-            const amanha = new Date(hoje);
+            // Usar horário de Brasília (UTC-3) para comparar datas corretamente
+            const hojeBR = new Date(hoje.getTime() - 3 * 60 * 60 * 1000);
+            const hojeStr = hojeBR.toISOString().split('T')[0];
+            const amanha = new Date(hojeBR);
             amanha.setDate(amanha.getDate() + 1);
             const amanhaStr = amanha.toISOString().split('T')[0];
             
             // Função para converter data DD/MM/AAAA para YYYY-MM-DD
             const toDate = (d) => {
                 if (!d) return null;
-                const partes = d.split('/');
-                if (partes.length === 3) {
-                    return `${partes[2]}-${partes[1]}-${partes[0]}`;
+                // Formato DD/MM/AAAA (salvo pelo bot)
+                if (d.includes('/')) {
+                    const partes = d.split('/');
+                    if (partes.length === 3) return `${partes[2]}-${partes[1]}-${partes[0]}`;
                 }
+                // Formato YYYY-MM-DD (salvo pelo painel) — já está correto
+                if (/^\d{4}-\d{2}-\d{2}/.test(d)) return d.split('T')[0];
                 return null;
             };
             

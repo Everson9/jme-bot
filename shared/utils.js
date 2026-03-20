@@ -128,10 +128,20 @@ Responda apenas: CONTINUA ou MUDA`;
         }
     }
 
+    function normalizarTexto(texto) {
+        if (!texto) return '';
+        return texto
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '') // remove acentos
+            .toLowerCase()
+            .trim();
+    }
+
     return {
         extrairNomeDaMensagem,
         extrairDataPromessa,
         normalizarMotivoCancelamento,
-        detectarContinuacaoFluxo
+        detectarContinuacaoFluxo,
+        normalizarTexto
     };
 };

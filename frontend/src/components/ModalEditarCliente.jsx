@@ -535,6 +535,7 @@ export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
                     setSalvandoCancel(true);
                     setCancelMsg(null);
                     try {
+                      // Cancelamento atômico — /api/cancelamentos já deleta o cliente da base
                       const r = await fetch(`${API}/api/cancelamentos`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -553,13 +554,10 @@ export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
                       });
                       const json = await r.json();
                       if (json.ok) {
-                        await fetch(`${API}/api/bases/${baseId}/clientes/${cliente.id}/status`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ status: "cancelado" }),
-                        });
                         setCancelado(true);
+                        // Remove da lista — backend já deletou do Firestore
                         onSalvo({ ...cliente, status: "cancelado" });
+                        setTimeout(() => onClose(), 1500);
                       } else {
                         setCancelMsg({ ok: false, txt: json.erro || "Erro ao registrar" });
                       }

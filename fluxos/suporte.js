@@ -444,7 +444,7 @@ module.exports = function criarFluxoSuporte(ctx) {
                 state.encerrarFluxo(deQuem);
                 state.setClienteEmSuporte(deQuem, false);
                 await abrirChamadoComMotivo(deQuem, dados.nome || null, 'Suporte técnico');
-                await client.sendMessage(deQuem, `${P}Não consegui entender bem, mas não se preocupe! Vou chamar o atendente pra te ajudar pessoalmente. 😊`);
+                await client.sendMessage(deQuem, `${P}Deixa eu chamar alguém pra te ajudar melhor. 😊 Aguarda um instante!`);
                 return;
             }
             

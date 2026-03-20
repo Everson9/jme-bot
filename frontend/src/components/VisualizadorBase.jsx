@@ -49,7 +49,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
 
   useEffect(() => {
     carregar();
-    const t = setInterval(() => carregar(true), 300000);
+    const t = setInterval(() => carregar(true), 30000); // 30s — capta baixas do WhatsApp
     return () => clearInterval(t);
   }, [carregar]);
 
@@ -86,7 +86,13 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
   const stotal = stats(clientes);
 
   const onSalvo = (clienteAtualizado) => {
-    setClientes(prev => prev.map(c => c.id === clienteAtualizado.id ? { ...c, ...clienteAtualizado } : c));
+    if (clienteAtualizado.status === 'cancelado') {
+      // Remove da lista imediatamente
+      setClientes(prev => prev.filter(c => c.id !== clienteAtualizado.id));
+      setModalCliente(null);
+    } else {
+      setClientes(prev => prev.map(c => c.id === clienteAtualizado.id ? { ...c, ...clienteAtualizado } : c));
+    }
   };
 
   const exportarExcel = async () => {

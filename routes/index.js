@@ -87,6 +87,8 @@ app.get('/api/status', (req, res) => {
             await firebaseDb.collection('config').doc('bot_ativo').set({ valor: novoEstado });
             
             ctx.botAtivo = novoEstado;
+            // Atualiza via SSE para todos os frontends abertos
+            if (ctx.sseService) ctx.sseService.broadcast();
             
             console.log(`🤖 Bot ${ctx.botAtivo ? 'ligado' : 'desligado'} via API`);
             
@@ -372,23 +374,27 @@ app.get('/api/status', (req, res) => {
     // Ordenar por nome
     clientes.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
     
-    // Buscar promessas pendentes para cada cliente
-    clientes = await Promise.all(clientes.map(async cliente => {
-      const promessaSnapshot = await firebaseDb.collection('promessas')
-        .where('numero', '==', '55' + (cliente.telefone?.replace(/\D/g, '') || ''))
-        .where('status', '==', 'pendente')
-        .orderBy('criado_em', 'desc')
-        .limit(1)
-        .get();
-      
-      if (!promessaSnapshot.empty) {
-        const promessa = promessaSnapshot.docs[0].data();
+    // Busca todas as promessas pendentes de uma vez (1 query) e faz join local
+    const promessasSnap = await firebaseDb.collection('promessas')
+      .where('status', '==', 'pendente')
+      .get();
+    
+    const promessaMap = {};
+    promessasSnap.docs.forEach(d => {
+      const p = d.data();
+      const tel = (p.numero || '').replace('@c.us','').replace(/^55/,'').replace(/\D/g,'').slice(-8);
+      if (tel) promessaMap[tel] = p;
+    });
+    
+    clientes = clientes.map(cliente => {
+      const tel = (cliente.telefone || '').replace(/\D/g,'').slice(-8);
+      const promessa = promessaMap[tel];
+      if (promessa) {
         cliente.data_promessa = promessa.data_promessa;
         cliente.promessa_status = promessa.status;
       }
-      
       return cliente;
-    }));
+    });
     
     res.json(clientes);
     
@@ -416,14 +422,17 @@ app.get('/api/status', (req, res) => {
 
         const hoje = new Date().toISOString().split('T')[0];
         
-        const jaDisparouSnapshot = await firebaseDb.collection('log_cobrancas')
+        // Só bloqueia se o MESMO tipo já foi disparado hoje para essa data
+        const tipoVerificar = tipo || 'auto';
+        let jaDisparouQuery = firebaseDb.collection('log_cobrancas')
             .where('data_vencimento', '==', data)
             .where('data_envio', '==', hoje)
-            .limit(1)
-            .get();
+            .where('tipo', '==', tipoVerificar)
+            .limit(1);
+        const jaDisparouSnapshot = await jaDisparouQuery.get();
             
         if (!jaDisparouSnapshot.empty) {
-            return res.json({ ok: false, aviso: `Cobrança da data ${data} já foi disparada hoje. Nenhuma mensagem enviada.` });
+            return res.json({ ok: false, aviso: `Cobrança ${tipoVerificar} da data ${data} já foi disparada hoje.` });
         }
 
         const iniciouEm = new Date().toISOString();
@@ -440,7 +449,8 @@ app.get('/api/status', (req, res) => {
 
         setTimeout(async () => {
             try {
-                const total = await dispararCobrancaReal(data, tipo || null);
+                // ctx.dispararCobrancaReal já tem client e firebaseDb embutidos
+                const total = await ctx.dispararCobrancaReal(data, tipo || null);
                 const tipoLabel = {
                     lembrete: 'Lembrete', atraso: 'Atraso', atraso_final: 'Atraso Final',
                     reconquista: 'Reconquista 1', reconquista_final: 'Reconquista 2 (última)'
@@ -1787,49 +1797,43 @@ app.delete('/api/promessas/:id', async (req, res) => {
         try {
             const hoje = new Date().toISOString().split('T')[0];
             
+            // 1 query via collectionGroup em vez de loop base > cliente > historico
+            // Reduz de ~180 leituras para 2
+            const [pagamentosSnap, clientesSnap] = await Promise.all([
+                firebaseDb.collectionGroup('historico_pagamentos')
+                    .where('status', '==', 'pago')
+                    .where('pago_em', '>=', hoje)
+                    .get(),
+                firebaseDb.collection('clientes').get()
+            ]);
+            
+            // Mapa de clientes por id para lookup O(1)
+            const clienteMap = {};
+            clientesSnap.docs.forEach(d => { clienteMap[d.id] = d.data(); });
+            
             const rows = [];
-            
-            const basesSnapshot = await firebaseDb.collection('bases').get();
-            
-            for (const baseDoc of basesSnapshot.docs) {
-                // CORRIGIDO com parseInt
-                const clientesSnapshot = await firebaseDb.collection('clientes')
-                    .where('base_id', '==', parseInt(baseDoc.id))
-                    .get();
+            pagamentosSnap.docs.forEach(doc => {
+                const pagamento = doc.data();
+                const clienteId = doc.ref.parent.parent?.id;
+                const cliente = clienteMap[clienteId] || {};
                 
-                for (const clienteDoc of clientesSnapshot.docs) {
-                    const cliente = clienteDoc.data();
-                    
-                    const historicoSnapshot = await firebaseDb.collection('clientes')
-                        .doc(clienteDoc.id)
-                        .collection('historico_pagamentos')
-                        .where('pago_em', '>=', hoje)
-                        .get();
-                    
-                    historicoSnapshot.docs.forEach(historicoDoc => {
-                        const pagamento = historicoDoc.data();
-                        
-                        let valor_plano = null;
-                        const planoLower = (cliente.plano || '').toLowerCase();
-                        if (planoLower.includes('iptv') || planoLower.includes('70')) valor_plano = 70;
-                        else if (planoLower.includes('200') || planoLower.includes('fibra')) valor_plano = 60;
-                        else if (planoLower.includes('50') || planoLower.includes('cabo')) valor_plano = 50;
-                        
-                        rows.push({
-                            nome: cliente.nome,
-                            plano: cliente.plano,
-                            forma_pagamento: cliente.forma_pagamento,
-                            forma_baixa: pagamento.forma_pagamento,
-                            pago_em: pagamento.pago_em,
-                            base_nome: baseDoc.data().nome,
-                            valor_plano
-                        });
-                    });
-                }
-            }
+                let valor_plano = null;
+                const planoLower = (cliente.plano || '').toLowerCase();
+                if (planoLower.includes('iptv') || planoLower.includes('70')) valor_plano = 70;
+                else if (planoLower.includes('200') || planoLower.includes('fibra')) valor_plano = 60;
+                else if (planoLower.includes('50') || planoLower.includes('cabo')) valor_plano = 50;
+                
+                rows.push({
+                    nome: cliente.nome || '—',
+                    plano: cliente.plano,
+                    forma_pagamento: cliente.forma_pagamento,
+                    forma_baixa: pagamento.forma_pagamento,
+                    pago_em: pagamento.pago_em,
+                    valor_plano
+                });
+            });
             
             rows.sort((a, b) => (b.pago_em || '').localeCompare(a.pago_em || ''));
-            
             res.json(rows);
         } catch(e) { 
             res.json([]); 
@@ -1926,30 +1930,22 @@ app.delete('/api/promessas/:id', async (req, res) => {
         
         const totalCancelados = canceladosSnapshot.size;
 
+        // Busca tudo de uma vez e agrupa no JS — 2 queries em vez de 12
+        const [novosSnap, cancelSnap] = await Promise.all([
+            firebaseDb.collection('novos_clientes').where('status', 'in', ['confirmado', 'finalizado']).get(),
+            firebaseDb.collection('cancelamentos').where('status', '==', 'confirmado').get()
+        ]);
+        
         const historico = [];
         for (let i = 5; i >= 0; i--) {
             const d = new Date(anoAtual, mesAtual - 1 - i, 1);
             const m = String(d.getMonth() + 1).padStart(2, '0');
             const a = d.getFullYear();
+            const prefix = `${a}-${m}`;
             const label = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
             
-            const ent = await firebaseDb.collection('novos_clientes')
-                .where('status', 'in', ['confirmado', 'finalizado'])
-                .get()
-                .then(snapshot => 
-                    snapshot.docs.filter(doc => 
-                        doc.data().finalizado_em?.startsWith(`${a}-${m}`)
-                    ).length
-                );
-            
-            const sai = await firebaseDb.collection('cancelamentos')
-                .where('status', '==', 'confirmado')
-                .get()
-                .then(snapshot => 
-                    snapshot.docs.filter(doc => 
-                        doc.data().confirmado_em?.startsWith(`${a}-${m}`)
-                    ).length
-                );
+            const ent = novosSnap.docs.filter(doc => doc.data().finalizado_em?.startsWith(prefix)).length;
+            const sai = cancelSnap.docs.filter(doc => doc.data().confirmado_em?.startsWith(prefix)).length;
             
             historico.push({ label, entradas: ent, saidas: sai });
         }
@@ -2223,7 +2219,8 @@ app.delete('/api/promessas/:id', async (req, res) => {
                         nome: data.nome,
                         telefone: data.telefone,
                         status: data.status,
-                        forma_pagamento: data.forma_pagamento
+                        forma_pagamento: data.forma_pagamento,
+                        baixa_sgp: data.baixa_sgp || 0
                     };
                 }).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
                 

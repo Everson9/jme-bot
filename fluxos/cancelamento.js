@@ -74,7 +74,11 @@ module.exports = function criarFluxoCancelamento(ctx) {
                 state.atualizar(deQuem, { tentativas });
                 
                 if (tentativas >= 3) {
-                    motivo = 'Outro motivo';
+                    // Após 3 tentativas, chama atendente
+                    state.encerrarFluxo(deQuem);
+                    await dbIniciarAtendimento(deQuem);
+                    await client.sendMessage(deQuem, `${P}Deixa eu chamar alguém pra te ajudar melhor. 😊 Aguarda um instante!`);
+                    return;
                 } else {
                     await client.sendMessage(deQuem, `${P}Não entendi. Por favor escolha uma opção:\n\n1️⃣ Problemas financeiros\n2️⃣ Qualidade do serviço\n3️⃣ Mudança de endereço\n4️⃣ Contratei outro provedor\n5️⃣ Outro motivo`);
                     state.iniciarTimer(deQuem);
@@ -177,4 +181,4 @@ module.exports = function criarFluxoCancelamento(ctx) {
         iniciar,
         handle
     };
-};
+};  

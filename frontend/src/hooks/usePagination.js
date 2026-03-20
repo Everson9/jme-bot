@@ -1,5 +1,5 @@
 // src/hooks/usePagination.js
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 export function usePagination(fetchFunction, pageSize = 20) {
     const [data, setData] = useState([]);
@@ -9,11 +9,7 @@ export function usePagination(fetchFunction, pageSize = 20) {
     const [totalPages, setTotalPages] = useState(1);
     const [totalItems, setTotalItems] = useState(0);
 
-    useEffect(() => {
-        loadPage(currentPage);
-    }, [currentPage]);
-
-    async function loadPage(page) {
+    const loadPage = useCallback(async (page) => {
         setLoading(true);
         try {
             const result = await fetchFunction(page, pageSize);
@@ -27,7 +23,11 @@ export function usePagination(fetchFunction, pageSize = 20) {
         } finally {
             setLoading(false);
         }
-    }
+    }, [fetchFunction, pageSize]);
+
+    useEffect(() => {
+        loadPage(currentPage);
+    }, [currentPage, loadPage]);
 
     function nextPage() {
         if (currentPage < totalPages) setCurrentPage(currentPage + 1);
@@ -47,6 +47,7 @@ export function usePagination(fetchFunction, pageSize = 20) {
         nextPage,
         prevPage,
         setCurrentPage,
-        refresh: () => loadPage(currentPage)
+        refresh: () => loadPage(currentPage),
+        reload: loadPage
     };
 }

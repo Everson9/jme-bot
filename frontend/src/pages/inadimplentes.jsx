@@ -7,7 +7,17 @@ import * as XLSX from "https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs";
 
 export function PageInadimplentes() {
   const [dias, setDias] = useState(5);
-  const { data, loading, refetch } = useFetch(`/api/relatorio/inadimplentes?dias=${dias}`);
+  const [data, setData] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const API_URL = import.meta.env.VITE_API_URL || "";
+
+  React.useEffect(() => {
+    setLoading(true);
+    fetch(`${API_URL}/api/relatorio/inadimplentes?dias=${dias}`)
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [dias]); // recarrega sempre que dias mudar
 
   const exportar = () => {
     if (!data?.length) return;
@@ -34,7 +44,7 @@ export function PageInadimplentes() {
             Pendente há mais de
             <select
               value={dias}
-              onChange={e => { setDias(Number(e.target.value)); setTimeout(refetch, 100); }}
+              onChange={e => setDias(Number(e.target.value))}
               style={{
                 padding: '4px 8px', borderRadius: 6, border: '1px solid #374151',
                 background: '#252836', color: '#e2e8f0', fontSize: 13

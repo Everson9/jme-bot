@@ -251,7 +251,7 @@ module.exports = function criarFluxoFinanceiro(ctx) {
             if (tentativas >= 3) {
                 state.encerrarFluxo(deQuem);
                 await abrirChamadoComMotivo(deQuem, dados.nome, 'Financeiro — cliente não conseguiu escolher');
-                await client.sendMessage(deQuem, `${P}Não consegui entender a forma de pagamento. Vou chamar um atendente para te ajudar! 😊`);
+                await client.sendMessage(deQuem, `${P}Deixa eu chamar alguém pra te ajudar melhor. 😊 Aguarda um instante!`);
                 return;
             }
             

@@ -317,6 +317,9 @@ async function handleIdentificacao(deQuem, msg, ctx) {
             return;
         }
         
+        await client.sendMessage(deQuem,
+            `🤖 *Assistente JMENET*\n\nNão consegui te identificar na minha base. Deixa eu chamar alguém pra te ajudar melhor. 😊 Aguarda um instante!`
+        );
         await verificarETransferir(deQuem, 'Não identificado após nome, CPF e telefone');
         return;
     }

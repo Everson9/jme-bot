@@ -217,16 +217,18 @@ async function darBaixaAutomatica(numeroWhatsapp, analise) {
     }
 }
 
-function abrirChamadoComMotivo(deQuem, nome, motivo, extras = {}) {
+async function abrirChamadoComMotivo(deQuem, nome, motivo, extras = {}) {
     state.setAtendimentoHumano(deQuem, true);
-    banco.dbSalvarAtendimentoHumano(deQuem);
-    banco.dbAbrirChamado(deQuem, nome || null, motivo);
+    await banco.dbSalvarAtendimentoHumano(deQuem).catch(() => {});
+    await banco.dbAbrirChamado(deQuem, nome || null, motivo).catch(() => {});
     
     let msg = `🔔 *Novo chamado!*\n\n📱 *Número:* ${deQuem.replace('@c.us','')}\n👤 *Nome:* ${nome || 'não informado'}\n🔧 *Motivo:* ${motivo}\n`;
     if (extras.endereco) msg += `📍 *Endereço:* ${extras.endereco}\n`;
     if (extras.disponibilidade) msg += `📅 *Disponibilidade:* ${extras.disponibilidade}\n`;
+    if (extras.fotoEnviada) msg += `📷 *Foto do roteador:* enviada\n`;
+    if (extras.descricaoRoteador) msg += `💡 *Luzes:* ${extras.descricaoRoteador}\n`;
     
-    for (const adm of ADMINISTRADORES) client.sendMessage(adm, msg).catch(() => {});
+    for (const adm of ADMINISTRADORES) await client.sendMessage(adm, msg).catch(() => {});
 }
 
 async function verificarETransferir(deQuem, motivo) {
@@ -311,9 +313,26 @@ const ctxRotas = {
     horarioFuncionamento, 
     horarioCobranca,
     dispararCobrancaReal: (data, tipo) => dispararCobrancaReal(client, firebaseDb, data, tipo),
+    sseService,
     obterAgendaDia: (dia, mes, ano) => obterAgendaDia(firebaseDb, dia, mes, ano),
     executarMigracao: () => ({}),
-    isentarMesEntrada: () => {},
+    isentarMesEntrada: async (clienteId, diaVencimento) => {
+        try {
+            const hoje = new Date();
+            const mesRef = `${String(hoje.getMonth()+1).padStart(2,'0')}-${hoje.getFullYear()}`;
+            await firebaseDb.collection('clientes').doc(clienteId)
+                .collection('historico_pagamentos').doc(mesRef).set({
+                    referencia: `${String(hoje.getMonth()+1).padStart(2,'0')}/${hoje.getFullYear()}`,
+                    status: 'isento',
+                    forma_pagamento: 'Mês de instalação',
+                    pago_em: new Date().toISOString(),
+                    data_vencimento: parseInt(diaVencimento) || 10
+                });
+            console.log(`✅ Mês isento registrado para cliente ${clienteId}`);
+        } catch(e) {
+            console.error('Erro ao isentar mês de entrada:', e);
+        }
+    },
     verificarPromessasVencidas: () => 0,
     fs, 
     path
@@ -345,6 +364,8 @@ function inicializarFluxos() {
         darBaixaAutomatica, abrirChamadoComMotivo, utils,
         classificador, detectorMultiplas,
         iniciarFluxoPorIntencao: (i, d, m) => iniciarFluxoPorIntencao(i, d, m),
+        // processarResposta via lazy ref ao messageContext (populado depois de inicializarFluxos)
+        processarResposta: (d, m) => processarMensagem(d, m, messageContext),
         verificarETransferir, fotosPendentes,
         dbLog: banco.dbLog, dbSalvarHistorico: banco.dbSalvarHistorico,
         dbCarregarHistorico: banco.dbCarregarHistorico,
@@ -353,6 +374,27 @@ function inicializarFluxos() {
         dbSalvarNovoCliente: banco.dbSalvarNovoCliente,
         dbAbrirChamado: banco.dbAbrirChamado,
         dbAtualizarChamado: banco.dbAtualizarChamado,
+    };
+
+    // Callback de expiração de sessão por inatividade
+    ctx.encerrarSessaoPorInatividade = async (numero) => {
+        try {
+            if (state.hasFluxo(numero) || state.isAtendimentoHumano(numero)) {
+                // Ainda tem estado — avisa e limpa
+                await client.sendMessage(numero,
+                    `🤖 *Assistente JMENET*\n\nPor inatividade, encerramos o atendimento. Se precisar de algo é só chamar! 😊`
+                ).catch(() => {});
+            }
+            state.encerrarFluxo(numero);
+            await banco.dbEncerrarAtendimento(numero, 'inatividade').catch(() => {});
+        } catch(_) {}
+    };
+
+    // Sobrescreve iniciarTimer para já incluir o callback de expiração
+    const _iniciarTimerOriginal = state.iniciarTimer.bind(state);
+    state.iniciarTimer = (numero, callback, ms) => {
+        const cb = callback || ctx.encerrarSessaoPorInatividade;
+        _iniciarTimerOriginal(numero, cb, ms || 10 * 60 * 1000);
     };
 
     _fluxoSuporte     = criarFluxoSuporte(ctx);

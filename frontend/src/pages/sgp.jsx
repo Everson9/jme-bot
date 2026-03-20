@@ -14,7 +14,7 @@ export function PageSGP() {
 
   const pendentes = planilha
     ? Object.entries(planilha).flatMap(([aba, info]) =>
-        (info.clientes || []).filter(c => c.sgp).map(c => ({ ...c, aba }))
+        (info.clientes || []).filter(c => c.baixa_sgp).map(c => ({ ...c, aba }))
       )
     : [];
 

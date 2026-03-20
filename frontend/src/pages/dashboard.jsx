@@ -22,28 +22,10 @@ export function PageDashboard({ status, refetch }) {
   const { data: bases } = useFetch("/api/bases");
   const { data: resumoBases } = useFetch("/api/dashboard/resumo-bases");
   const { data: caixaHoje } = useFetch("/api/dashboard/caixa-hoje");
-  const { data: alertas } = useFetch("/api/dashboard/alertas");
+  const { data: alertas } = useFetch("/api/dashboard/alertas", 60000); // 60s — NotificationContext já faz polling a cada 30s
   
-  // 🔥 SSE para status do bot (tempo real)
-  const [botStatus, setBotStatus] = useState(null);
-
-  useEffect(() => {
-    const eventSource = new EventSource(API + '/api/status-stream');
-    
-    eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      setBotStatus(data);
-    };
-    
-    eventSource.onerror = (error) => {
-      console.error('SSE error:', error);
-      eventSource.close();
-    };
-    
-    return () => {
-      eventSource.close();
-    };
-  }, []);
+  // Status do bot vem via SSE do App.jsx (passado como prop 'status')
+  const botStatus = status || null;
 
   const statsEstados = estados?.stats || { porFluxo: {}, atendimentoHumano: 0 };
   

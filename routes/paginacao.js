@@ -14,7 +14,7 @@ module.exports = function setupRotasPaginacao(app, ctx) {
 
             // Firebase não tem COUNT fácil, então precisamos buscar todos e filtrar
             // Mas para performance, vamos usar queries combinadas quando possível
-            let query = firebaseDb.collection('clientes_base');
+            let query = firebaseDb.collection('clientes');
             
             // Aplicar filtros que o Firebase suporta
             if (dia && dia !== 'todos') {
