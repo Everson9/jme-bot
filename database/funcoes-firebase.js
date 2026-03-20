@@ -286,19 +286,28 @@ async function buscarStatusCliente(numero) {
   try {
     const numeroBusca = numero.replace('@c.us', '').replace(/^55/, '');
     
-    const snapshot = await db.collection('clientes')
-      .where('telefone', '>=', numeroBusca.slice(-8))
-      .where('telefone', '<=', numeroBusca.slice(-8) + '\uf8ff')
-      .limit(1)
-      .get();
-
-    if (snapshot.empty) return null;
-
-    const cliente = snapshot.docs[0].data();
+    // Busca pela coleção inteira — compara os últimos 8 dígitos do telefone
+    const snapshot = await db.collection('clientes').get();
+    
+    const sufixo = numeroBusca.slice(-8);
+    let clienteEncontrado = null;
+    
+    snapshot.docs.forEach(doc => {
+        const c = doc.data();
+        const tel = (c.telefone || '').replace(/\D/g, '');
+        if (tel && tel.slice(-8) === sufixo) {
+            clienteEncontrado = { id: doc.id, ...c };
+        }
+    });
+    
+    if (!clienteEncontrado) return null;
+    
     return {
-      nome: cliente.nome || null,
-      status: cliente.status === 'pago' ? 'pago' : 'pendente',
-      aba: `Data ${cliente.dia_vencimento || ''}`
+      id: clienteEncontrado.id,
+      nome: clienteEncontrado.nome || null,
+      status: clienteEncontrado.status === 'pago' ? 'pago' : 'pendente',
+      aba: `Data ${clienteEncontrado.dia_vencimento || ''}`,
+      dia_vencimento: clienteEncontrado.dia_vencimento || null,
     };
   } catch (error) {
     console.error('Erro em buscarStatusCliente:', error);

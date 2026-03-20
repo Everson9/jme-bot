@@ -6,82 +6,61 @@ const CHAVE_EMAIL = "jmetelecomnt@gmail.com";
 const CHAVE_TELEFONE = "+55 81 98750-0456";
 
 function gerarMensagemCobranca(nome, data, tipo) {
-    const saudacao = nome ? `Olá *${nome}*` : 'Olá';
-    
-    let mensagemBase = '';
+    const prNome = nome ? nome.split(' ')[0] : null;
+    const oi = prNome ? `Oi *${prNome}*` : 'Oi';
+
+    // Bloco PIX embutido — direto e fácil de copiar
+    const bloco_pix = 
+        `💳 *Chave PIX:*\n` +
+        `${CHAVE_EMAIL}\n` +
+        `ou ${CHAVE_TELEFONE}\n` +
+        `👤 *Titular:* ${NOME_TITULAR_PIX}`;
+
+    let corpo = '';
     switch(tipo) {
         case 'lembrete':
-            mensagemBase = `${saudacao}! Tudo bem por aí? 😊\n\n` +
-                `Passando aqui só para lembrar que amanhã, dia *${data}*, vence a sua fatura da JMENET.\n\n` +
-                `Queremos que você continue conectado sem interrupções!`;
+            corpo = `${oi}! 😊 Só lembrando que amanhã, dia *${data}*, vence sua mensalidade da JMENET.\n\n` +
+                    `Pode pagar via PIX na hora:\n\n${bloco_pix}\n\n` +
+                    `Após o pagamento, pode mandar o comprovante aqui que a gente dá baixa! ✅`;
             break;
         case 'atraso':
-            mensagemBase = `${saudacao}! Tudo bem? 😊\n\n` +
-                `Identificamos aqui que sua fatura do dia *${data}* está com *3 dias de atraso*.\n\n` +
-                `Ainda dá tempo de regularizar e evitar qualquer transtorno. Vamos resolver isso juntos?`;
+            corpo = `${oi}! Sua mensalidade do dia *${data}* está com *3 dias de atraso*. 😕\n\n` +
+                    `Ainda dá tempo de resolver — é só fazer o PIX:\n\n${bloco_pix}\n\n` +
+                    `Mande o comprovante aqui e a gente libera na hora! 😊`;
             break;
         case 'atraso_final':
-            mensagemBase = `${saudacao}! 😕\n\n` +
-                `Sua fatura do dia *${data}* já está com *5 dias de atraso*.\n\n` +
-                `Estamos torcendo para você continuar conosco! 😊 Se precisar de ajuda para pagar, ` +
-                `ou se tiver qualquer dificuldade, é só responder essa mensagem que um atendente vai te ajudar.`;
+            corpo = `${oi}! Sua mensalidade do dia *${data}* está com *5 dias de atraso*. 😟\n\n` +
+                    `Quer resolver agora? PIX:\n\n${bloco_pix}\n\n` +
+                    `Qualquer dificuldade é só responder aqui, a gente ajuda!`;
             break;
         case 'reconquista':
-            mensagemBase = `${saudacao}! Tudo bem? 😊\n\n` +
-                `Sentimos sua falta por aqui! Saudades de ter você como cliente da JMENET.\n\n` +
-                `Sua fatura do dia *${data}* ainda está pendente, mas ainda dá tempo de regularizar ` +
-                `e continuar conectado. Vamos resolver isso?`;
+            corpo = `${oi}! 😊 Sentimos sua falta! A mensalidade do dia *${data}* ainda está em aberto.\n\n` +
+                    `Bora resolver? PIX:\n\n${bloco_pix}\n\n` +
+                    `Manda o comprovante aqui quando pagar! ✅`;
             break;
         case 'reconquista_final':
-            mensagemBase = `${saudacao}! 😢\n\n` +
-                `É uma pena ver você indo embora... Sua fatura do dia *${data}* está prestes a ser cancelada.\n\n` +
-                `Se mudar de ideia, ainda dá tempo! Basta fazer o pagamento e continuar com a gente.`;
+            corpo = `${oi}! A mensalidade do dia *${data}* ainda está pendente e o serviço pode ser cancelado. 😢\n\n` +
+                    `Se quiser continuar com a gente, é só pagar via PIX:\n\n${bloco_pix}\n\n` +
+                    `Qualquer dúvida é só chamar!`;
             break;
         default:
-            mensagemBase = `${saudacao}! Tudo bem? 😊\n\n` +
-                `Sua fatura com vencimento dia *${data}* já está disponível para pagamento.\n\n` +
-                `Queremos que você continue conectado sem preocupações!`;
+            corpo = `${oi}! 😊 Sua mensalidade com vencimento dia *${data}* está disponível para pagamento.\n\n` +
+                    `PIX:\n\n${bloco_pix}\n\n` +
+                    `Mande o comprovante aqui quando pagar! ✅`;
     }
-    
-    return `🤖 *JMENET TELECOM*\n\n${mensagemBase}\n\n💡 Se quiser *falar com um atendente* agora, é só responder essa mensagem pedindo ajuda!`;
+
+    return `🤖 *JMENET TELECOM*\n\n${corpo}`;
 }
 
 async function enviarChavesPix(client, deQuem, nome) {
-    const nomeCliente = nome ? nome.split(' ')[0] : '';
-    const saudacao = nomeCliente ? `${nomeCliente}, aqui` : 'Aqui';
-    
-    // 🔥 Mensagem PRINCIPAL com o nome do titular
-    const mensagemPix = 
-        `🤖 *JMENET TELECOM*\n\n` +
-        `${saudacao} estão as nossas chaves PIX para pagamento:\n\n` +
-        `📱 *Chave 1 (Email):*\n` +
-        `${CHAVE_EMAIL}\n\n` +
-        `📲 *Chave 2 (Telefone):*\n` +
-        `${CHAVE_TELEFONE}\n\n` +
-        `👤 *Titular:* ${NOME_TITULAR_PIX}\n\n` + // 🔥 NOME ADICIONADO AQUI!
-        `💡 *Como pagar:*\n` +
-        `1. Abra o app do seu banco\n` +
-        `2. Escolha a opção PIX\n` +
-        `3. Selecione "PIX copia e cola" ou "Chave PIX"\n` +
-        `4. Digite uma das chaves acima\n` +
-        `5. Confirme o pagamento\n\n` +
-        `⏰ Após o pagamento, sua internet será liberada em até 30 minutos.\n\n` +
-        `Precisando de ajuda? É só responder essa mensagem! 😊`;
-    
-    await client.sendMessage(deQuem, mensagemPix);
-    await new Promise(r => setTimeout(r, 1000));
-    
-    // 🔥 Mensagem de cópia TAMBÉM com o nome
-    const mensagemApenasChaves = 
-        `📋 *CHAVES PIX PARA CÓPIA*\n\n` +
-        `📱 *Email:*\n` +
-        `${CHAVE_EMAIL}\n\n` +
-        `📲 *Telefone:*\n` +
-        `${CHAVE_TELEFONE}\n\n` +
-        `👤 *Titular:* ${NOME_TITULAR_PIX}\n\n` + // 🔥 NOME AQUI TAMBÉM
-        `Basta copiar e colar no seu banco! ✅`;
-    
-    await client.sendMessage(deQuem, mensagemApenasChaves);
+    // Chamada após cobrança — cobrança já inclui PIX, então só envia 1 mensagem de cópia rápida
+    const msg =
+        `📋 *Copie a chave PIX:*\n\n` +
+        `📧 ${CHAVE_EMAIL}\n` +
+        `📱 ${CHAVE_TELEFONE}\n` +
+        `👤 *Titular:* ${NOME_TITULAR_PIX}`;
+
+    await client.sendMessage(deQuem, msg);
 }
 
 // 🔥 NOVA FUNÇÃO: Detecta se cliente perguntou sobre PIX e responde

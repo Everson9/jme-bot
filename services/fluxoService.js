@@ -169,8 +169,10 @@ async function processarMensagem(deQuem, msg, ctx) {
         const multiplas = await detectorMultiplas.detectarMultiplasIntencoes(msg.body || '');
         console.log(`🎯 Intenções: ${multiplas.length > 0 ? multiplas.join(', ') : 'nenhuma'}`);
         
-        if (!redeNormal()) {
-            const sinalMsg = falarSinalAmigavel();
+        const _sr = ctx?.situacaoRede || 'normal';
+        const _pr = ctx?.previsaoRetorno || 'sem previsão';
+        if (!redeNormal(_sr)) {
+            const sinalMsg = falarSinalAmigavel(_sr, _pr);
             await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\n${sinalMsg}`);
             if (multiplas.length > 1) {
                 state.atualizar(deQuem, { intencoesPendentes: multiplas.slice(1), msgPendente: msg.body });
@@ -237,7 +239,17 @@ async function handleIdentificacao(deQuem, msg, ctx) {
             return;
         }
         
-        const clientes = await banco.buscarClientePorNome(texto);
+        // Extrai só o nome da mensagem (cliente pode mandar "sou o João Silva, vencimento dia 20...")
+        let nomeBusca = texto;
+        if (ctx?.utils?.extrairNomeDaMensagem) {
+            const nomeExtraido = await ctx.utils.extrairNomeDaMensagem(texto);
+            if (nomeExtraido) {
+                nomeBusca = nomeExtraido;
+                console.log(`🆔 Nome extraído da mensagem: "${nomeExtraido}" (original: "${texto.substring(0, 40)}")`);
+            }
+        }
+        
+        const clientes = await banco.buscarClientePorNome(nomeBusca);
         
         if (clientes.length === 1) {
             await processarAposIdentificacao(deQuem, clientes[0].nome, dados.msgOriginal, dados.intencoes, ctx);
@@ -245,15 +257,15 @@ async function handleIdentificacao(deQuem, msg, ctx) {
         }
         
         if (clientes.length === 0) {
-            state.atualizar(deQuem, { etapa: 'aguardando_cpf', tentativasCpf: 1, nomeTentado: texto });
-            await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\nNão encontrei *${texto}* na minha base. 😕\n\nPara facilitar, poderia me informar o *CPF* do titular? (apenas números)`);
+            state.atualizar(deQuem, { etapa: 'aguardando_cpf', tentativasCpf: 1, nomeTentado: nomeBusca });
+            await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\nNão encontrei *${nomeBusca}* na minha base. 😕\n\nPode me informar o *CPF* do titular? (só os números)`);
             state.iniciarTimer(deQuem);
             return;
         }
         
         if (clientes.length > 1) {
-            state.atualizar(deQuem, { etapa: 'aguardando_cpf', tentativasCpf: 1, nomeTentado: texto, multiplosClientes: clientes });
-            await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\nEncontrei *${clientes.length}* clientes com esse nome. 😕\n\nPara identificar corretamente, poderia me informar o *CPF* do titular? (apenas números)`);
+            state.atualizar(deQuem, { etapa: 'aguardando_cpf', tentativasCpf: 1, nomeTentado: nomeBusca, multiplosClientes: clientes });
+            await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\nEncontrei *${clientes.length}* clientes com nome parecido. Para identificar corretamente, pode me informar o *CPF* do titular? (só os números)`);
             state.iniciarTimer(deQuem);
             return;
         }
@@ -408,8 +420,8 @@ async function processarAposIdentificacao(deQuem, nomeTitular, msgOriginal, inte
         await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\n${mensagem}`);
         await iniciarFluxoPorIntencao('FINANCEIRO', deQuem, { body: msgOriginal });
     }
-    else if (!redeNormal()) {
-        mensagem += falarSinalAmigavel();
+    else if (!redeNormal(ctx?.situacaoRede || 'normal')) {
+        mensagem += falarSinalAmigavel(ctx?.situacaoRede || 'normal', ctx?.previsaoRetorno || 'sem previsão');
         await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\n${mensagem}`);
     }
     else {

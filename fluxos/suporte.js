@@ -235,7 +235,9 @@ module.exports = function criarFluxoSuporte(ctx) {
     }
 
     async function iniciar(deQuem, msg, motivo = null) {
-        const sinalMsg = falarSinalAmigavel();
+        const _sr = ctx.situacaoRede || 'normal';
+        const _pr = ctx.previsaoRetorno || 'sem previsão';
+        const sinalMsg = falarSinalAmigavel(_sr, _pr);
 
         if (motivo === 'troca_senha') {
             const dadosCliente = await buscarStatusCliente(deQuem);
@@ -256,13 +258,13 @@ module.exports = function criarFluxoSuporte(ctx) {
             return;
         }
 
-        if (!redeNormal()) {
-            const sinalMsg = falarSinalAmigavel();
-            const semPrevisao = !previsaoRetorno || previsaoRetorno() === 'sem previsão';
+        if (!redeNormal(_sr)) {
+            const sinalMsg = falarSinalAmigavel(_sr, _pr);
+            const semPrevisao = !_pr || _pr === 'sem previsão';
             
             state.iniciar(deQuem, 'rede_problema', 'aguardando_notificacao', { 
                 reclamacaoOriginal: msg?.body || '',
-                situacaoRede: ctx.situacaoRede,
+                situacaoRede: _sr,
                 timestamp: Date.now()
             });
             
@@ -330,7 +332,7 @@ module.exports = function criarFluxoSuporte(ctx) {
                 try {
                     await firebaseDb.collection('notificacoes_rede').add({
                         numero: deQuem,
-                        situacao_rede: ctx.situacaoRede || 'desconhecido',
+                        situacao_rede: ctx.situacaoRede || dados?.situacaoRede || 'desconhecido',
                         notificado: 0,
                         criado_em: new Date().toISOString()
                     });

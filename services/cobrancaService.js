@@ -58,7 +58,7 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null) {
             
             const nome = cliente.nome?.split(' ')[0] || '';
             const mensagem = gerarMensagemCobranca(nome, data, tipo);
-            const msgCompleta = `🤖 *JMENET TELECOM*\n\n${mensagem}`;
+            const msgCompleta = mensagem; // prefixo já incluído em gerarMensagemCobranca
             
             const numerosParaTentar = telefoneLimpo.length === 12 
                 ? [`55${telefoneLimpo.slice(2,4)}9${telefoneLimpo.slice(4)}`, telefoneLimpo]
@@ -68,7 +68,7 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null) {
             for (const numero of numerosParaTentar) {
                 const resultado = await enviarMensagemSegura(client, numero + '@c.us', msgCompleta);
                 if (resultado.sucesso) {
-                    await enviarChavesPix(client, resultado.numero, nome);
+                    // PIX já está embutido na mensagem de cobrança — não envia mensagem adicional
                     await firebaseDb.collection('log_cobrancas').add({
                         numero: resultado.numero, 
                         nome: cliente.nome,

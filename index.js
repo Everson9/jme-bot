@@ -332,8 +332,11 @@ app.listen(PORT, () => console.log(`🌐 Painel rodando em http://localhost:${PO
 function inicializarFluxos() {
     const ctx = {
         client, db: firebaseDb, banco, state, ADMINISTRADORES,
-        P, chavePixExibicao, situacaoRede: () => situacaoRede,
-        previsaoRetorno: () => previsaoRetorno, falarSinalAmigavel, redeNormal,
+        P, chavePixExibicao,
+        get situacaoRede() { return situacaoRede; },
+        get previsaoRetorno() { return previsaoRetorno; },
+        falarSinalAmigavel: (...args) => falarSinalAmigavel(args[0] !== undefined ? args[0] : situacaoRede, args[1] !== undefined ? args[1] : previsaoRetorno),
+        redeNormal: (...args) => redeNormal(args[0] !== undefined ? args[0] : situacaoRede),
         atendenteDisponivel: () => atendenteDisponivel(horarioFuncionamento),
         proximoAtendimento: () => proximoAtendimento(horarioFuncionamento),
         horaLocal, analisarImagem, groqChatFallback,
@@ -361,45 +364,56 @@ function inicializarFluxos() {
     // 🔥 NOVO: Preenche o messageContext com todas as dependências
     messageContext = {
         state, banco, client, utils, classificador, detectorMultiplas,
-        verificarETransferir, 
+        verificarETransferir,
+        // fluxos para delegarParaFluxo
+        _fluxoSuporte, _fluxoFinanceiro, _fluxoPromessa, _fluxoNovoCliente, _fluxoCancelamento,
         responderComIA: (d, m) => responderComIA(d, m, { banco, client, groqChatFallback }),
         iniciarFluxoPorIntencao: (i, d, m) => iniciarFluxoPorIntencao(i, d, m),
+        processarResposta: (d, m) => processarMensagem(d, m, messageContext),
         handleIdentificacao: (d, m) => handleIdentificacao(d, m, {
             state, banco, client, utils, verificarETransferir,
             processarAposIdentificacao: (d, n, o, i) => processarAposIdentificacao(d, n, o, i, {
-                banco, state, client, iniciarFluxoPorIntencao, redeNormal, falarSinalAmigavel
+                banco, state, client, iniciarFluxoPorIntencao,
+                redeNormal: () => redeNormal(situacaoRede),
+                falarSinalAmigavel: () => falarSinalAmigavel(situacaoRede, previsaoRetorno),
             })
         }),
         abrirChamadoComMotivo, darBaixaAutomatica,
-        processingLock, filaEspera, P, logErro, metrics, processarFila
+        processingLock, filaEspera, P, logErro, metrics, processarFila,
+        get situacaoRede() { return situacaoRede; },
+        get previsaoRetorno() { return previsaoRetorno; },
     };
 
     console.log('✅ Fluxos inicializados!');
 }
 
 app.get('/api/status', (req, res) => {
-    console.log('📊 ROTA /api/status CHAMADA');
-    console.log('   👤 User-Agent:', req.headers['user-agent']);
-    console.log('   🔗 Referer:', req.headers['referer'] || 'Nenhum');
-    console.log('   🌐 Origin:', req.headers['origin'] || 'Nenhuma');
-    console.log('   📱 IP:', req.ip);
-    console.log('   botIniciadoEm no ctx:', ctx.botIniciadoEm);
-    console.log('   botAtivo no ctx:', ctx.botAtivo);
-    
-    const response = {
-        botAtivo: ctx.botAtivo,
-        online: ctx.botIniciadoEm ? true : false,
-        iniciadoEm: ctx.botIniciadoEm,
-        atendimentosAtivos: ctx.state?.stats()?.atendimentoHumano || 0,
-        situacaoRede: ctx.situacaoRede,
-        previsaoRetorno: ctx.previsaoRetorno,
-    };
-    
-    console.log('   resposta:', response);
-    res.json(response);
+    res.json({
+        botAtivo: botAtivo,
+        online: botIniciadoEm ? true : false,
+        iniciadoEm: botIniciadoEm,
+        atendimentosAtivos: state?.stats()?.atendimentoHumano || 0,
+        situacaoRede: situacaoRede,
+        previsaoRetorno: previsaoRetorno,
+    });
 });
 
 async function iniciarFluxoPorIntencao(intencao, deQuem, msg) {
+    // Guarda: cliente dizendo que resolveu não abre suporte
+    if (intencao === 'SUPORTE') {
+        const textoLower = (msg?.body || '').toLowerCase();
+        const FRASES_RESOLVEU = [
+            'tudo certo','tá certo','ta certo','voltou','já voltou','ja voltou',
+            'resolveu','funcionou','tô bem','to bem','tudo bem','ficou bom',
+            'está funcionando','esta funcionando','voltou a funcionar',
+            'obrigado','obrigada','valeu','vlw','tmj','era só isso','era so isso',
+        ];
+        const parece_resolvido = FRASES_RESOLVEU.some(f => textoLower.includes(f));
+        if (parece_resolvido) {
+            console.log(`⚡ [SUPORTE] Falso-positivo bloqueado: "${msg?.body}"`);
+            return; // não abre suporte
+        }
+    }
     switch(intencao) {
         case 'SUPORTE': await _fluxoSuporte.iniciar(deQuem, msg); break;
         case 'FINANCEIRO': case 'PIX': case 'BOLETO': case 'CARNE': case 'DINHEIRO':
