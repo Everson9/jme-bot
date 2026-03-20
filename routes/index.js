@@ -1796,59 +1796,54 @@ app.delete('/api/promessas/:id', async (req, res) => {
 
     app.get('/api/dashboard/caixa-hoje', async (req, res) => {
         try {
-            const agora = new Date();
-            const agoraBR = new Date(agora.getTime() - 3 * 60 * 60 * 1000);
-            const hoje = agoraBR.toISOString().split('T')[0]; // UTC-3
-            
-            // Busca o documento do mês atual (ID = "MM-AAAA") via collectionGroup
-            // Sem .where() que exige índice — filtra em memória pelo campo pago_em
+            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+            const hoje = agoraBR.toISOString().split('T')[0]; // "2026-03-20"
             const mm = String(agoraBR.getUTCMonth() + 1).padStart(2, '0');
             const aaaa = agoraBR.getUTCFullYear();
-            const docId = `${mm}-${aaaa}`; // ex: "03-2026"
-            
-            const [pagamentosSnap, clientesSnap] = await Promise.all([
-                firebaseDb.collectionGroup('historico_pagamentos')
-                    .where('referencia', '==', `${mm}/${aaaa}`) // campo string, sem índice de range
-                    .get(),
-                firebaseDb.collection('clientes').get()
-            ]);
-            
-            // Mapa de clientes por id
-            const clienteMap = {};
-            clientesSnap.docs.forEach(d => { clienteMap[d.id] = d.data(); });
-            
+            const docId = `${mm}-${aaaa}`; // "03-2026" — ID do documento no historico_pagamentos
+
+            // Busca todos os clientes — sem collectionGroup que exige índice
+            const clientesSnap = await firebaseDb.collection('clientes').get();
+
             const rows = [];
-            pagamentosSnap.docs.forEach(doc => {
-                const pagamento = doc.data();
-                // Filtra só os pagos HOJE em memória
-                if (pagamento.status !== 'pago') return;
-                const pagoEm = pagamento.pago_em || '';
-                if (!pagoEm.startsWith(hoje)) return; // compara "2026-03-20"
-                
-                const clienteId = doc.ref.parent.parent?.id;
-                const cliente = clienteMap[clienteId] || {};
-                
-                let valor_plano = null;
-                const planoLower = (cliente.plano || '').toLowerCase();
-                if (planoLower.includes('iptv') || planoLower.includes('70')) valor_plano = 70;
-                else if (planoLower.includes('200') || planoLower.includes('fibra')) valor_plano = 60;
-                else if (planoLower.includes('50') || planoLower.includes('cabo')) valor_plano = 50;
-                
-                rows.push({
-                    nome: cliente.nome || '—',
-                    plano: cliente.plano,
-                    forma_pagamento: cliente.forma_pagamento,
-                    forma_baixa: pagamento.forma_pagamento,
-                    pago_em: pagamento.pago_em,
-                    valor_plano
-                });
-            });
-            
+
+            // Para cada cliente, busca o documento do mês atual diretamente pelo ID
+            // É 1 leitura por cliente mas sem nenhum índice composto necessário
+            await Promise.all(clientesSnap.docs.map(async clienteDoc => {
+                try {
+                    const pagamentoDoc = await firebaseDb
+                        .collection('clientes').doc(clienteDoc.id)
+                        .collection('historico_pagamentos').doc(docId)
+                        .get();
+
+                    if (!pagamentoDoc.exists) return;
+                    const pagamento = pagamentoDoc.data();
+                    if (pagamento.status !== 'pago') return;
+                    if (!(pagamento.pago_em || '').startsWith(hoje)) return;
+
+                    const cliente = clienteDoc.data();
+                    let valor_plano = null;
+                    const p = (cliente.plano || '').toLowerCase();
+                    if (p.includes('iptv') || p.includes('70')) valor_plano = 70;
+                    else if (p.includes('200') || p.includes('fibra')) valor_plano = 60;
+                    else if (p.includes('50') || p.includes('cabo')) valor_plano = 50;
+
+                    rows.push({
+                        nome: cliente.nome || '—',
+                        plano: cliente.plano,
+                        forma_pagamento: cliente.forma_pagamento,
+                        forma_baixa: pagamento.forma_pagamento,
+                        pago_em: pagamento.pago_em,
+                        valor_plano
+                    });
+                } catch(_) {}
+            }));
+
             rows.sort((a, b) => (b.pago_em || '').localeCompare(a.pago_em || ''));
             res.json(rows);
         } catch(e) {
             console.error('Erro caixa-hoje:', e.message);
-            res.json([]); 
+            res.json([]);
         }
     });
 
@@ -2344,6 +2339,46 @@ app.delete('/api/promessas/:id', async (req, res) => {
     // =====================================================
     // ROTAS DE MONITORAMENTO
     // =====================================================
+
+    // ── Últimos cadastrados ────────────────────────────────────────
+    app.get('/api/clientes/recentes', async (req, res) => {
+        const limite = parseInt(req.query.limite) || 50;
+        try {
+            // Sem orderBy para não precisar de índice — ordena em memória
+            const snap = await firebaseDb.collection('clientes').get();
+            const clientes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+            // Enriquece com nome da base
+            const basesSnap = await firebaseDb.collection('bases').get();
+            const baseMap = {};
+            basesSnap.docs.forEach(d => { baseMap[d.id] = d.data().nome; });
+
+            clientes.forEach(c => {
+                c.base_nome = baseMap[String(c.base_id)] || null;
+            });
+
+            // Ordena por criado_em desc em memória
+            clientes.sort((a, b) => {
+                const ta = a.criado_em || '';
+                const tb = b.criado_em || '';
+                return tb.localeCompare(ta);
+            });
+
+            res.json(clientes.slice(0, limite));
+        } catch(e) {
+            res.status(500).json({ erro: e.message });
+        }
+    });
+
+    // ── Desconectar WhatsApp ────────────────────────────────────────
+    app.post('/api/whatsapp/desconectar', async (req, res) => {
+        try {
+            await client.logout();
+            res.json({ ok: true });
+        } catch(e) {
+            res.status(500).json({ ok: false, erro: e.message });
+        }
+    });
 
     app.get('/api/health', (req, res) => {
         res.json({

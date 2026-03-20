@@ -78,14 +78,15 @@ export const TopNav = ({ botAtivo, onToggle, bases }) => {
     { to: "/promessas", label: "Promessas", icon: "🤝" },
     { to: "/carne", label: "Carnês", icon: "📋" },
     { to: "/cobranca", label: "Cobranças", icon: "📬" },
-    { to: "/agendamentos", label: "Agendamentos", icon: "📅" }
+    { to: "/qr", label: "📱 WhatsApp" },
+        { to: "/agendamentos", label: "Agendamentos", icon: "📅" }
   ];
 
   const NAV_MAIS = [
     { to: "/estados", label: "Ao Vivo", icon: "🟢" },
     { to: "/sgp", label: "Baixas SGP", icon: "✅" },
     { to: "/logs", label: "Logs", icon: "📄" },
-    { to: "/novos", label: "Instalações", icon: "🔧" },
+    { to: "/novos", label: "Cadastros", icon: "👥" },
     { to: "/cancelamentos", label: "Cancelamentos", icon: "❌" },
     { to: "/inadimplentes", label: "Inadimplentes", icon: "⚠️" }
   ];
