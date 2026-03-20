@@ -705,11 +705,12 @@ app.post('/api/promessas/:id/pago', async (req, res) => {
                 
                 const hoje = new Date();
                 const mesRef = `${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
+                const docId = mesRef.replace('/', '-');
                 
                 await firebaseDb.collection('clientes')
                     .doc(cliente.id)
                     .collection('historico_pagamentos')
-                    .doc(mesRef)
+                    .doc(docId)
                     .set({
                         referencia: mesRef,
                         status: 'pago',

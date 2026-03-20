@@ -196,13 +196,14 @@ async function darBaixaAutomatica(numeroWhatsapp, analise) {
 
         const hoje = new Date();
         const mesRef = `${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
+        const docId = mesRef.replace('/', '-'); // "03/2026" → "03-2026" (Firestore não aceita '/' no ID)
         
         await firebaseDb.collection('clientes')
             .doc(cliente.id)
             .collection('historico_pagamentos')
-            .doc(mesRef)
+            .doc(docId)
             .set({
-                referencia: mesRef,
+                referencia: mesRef,  // exibição: mantém "03/2026"
                 status: 'pago',
                 forma_pagamento: 'Comprovante',
                 pago_em: new Date().toISOString(),
@@ -338,7 +339,42 @@ const ctxRotas = {
             console.error('Erro ao isentar mês de entrada:', e);
         }
     },
-    verificarPromessasVencidas: () => 0,
+    verificarPromessasVencidas: async () => {
+        try {
+            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+            const hoje = agoraBR.toISOString().split('T')[0];
+            const snap = await firebaseDb.collection('promessas')
+                .where('status', '==', 'pendente')
+                .get();
+            let vencidas = 0;
+            const batch = firebaseDb.batch();
+            snap.docs.forEach(doc => {
+                const p = doc.data();
+                if (!p.data_promessa) return;
+                // Normaliza para YYYY-MM-DD
+                let dataPromessa = p.data_promessa;
+                if (dataPromessa.includes('/')) {
+                    const [d, m, y] = dataPromessa.split('/');
+                    dataPromessa = `${y}-${m}-${d}`;
+                }
+                if (dataPromessa < hoje) {
+                    batch.update(doc.ref, { status: 'vencida' });
+                    vencidas++;
+                }
+            });
+            if (vencidas > 0) {
+                await batch.commit();
+                // Volta status dos clientes com promessa vencida para pendente
+                const clientesSnap = await firebaseDb.collection('clientes')
+                    .where('status', '==', 'promessa').get();
+                const batchClientes = firebaseDb.batch();
+                clientesSnap.docs.forEach(doc => batchClientes.update(doc.ref, { status: 'pendente' }));
+                await batchClientes.commit();
+                console.log(`🤝 ${vencidas} promessa(s) vencida(s) marcadas.`);
+            }
+            return vencidas;
+        } catch(e) { console.error('Erro verificarPromessasVencidas:', e); return 0; }
+    },
     fs, 
     path
 };
@@ -743,11 +779,65 @@ async function limparLogsAntigos() {
 setInterval(() => { if (new Date().getHours() === 3) limparLogsAntigos(); }, 60 * 60 * 1000);
 
 // =====================================================
+// RESET MENSAL: todo dia 1 às 00:05 (horário Brasília)
+// Volta todos os clientes 'pago' para 'pendente'
+// =====================================================
+setInterval(async () => {
+    const agora = new Date();
+    const agoraBR = new Date(agora.getTime() - 3 * 60 * 60 * 1000);
+    const diaBR   = agoraBR.getUTCDate();
+    const horaBR  = agoraBR.getUTCHours();
+    const minBR   = agoraBR.getUTCMinutes();
+
+    // Verifica promessas vencidas todo dia às 0h01 (UTC-3)
+    if (horaBR === 0 && minBR === 1) {
+        await ctxRotas.verificarPromessasVencidas().catch(() => {});
+    }
+
+    if (diaBR === 1 && horaBR === 0 && minBR === 5) {
+        console.log('📅 Reset mensal: voltando clientes pagos para pendente...');
+        try {
+            const snap = await firebaseDb.collection('clientes')
+                .where('status', '==', 'pago')
+                .get();
+
+            if (snap.empty) {
+                console.log('📅 Nenhum cliente pago para resetar.');
+                return;
+            }
+
+            // Processa em batches de 500 (limite do Firestore)
+            const batch_size = 500;
+            for (let i = 0; i < snap.docs.length; i += batch_size) {
+                const batch = firebaseDb.batch();
+                snap.docs.slice(i, i + batch_size).forEach(doc => {
+                    batch.update(doc.ref, {
+                        status: 'pendente',
+                        atualizado_em: new Date().toISOString()
+                    });
+                });
+                await batch.commit();
+            }
+            console.log(`📅 Reset mensal concluído: ${snap.size} clientes voltaram para pendente.`);
+
+            for (const adm of ADMINISTRADORES) {
+                await client.sendMessage(adm,
+                    `📅 *RESET MENSAL CONCLUÍDO*\n\n${snap.size} clientes voltaram para pendente.\nA cobrança automática já pode rodar normalmente!`
+                ).catch(() => {});
+            }
+        } catch(e) {
+            console.error('Erro no reset mensal:', e);
+        }
+    }
+}, 60 * 1000); // verifica a cada 1 min
+
+// =====================================================
 // PROMESSAS DO DIA
 // =====================================================
 async function verificarPromessasDoDia() {
     try {
-        const hoje = new Date().toISOString().split('T')[0];
+        const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+        const hoje = agoraBR.toISOString().split('T')[0];
         const snapshot = await firebaseDb.collection('promessas')
             .where('data_promessa', '==', hoje)
             .where('status', '==', 'pendente')
@@ -761,8 +851,10 @@ async function verificarPromessasDoDia() {
 }
 
 setInterval(async () => {
-    const agora = new Date();
-    if (agora.getHours() === 8 && agora.getMinutes() === 0) await verificarPromessasDoDia();
+    const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    const horaBR = agoraBR.getUTCHours();
+    const minBR  = agoraBR.getUTCMinutes();
+    if (horaBR === 8 && minBR === 0) await verificarPromessasDoDia();
 }, 60 * 1000);
 
 // =====================================================

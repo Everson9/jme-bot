@@ -139,14 +139,28 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
     const cobrancasParaExecutar = [];
     
     for (const venc of diasVenc) {
-        const atraso = dia - venc;
         let tipo = null;
-        
-        if (atraso === -1) tipo = 'lembrete';
-        else if (atraso === 3) tipo = 'atraso';
-        else if (atraso === 5) tipo = 'atraso_final';
-        else if (atraso === 7) tipo = 'reconquista';
-        else if (atraso === 10) tipo = 'reconquista_final';
+
+        // Verificar lembrete ANTES de calcular atraso de virada
+        // dia 9 → venc 10, dia 19 → venc 20, dia 29 → venc 30
+        if (dia === venc - 1) {
+            tipo = 'lembrete';
+        } else {
+            // Calcula atraso considerando virada de mês
+            let atraso;
+            if (dia >= venc) {
+                atraso = dia - venc; // mesmo mês
+            } else {
+                // Dia atual < venc → estamos no mês seguinte ao vencimento
+                const diasNoMesAnterior = new Date(ano, mes - 1, 0).getDate();
+                atraso = (diasNoMesAnterior - venc) + dia;
+            }
+
+            if (atraso === 3)  tipo = 'atraso';
+            else if (atraso === 5)  tipo = 'atraso_final';
+            else if (atraso === 7)  tipo = 'reconquista';
+            else if (atraso === 10) tipo = 'reconquista_final';
+        }
         
         if (tipo) {
             // 🔥 VERIFICAR SE JÁ FOI COBRADO HOJE
@@ -228,7 +242,7 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
         }
         // Executa imediatamente após aprovação
         console.log(`✅ Autorizado! Disparando: Data ${c.data} — ${c.tipo}`);
-        await dispararCobrancaReal(client, firebaseDb, c.data, c.tipo);
+        await dispararCobrancaReal(c.data, c.tipo); // wrapper já tem client+firebaseDb
         await new Promise(r => setTimeout(r, 2000));
     }
     
