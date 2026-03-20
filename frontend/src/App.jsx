@@ -18,7 +18,7 @@ import { PageLogs } from './pages/logs';
 import { PageCobranca } from './pages/cobranca';
 import { PageSGP } from './pages/sgp';
 import { PageNovos } from './pages/novos';
-import { PageQR } from './pages/PageQR';
+import { PageQR } from './pages/qr';
 import { PageEstados } from './pages/estados';
 import { PageInadimplentes } from './pages/inadimplentes';
 import { PageAgendamentos } from './pages/agendamentos';
