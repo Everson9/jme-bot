@@ -8,7 +8,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 
 // Pages
-import { PageQR } from './pages/pageQR';
+import { PageQR } from './pages/qr';
 import { PageDashboard } from './pages/dashboard';
 import { PageClientes } from './pages/clientes';
 import { PagePromessas } from './pages/promessas';
