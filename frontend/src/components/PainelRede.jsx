@@ -8,6 +8,7 @@ const API = import.meta.env.VITE_API_URL || "";
 export const PainelRede = ({ situacaoRede: inicial, previsaoRetorno: prevInicial, onAtualizar }) => {
   const [status, setStatus] = useState(inicial || "normal");
   const [previsao, setPrevisao] = useState(prevInicial === "sem previsão" ? "" : prevInicial || "");
+  const [motivo, setMotivo] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -20,6 +21,7 @@ export const PainelRede = ({ situacaoRede: inicial, previsaoRetorno: prevInicial
         if (d) {
           setStatus(d.situacaoRede || "normal");
           setPrevisao(d.previsaoRetorno === "sem previsão" ? "" : d.previsaoRetorno || "");
+          setMotivo(d.motivoRede || "");
         }
       }).catch(() => {});
   }, []); // só ao montar
@@ -39,7 +41,7 @@ export const PainelRede = ({ situacaoRede: inicial, previsaoRetorno: prevInicial
       const r = await fetch(API + "/api/rede", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, previsao: previsao || "sem previsão" })
+        body: JSON.stringify({ status, previsao: previsao || "sem previsão", motivo: motivo || "" })
       });
       if (r.ok) {
         setMsg("✅ Status atualizado!");
