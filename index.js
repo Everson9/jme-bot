@@ -193,6 +193,35 @@ async function processarMidiaAutomatico(deQuem, msg) {
     return false;
 }
 
+
+// Registra pagamento na coleção pagamentos_hoje para o caixa do dia
+// Custo: 1 escrita — evita 74 leituras no caixa-hoje
+async function registrarPagamentoHoje(firebaseDb, clienteId, clienteData, formaBaixa, valor) {
+    try {
+        const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+        const hoje = agoraBR.toISOString().split('T')[0];
+        const planoLower = (clienteData.plano || '').toLowerCase();
+        let valor_plano = null;
+        if (planoLower.includes('iptv') || planoLower.includes('70')) valor_plano = 70;
+        else if (planoLower.includes('200') || planoLower.includes('fibra')) valor_plano = 60;
+        else if (planoLower.includes('50') || planoLower.includes('cabo')) valor_plano = 50;
+
+        await firebaseDb.collection('pagamentos_hoje').doc(clienteId + '_' + hoje).set({
+            data: hoje,
+            cliente_id: clienteId,
+            nome: clienteData.nome || '—',
+            plano: clienteData.plano,
+            forma_pagamento: clienteData.forma_pagamento,
+            forma_baixa: formaBaixa || 'Comprovante',
+            pago_em: new Date().toISOString(),
+            valor_plano,
+            valor: valor || null
+        });
+    } catch(e) {
+        console.error('Erro ao registrar pagamento_hoje:', e.message);
+    }
+}
+
 async function darBaixaAutomatica(numeroWhatsapp, analise) {
     try {
         const numeroBusca = numeroWhatsapp.replace('@c.us', '').replace(/^55/, '');
@@ -220,6 +249,9 @@ async function darBaixaAutomatica(numeroWhatsapp, analise) {
                 data_vencimento: cliente.dia_vencimento || 10,
                 valor: analise.valor
             }, { merge: true });
+
+        // Registra no caixa do dia — 1 escrita, evita 74 leituras no dashboard
+        await registrarPagamentoHoje(firebaseDb, cliente.id, cliente, 'Comprovante', analise.valor);
 
         return { sucesso: true, nomeCliente: cliente.nome, valido: analise.valido };
     } catch(e) {

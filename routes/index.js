@@ -1799,48 +1799,14 @@ app.delete('/api/promessas/:id', async (req, res) => {
     app.get('/api/dashboard/caixa-hoje', async (req, res) => {
         try {
             const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
-            const hoje = agoraBR.toISOString().split('T')[0]; // "2026-03-20"
-            const mm = String(agoraBR.getUTCMonth() + 1).padStart(2, '0');
-            const aaaa = agoraBR.getUTCFullYear();
-            const docId = `${mm}-${aaaa}`; // "03-2026" — ID do documento no historico_pagamentos
+            const hoje = agoraBR.toISOString().split('T')[0];
 
-            // Busca todos os clientes — sem collectionGroup que exige índice
-            const clientesSnap = await firebaseDb.collection('clientes').get();
+            // 1 query na coleção pagamentos_hoje — em vez de ler todos os clientes
+            const snap = await firebaseDb.collection('pagamentos_hoje')
+                .where('data', '==', hoje)
+                .get();
 
-            const rows = [];
-
-            // Para cada cliente, busca o documento do mês atual diretamente pelo ID
-            // É 1 leitura por cliente mas sem nenhum índice composto necessário
-            await Promise.all(clientesSnap.docs.map(async clienteDoc => {
-                try {
-                    const pagamentoDoc = await firebaseDb
-                        .collection('clientes').doc(clienteDoc.id)
-                        .collection('historico_pagamentos').doc(docId)
-                        .get();
-
-                    if (!pagamentoDoc.exists) return;
-                    const pagamento = pagamentoDoc.data();
-                    if (pagamento.status !== 'pago') return;
-                    if (!(pagamento.pago_em || '').startsWith(hoje)) return;
-
-                    const cliente = clienteDoc.data();
-                    let valor_plano = null;
-                    const p = (cliente.plano || '').toLowerCase();
-                    if (p.includes('iptv') || p.includes('70')) valor_plano = 70;
-                    else if (p.includes('200') || p.includes('fibra')) valor_plano = 60;
-                    else if (p.includes('50') || p.includes('cabo')) valor_plano = 50;
-
-                    rows.push({
-                        nome: cliente.nome || '—',
-                        plano: cliente.plano,
-                        forma_pagamento: cliente.forma_pagamento,
-                        forma_baixa: pagamento.forma_pagamento,
-                        pago_em: pagamento.pago_em,
-                        valor_plano
-                    });
-                } catch(_) {}
-            }));
-
+            const rows = snap.docs.map(doc => doc.data());
             rows.sort((a, b) => (b.pago_em || '').localeCompare(a.pago_em || ''));
             res.json(rows);
         } catch(e) {
@@ -1848,7 +1814,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
             res.json([]);
         }
     });
-
     app.get('/api/dashboard/alertas', async (req, res) => {
         try {
             const hoje = new Date();
