@@ -31,10 +31,15 @@ Exemplos de como clientes costumam mandar o nome:
 "meu nome? é Marcos" → Marcos
 "sim! Luciana" → Luciana
 "oi, Beatriz Santos aqui" → Beatriz Santos
+"Jailson Dias da Silva, é dia 25 não é dia 20" → Jailson Dias da Silva
+"meu marido é José Pereira de Lima" → José Pereira de Lima
+"É o meu esposo, Jair pereira de lima" → Jair Pereira de Lima
 "ok" → DESCONHECIDO
 "sim" → DESCONHECIDO
 "pode ser" → DESCONHECIDO
 "tá bom" → DESCONHECIDO
+
+IMPORTANTE: Responda APENAS o nome da pessoa, no máximo 5 palavras, sem explicações.
 
 Mensagem: "${texto}"`;
         

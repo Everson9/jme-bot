@@ -14,6 +14,9 @@ const criarFluxoNovoCliente = require('../fluxos/novoCliente');
 const criarFluxoCancelamento = require('../fluxos/cancelamento');
 
 async function processarMensagem(deQuem, msg, ctx) {
+    // Ignorar mensagens sem texto (áudio não transcrito, mídia sem legenda)
+    if (!msg.body?.trim() && msg.hasMedia) return;
+
     const {
         state, banco, client, utils, classificador, detectorMultiplas,
         verificarETransferir, responderComIA, iniciarFluxoPorIntencao,
@@ -370,10 +373,13 @@ async function handleIdentificacao(deQuem, msg, ctx) {
             return;
         }
         
+        state.encerrarFluxo(deQuem);
+        state.setAtendimentoHumano(deQuem, true);
+        await banco.dbSalvarAtendimentoHumano(deQuem).catch(() => {});
+        await banco.dbAbrirChamado(deQuem, null, 'Não identificado — número não cadastrado').catch(() => {});
         await client.sendMessage(deQuem,
             `🤖 *Assistente JMENET*\n\nNão consegui te identificar na minha base. Deixa eu chamar alguém pra te ajudar melhor. 😊 Aguarda um instante!`
         );
-        await verificarETransferir(deQuem, 'Não identificado após nome, CPF e telefone');
         return;
     }
 }

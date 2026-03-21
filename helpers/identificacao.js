@@ -145,7 +145,15 @@ module.exports = function criarIdentificacao(state, client, utils, banco, verifi
             }
             
             console.log(`❌ Cliente não encontrado após TODAS as tentativas`);
-            await verificarETransferir(deQuem, 'Não identificado após nome, CPF e telefone');
+            // Abre chamado diretamente e marca como humano persistente
+            // Não usa verificarETransferir (precisa de 5 erros) — transfere imediatamente
+            state.encerrarFluxo(deQuem);
+            state.setAtendimentoHumano(deQuem, true);
+            await banco.dbSalvarAtendimentoHumano(deQuem).catch(() => {});
+            await banco.dbAbrirChamado(deQuem, null, 'Não identificado — número não cadastrado').catch(() => {});
+            await client.sendMessage(deQuem,
+                `🤖 *Assistente JMENET*\n\nNão consegui te identificar na minha base. Deixa eu chamar alguém pra te ajudar melhor. 😊 Aguarda um instante!`
+            );
             return;
         }
     }

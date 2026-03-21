@@ -22,9 +22,12 @@ function proximoAtendimento(horarioFuncionamento) {
 }
 
 function falarSinalAmigavel(situacaoRede, previsaoRetorno) {
-    if (situacaoRede === "fibra_rompida") return "🔴 Rompimento de fibra na região.";
-    if (situacaoRede === "manutencao") return "🔴 Manutenção programada na rede.";
-    if (situacaoRede === "instavel") return "⚠️ Instabilidade técnica no momento.";
+    const prev = previsaoRetorno && previsaoRetorno !== 'sem previsão'
+        ? `\n\n🕐 *Previsão de retorno:* ${previsaoRetorno}`
+        : '\n\n🕐 Ainda sem previsão definida.';
+    if (situacaoRede === "fibra_rompida") return `🔴 *Fibra rompida* na sua área. Nossa equipe já está trabalhando para resolver.${prev}`;
+    if (situacaoRede === "manutencao")    return `🔧 *Manutenção programada* em andamento.${prev}`;
+    if (situacaoRede === "instavel")      return `⚠️ Estamos com *instabilidade técnica* no momento.${prev}`;
     return "🟢 Sinal normal";
 }
 

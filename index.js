@@ -56,7 +56,6 @@ instalacoesAgendadas.criarTabela();
 // =====================================================
 const DATA_PATH = (() => {
     if (process.env.RAILWAY_VOLUME_MOUNT_PATH) return process.env.RAILWAY_VOLUME_MOUNT_PATH;
-    if (process.env.RENDER) return '/opt/render/project/src/data';
     return __dirname;
 })();
 
@@ -511,7 +510,33 @@ async function iniciarFluxoPorIntencao(intencao, deQuem, msg) {
         state.atualizar(deQuem, { _naoEntendidos: 0 });
     }
     switch(intencao) {
-        case 'SUPORTE': await _fluxoSuporte.iniciar(deQuem, msg); break;
+        case 'SUPORTE': {
+            // Se rede está com problema conhecido → responde direto sem pedir nome
+            if (!redeNormal(situacaoRede)) {
+                const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+                const hora = agoraBR.getUTCHours();
+                const fora_horario = hora < 8 || hora >= 20;
+
+                // Monta resposta empática com info do problema
+                const infoRede = falarSinalAmigavel(situacaoRede, previsaoRetorno);
+                let resposta = `${infoRede}\n\n`;
+
+                if (fora_horario) {
+                    resposta += `Sabemos do problema e nossa equipe vai entrar em contato assim que possível. 🙏\n\nSe a internet ainda estiver fora quando amanhecer, avisamos nossos técnicos para priorizarem o seu endereço.`;
+                } else {
+                    resposta += `Nossa equipe já está trabalhando para resolver. Vamos entrar em contato assim que normalizar. 🙏`;
+                }
+
+                await client.sendMessage(deQuem, `${P}${resposta}`);
+
+                // Abre chamado automaticamente com número do cliente
+                const nome = state.getDados(deQuem)?.nomeCliente || null;
+                await abrirChamadoComMotivo(deQuem, nome, `Reclamação durante instabilidade (${situacaoRede})`);
+                return;
+            }
+            await _fluxoSuporte.iniciar(deQuem, msg);
+            break;
+        }
         case 'FINANCEIRO': case 'PIX': case 'BOLETO': case 'CARNE': case 'DINHEIRO':
             await _fluxoFinanceiro.iniciar(deQuem, msg, intencao); break;
         case 'PROMESSA': await _fluxoPromessa.iniciar(deQuem, msg); break;
@@ -644,7 +669,7 @@ client.on('message_create', async (msg) => {
         state.encerrarFluxo(numero);
         await banco.dbRemoverAtendimentoHumano(numero).catch(() => {});
         console.log(`⏰ Atendimento humano expirado para ${numero.replace('@c.us','')} — bot retomou`);
-    }, 30 * 60 * 1000); // 30 minutos sem digitar → bot volta
+    }, 2 * 60 * 60 * 1000); // 2 horas sem digitar → bot volta
 });
 
 // =====================================================
