@@ -45,35 +45,24 @@ class SSEService {
     // Envia atualização para todos os clientes
     broadcast() {
         const status = this.getCurrentStatus();
-        
-        // Só envia se mudou
-        if (JSON.stringify(status) === JSON.stringify(this.currentStatus)) {
-            return; // Nada mudou
-        }
-        
         this.currentStatus = status;
         const data = `data: ${JSON.stringify(status)}\n\n`;
-        
         this.clients.forEach(client => {
-            try {
-                client.write(data);
-            } catch (err) {
-                console.error('📡 SSE: Erro ao enviar para cliente', err);
-            }
+            try { client.write(data); } catch(_) {}
         });
-        
-        console.log('📡 SSE: Broadcast enviado');
+        console.log(`📡 SSE broadcast: online=${status.online} botAtivo=${status.botAtivo}`);
     }
 
     // Middleware para a rota SSE
     handleConnection(req, res) {
-        // Configura headers
-        res.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'Access-Control-Allow-Origin': '*'
-        });
+        // Headers necessários — X-Accel-Buffering desativa buffer do nginx/Render
+        // que quebra SSE com HTTP/2
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no'); // Render/nginx: não bufferiza
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.flushHeaders(); // força envio imediato dos headers
 
         // Envia status inicial
         const initialStatus = this.getCurrentStatus();
@@ -82,8 +71,21 @@ class SSEService {
         // Adiciona cliente
         this.addClient(res);
 
+        // Heartbeat a cada 15s — envia status atual (não só ping)
+        // Garante que o front sempre tem o estado correto mesmo após reconexão
+        const heartbeat = setInterval(() => {
+            try {
+                const status = this.getCurrentStatus();
+                res.write(`data: ${JSON.stringify(status)}\n\n`);
+            } catch(_) {
+                clearInterval(heartbeat);
+                this.removeClient(res);
+            }
+        }, 15000);
+
         // Remove quando desconectar
         req.on('close', () => {
+            clearInterval(heartbeat);
             this.removeClient(res);
         });
     }
