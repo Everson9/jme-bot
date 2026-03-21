@@ -21,13 +21,16 @@ function proximoAtendimento(horarioFuncionamento) {
     return `amanhã a partir das ${ini}h`;
 }
 
-function falarSinalAmigavel(situacaoRede, previsaoRetorno) {
+function falarSinalAmigavel(situacaoRede, previsaoRetorno, motivoRede) {
     const prev = previsaoRetorno && previsaoRetorno !== 'sem previsão'
-        ? `\n\n🕐 *Previsão de retorno:* ${previsaoRetorno}`
-        : '\n\n🕐 Ainda sem previsão definida.';
-    if (situacaoRede === "fibra_rompida") return `🔴 *Fibra rompida* na sua área. Nossa equipe já está trabalhando para resolver.${prev}`;
-    if (situacaoRede === "manutencao")    return `🔧 *Manutenção programada* em andamento.${prev}`;
-    if (situacaoRede === "instavel")      return `⚠️ Estamos com *instabilidade técnica* no momento.${prev}`;
+        ? `\n🕐 *Previsão de retorno:* ${previsaoRetorno}`
+        : '\n🕐 Ainda sem previsão definida.';
+    const motivo = motivoRede
+        ? `\n📋 *Motivo:* ${motivoRede}`
+        : '';
+    if (situacaoRede === "fibra_rompida") return `🔴 *Fibra rompida* na sua área. Nossa equipe já está trabalhando para resolver.${motivo}${prev}`;
+    if (situacaoRede === "manutencao")    return `🔧 *Manutenção programada* em andamento.${motivo}${prev}`;
+    if (situacaoRede === "instavel")      return `⚠️ Estamos com *instabilidade técnica* no momento.${motivo}${prev}`;
     return "🟢 Sinal normal";
 }
 

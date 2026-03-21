@@ -107,6 +107,76 @@ module.exports = function setupRotasAlertas(app, ctx) {
     });
 
     // =====================================================
+    // CLIENTES PARA BLOQUEAR (pendentes após D+10)
+    // =====================================================
+    app.get('/api/alertas/bloquear', async (req, res) => {
+        try {
+            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+            const dia = agoraBR.getUTCDate();
+            const mes = agoraBR.getUTCMonth() + 1;
+            const ano = agoraBR.getUTCFullYear();
+
+            // Calcula quais vencimentos já passaram de D+10
+            // Ex: hoje dia 22 → venc 10 tem atraso 12 (>10) → bloquear
+            const paraBloquear = [];
+            for (const venc of [10, 20, 30]) {
+                let atraso;
+                if (dia >= venc) {
+                    atraso = dia - venc;
+                } else {
+                    const diasMesAnt = new Date(ano, mes - 1, 0).getDate();
+                    atraso = (diasMesAnt - venc) + dia;
+                }
+                if (atraso > 10) paraBloquear.push(venc);
+            }
+
+            if (paraBloquear.length === 0) {
+                return res.json({ clientes: [], total: 0 });
+            }
+
+            // Busca clientes pendentes dos vencimentos que passaram D+10
+            const todos = [];
+            await Promise.all(paraBloquear.map(async venc => {
+                // Busca como número E como string — campo pode estar salvo de qualquer forma
+                const [snapNum, snapStr] = await Promise.all([
+                    firebaseDb.collection('clientes')
+                        .where('dia_vencimento', '==', venc)
+                        .where('status', '==', 'pendente').get(),
+                    firebaseDb.collection('clientes')
+                        .where('dia_vencimento', '==', String(venc))
+                        .where('status', '==', 'pendente').get(),
+                ]);
+                const vistos = new Set();
+                const snap = { docs: [...snapNum.docs, ...snapStr.docs].filter(d => {
+                    if (vistos.has(d.id)) return false;
+                    vistos.add(d.id); return true;
+                })};
+                snap.docs.forEach(doc => {
+                    const d = doc.data();
+                    const diasAtraso = dia >= venc
+                        ? dia - venc
+                        : (new Date(ano, mes - 1, 0).getDate() - venc) + dia;
+                    todos.push({
+                        id: doc.id,
+                        nome: d.nome,
+                        telefone: d.telefone,
+                        dia_vencimento: venc,
+                        dias_atraso: diasAtraso,
+                        plano: d.plano,
+                        forma_pagamento: d.forma_pagamento
+                    });
+                });
+            }));
+
+            todos.sort((a, b) => b.dias_atraso - a.dias_atraso);
+            res.json({ clientes: todos, total: todos.length });
+        } catch(e) {
+            console.error('Erro /api/alertas/bloquear:', e.message);
+            res.status(500).json({ clientes: [], total: 0 });
+        }
+    });
+
+    // =====================================================
     // MARCAR NOTIFICAÇÕES COMO LIDAS
     // =====================================================
     app.post('/api/notificacoes/marcar-lida', async (req, res) => {

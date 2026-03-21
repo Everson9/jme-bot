@@ -76,6 +76,7 @@ const chavePixExibicao = "jmetelecomnt@gmail.com";
 let botAtivo = true;
 let situacaoRede = 'normal';
 let previsaoRetorno = 'sem previsão';
+let motivoRede = '';
 let horarioFuncionamento = { inicio: 8, fim: 20, ativo: true };
 let horarioCobranca = { inicio: 8, fim: 17 };
 let botIniciadoEm = null;
@@ -355,6 +356,8 @@ const ctxRotas = {
     set situacaoRede(v) { situacaoRede = v; },
     get previsaoRetorno() { return previsaoRetorno; },
     set previsaoRetorno(v) { previsaoRetorno = v; },
+    get motivoRede() { return motivoRede; },
+    set motivoRede(v) { motivoRede = v; },
     horarioFuncionamento, 
     horarioCobranca,
     dispararCobrancaReal: (data, tipo) => dispararCobrancaReal(client, firebaseDb, data, tipo),
@@ -548,23 +551,43 @@ async function iniciarFluxoPorIntencao(intencao, deQuem, msg) {
                 const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
                 const hora = agoraBR.getUTCHours();
                 const fora_horario = hora < 8 || hora >= 20;
+                const dadosCliente = state.getDados(deQuem) || {};
+                const jaAvisado = dadosCliente._avisadoInstabilidade || false;
+                const infoRede = falarSinalAmigavel(situacaoRede, previsaoRetorno, motivoRede);
 
-                // Monta resposta empática com info do problema
-                const infoRede = falarSinalAmigavel(situacaoRede, previsaoRetorno);
-                let resposta = `${infoRede}\n\n`;
+                let resposta;
 
-                if (fora_horario) {
-                    resposta += `Sabemos do problema e nossa equipe vai entrar em contato assim que possível. 🙏\n\nSe a internet ainda estiver fora quando amanhecer, avisamos nossos técnicos para priorizarem o seu endereço.`;
+                if (!jaAvisado) {
+                    // Primeira vez que pergunta — explica completo
+                    resposta = `${infoRede}\n\n`;
+                    if (fora_horario) {
+                        resposta += `Sabemos do problema e nossa equipe vai entrar em contato assim que possível. 🙏\n\nSe a internet ainda estiver fora quando amanhecer, avisamos nossos técnicos para priorizarem o seu endereço.`;
+                    } else {
+                        resposta += `Nossa equipe já está trabalhando para resolver. Vamos entrar em contato assim que normalizar. 🙏`;
+                    }
+                    // Marca que já foi avisado para não repetir tudo de novo
+                    state.atualizar(deQuem, { _avisadoInstabilidade: true });
+
+                    // Abre chamado apenas na primeira vez
+                    const nome = dadosCliente.nomeCliente || null;
+                    await abrirChamadoComMotivo(deQuem, nome, `Reclamação durante instabilidade (${situacaoRede})`);
                 } else {
-                    resposta += `Nossa equipe já está trabalhando para resolver. Vamos entrar em contato assim que normalizar. 🙏`;
+                    // Cliente voltou a perguntar — resposta mais curta, verifica se ainda está com problema
+                    if (previsaoRetorno && previsaoRetorno !== 'sem previsão') {
+                        resposta = `Nossa equipe ainda está trabalhando para resolver. 🔧\n\n🕐 *Previsão de retorno:* ${previsaoRetorno}\n\nAssim que normalizar, entraremos em contato. Pedimos desculpas pelo transtorno! 🙏`;
+                    } else {
+                        resposta = `Nossa equipe ainda está trabalhando para resolver. 🔧\n\nAinda não temos uma previsão definida, mas estamos empenhados em resolver o mais rápido possível.\n\nPedimos desculpas pelo transtorno! 🙏`;
+                    }
                 }
 
                 await client.sendMessage(deQuem, `${P}${resposta}`);
-
-                // Abre chamado automaticamente com número do cliente
-                const nome = state.getDados(deQuem)?.nomeCliente || null;
-                await abrirChamadoComMotivo(deQuem, nome, `Reclamação durante instabilidade (${situacaoRede})`);
                 return;
+            }
+
+            // Rede voltou ao normal — se o cliente estava esperando, celebra
+            const dadosCliente = state.getDados(deQuem) || {};
+            if (dadosCliente._avisadoInstabilidade) {
+                state.atualizar(deQuem, { _avisadoInstabilidade: false });
             }
             await _fluxoSuporte.iniciar(deQuem, msg);
             break;
@@ -1059,6 +1082,8 @@ client.on('ready', async () => {
         if (cfgBot.exists)      botAtivo = cfgBot.data().valor ?? true;
         if (cfgRede.exists)     situacaoRede = cfgRede.data().valor ?? 'normal';
         if (cfgPrevisao.exists) previsaoRetorno = cfgPrevisao.data().valor ?? 'sem previsão';
+        const cfgMotivo = await firebaseDb.collection('config').doc('motivo_rede').get();
+        if (cfgMotivo.exists) motivoRede = cfgMotivo.data().valor ?? '';
         if (cfgHorario.exists)  Object.assign(horarioFuncionamento, cfgHorario.data());
         if (cfgCobranca.exists) Object.assign(horarioCobranca, cfgCobranca.data());
 

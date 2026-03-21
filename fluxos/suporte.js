@@ -237,7 +237,8 @@ module.exports = function criarFluxoSuporte(ctx) {
     async function iniciar(deQuem, msg, motivo = null) {
         const _sr = ctx.situacaoRede || 'normal';
         const _pr = ctx.previsaoRetorno || 'sem previsão';
-        const sinalMsg = falarSinalAmigavel(_sr, _pr);
+        const _mr = ctx.motivoRede || '';
+        const sinalMsg = falarSinalAmigavel(_sr, _pr, _mr);
 
         if (motivo === 'troca_senha') {
             const dadosCliente = await buscarStatusCliente(deQuem);

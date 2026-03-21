@@ -138,9 +138,11 @@ app.get('/api/status', (req, res) => {
                 firebaseDb.collection('config').doc('situacao_rede').get(),
                 firebaseDb.collection('config').doc('previsao_retorno').get(),
             ]);
+            const motivoDoc = await firebaseDb.collection('config').doc('motivo_rede').get();
             res.json({
                 situacaoRede: redeDoc.exists ? redeDoc.data().valor : (ctx.situacaoRede || 'normal'),
                 previsaoRetorno: previsaoDoc.exists ? previsaoDoc.data().valor : (ctx.previsaoRetorno || 'sem previsão'),
+                motivoRede: motivoDoc.exists ? motivoDoc.data().valor : (ctx.motivoRede || ''),
             });
         } catch(e) {
             res.json({ situacaoRede: ctx.situacaoRede || 'normal', previsaoRetorno: ctx.previsaoRetorno || 'sem previsão' });
@@ -148,19 +150,24 @@ app.get('/api/status', (req, res) => {
     });
 
     app.post('/api/rede', async (req, res) => {
-        const { status, previsao } = req.body;
+        const { status, previsao, motivo } = req.body;
         const validos = ['normal', 'instavel', 'manutencao', 'fibra_rompida'];
         if (!validos.includes(status)) {
             return res.status(400).json({ erro: 'Status inválido. Use: ' + validos.join(', ') });
         }
         ctx.situacaoRede = status;
         ctx.previsaoRetorno = previsao || 'sem previsão';
+        ctx.motivoRede = motivo || '';
         
-        await firebaseDb.collection('config').doc('situacao_rede').set({ valor: status });
-        await firebaseDb.collection('config').doc('previsao_retorno').set({ valor: previsao || 'sem previsão' });
-        
-        console.log(`📡 Rede atualizada via painel: ${ctx.situacaoRede} | Previsão: ${ctx.previsaoRetorno}`);
-        res.json({ situacaoRede: ctx.situacaoRede, previsaoRetorno: ctx.previsaoRetorno });
+        await Promise.all([
+            firebaseDb.collection('config').doc('situacao_rede').set({ valor: status }),
+            firebaseDb.collection('config').doc('previsao_retorno').set({ valor: previsao || 'sem previsão' }),
+            firebaseDb.collection('config').doc('motivo_rede').set({ valor: motivo || '' }),
+        ]);
+
+        if (ctx.sseService) ctx.sseService.broadcast();
+        console.log(`📡 Rede: ${status} | Previsão: ${ctx.previsaoRetorno} | Motivo: ${ctx.motivoRede}`);
+        res.json({ situacaoRede: ctx.situacaoRede, previsaoRetorno: ctx.previsaoRetorno, motivoRede: ctx.motivoRede });
     });
 
     // =====================================================

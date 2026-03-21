@@ -124,6 +124,23 @@ export const PainelRede = ({ situacaoRede: inicial, previsaoRetorno: prevInicial
           </div>
         )}
 
+        {status !== "normal" && (
+          <div style={{ marginTop: 12, marginBottom: 4 }}>
+            <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>
+              📋 Motivo (opcional — aparece para os clientes)
+            </div>
+            <textarea
+              value={motivo}
+              onChange={e => setMotivo(e.target.value)}
+              placeholder="Ex: Rompimento de fibra na Rua X. Equipe trabalhando para resolver."
+              rows={2}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 8,
+                border: '1px solid #2d3148', background: '#0a0d16', color: '#e2e8f0',
+                fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }}
+            />
+          </div>
+        )}
+
         <div className="rede-footer" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button
             className="btn-salvar-rede"
