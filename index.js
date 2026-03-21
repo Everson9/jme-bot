@@ -1012,10 +1012,9 @@ setInterval(async () => {
 // =====================================================
 client.on('ready', async () => {
     inicializarFluxos();
-    ctxRotas.botIniciadoEm = Date.now(); // setter atualiza botIniciadoEm
-    sseService.broadcast(); // agora botIniciadoEm já está setado → online: true
+    ctxRotas.botIniciadoEm = Date.now();
 
-    // ── Restaura configurações salvas no Firebase ──────────────────
+    // ── Restaura configurações salvas no Firebase ANTES do broadcast ──
     try {
         const [cfgBot, cfgRede, cfgPrevisao, cfgHorario, cfgCobranca] = await Promise.all([
             firebaseDb.collection('config').doc('bot_ativo').get(),
@@ -1035,6 +1034,9 @@ client.on('ready', async () => {
     } catch(e) {
         console.error('⚠️  Erro ao restaurar config:', e.message);
     }
+
+    // Broadcast APÓS restaurar — garante que o front recebe o estado correto
+    sseService.broadcast();
 
     // ── Restaura atendimentos humanos abertos ──────────────────────
     try {
