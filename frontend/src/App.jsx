@@ -8,6 +8,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 
 // Pages
+import { PageQR } from './pages/pageQR';
 import { PageDashboard } from './pages/dashboard';
 import { PageClientes } from './pages/clientes';
 import { PagePromessas } from './pages/promessas';
@@ -97,6 +98,7 @@ function AppContent() {
               <Route path="/cancelamentos" element={<PageCancelamentos />} />
               <Route path="/inadimplentes" element={<PageInadimplentes />} />
               <Route path="/agendamentos" element={<PageAgendamentos />} />
+              <Route path="/qr" element={<PageQR status={botStatus} />} />
             </Routes>
           </ErrorBoundary>
         </div>
