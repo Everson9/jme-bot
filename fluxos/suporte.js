@@ -260,7 +260,7 @@ module.exports = function criarFluxoSuporte(ctx) {
         }
 
         if (!redeNormal(_sr)) {
-            const sinalMsg = falarSinalAmigavel(_sr, _pr);
+            const sinalMsg = falarSinalAmigavel(_sr, _pr, _mr);
             const semPrevisao = !_pr || _pr === 'sem previsão';
             
             state.iniciar(deQuem, 'rede_problema', 'aguardando_notificacao', { 
