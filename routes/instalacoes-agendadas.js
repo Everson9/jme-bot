@@ -12,15 +12,16 @@ module.exports = function setupRotasInstalacoesAgendadas(app, ctx) {
                 query = query.where('status', '==', status);
             }
             
-            const snapshot = await query
-                .orderBy('data', 'asc')
-                .orderBy('criado_em', 'desc')
-                .get();
+            // Sem orderBy — evita índice composto no Firestore, ordena em memória
+            const snapshot = await query.get();
             
-            const instalacoes = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+            const instalacoes = snapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .sort((a, b) => {
+                    if (a.data < b.data) return -1;
+                    if (a.data > b.data) return 1;
+                    return (b.criado_em || '').localeCompare(a.criado_em || '');
+                });
             
             res.json(instalacoes);
         } catch (error) {
