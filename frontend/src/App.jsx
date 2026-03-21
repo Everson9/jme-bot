@@ -18,7 +18,6 @@ import { PageLogs } from './pages/logs';
 import { PageCobranca } from './pages/cobranca';
 import { PageSGP } from './pages/sgp';
 import { PageNovos } from './pages/novos';
-import { PageQR } from './pages/qr';
 import { PageEstados } from './pages/estados';
 import { PageInadimplentes } from './pages/inadimplentes';
 import { PageAgendamentos } from './pages/agendamentos';
@@ -37,8 +36,7 @@ function AppContent() {
     let sseTimer = null;
     let pollTimer = null;
 
-    // Consulta REST uma vez para pegar o estado real imediatamente
-    // Necessário porque o SSE pode conectar antes do bot estar pronto
+    // /api/status não toca Firebase — só lê variáveis em memória, custo zero
     const fetchStatus = async () => {
       try {
         const r = await fetch(API + '/api/status');
@@ -46,29 +44,22 @@ function AppContent() {
       } catch(_) {}
     };
 
+    // SSE para atualizações em tempo real (atendimentos, toggle bot etc)
     const conectar = () => {
       if (es) { try { es.close(); } catch(_) {} }
       es = new EventSource(API + '/api/status-stream');
-
       es.onmessage = (event) => {
         try { setBotStatus(JSON.parse(event.data)); } catch(_) {}
       };
-
       es.onerror = () => {
         es.close();
-        sseTimer = setTimeout(conectar, 5000);
+        sseTimer = setTimeout(conectar, 8000);
       };
-
-      // Ao reconectar, re-busca o status atual via REST
-      // (o SSE só envia quando muda, não re-envia o estado atual ao reconectar)
-      fetchStatus();
     };
 
-    conectar();
-
-    // Polling leve a cada 30s apenas para garantir sincronia
-    // Não faz leitura no Firebase — /api/status só lê variáveis em memória
-    pollTimer = setInterval(fetchStatus, 30000);
+    fetchStatus();                          // imediato
+    pollTimer = setInterval(fetchStatus, 5000); // a cada 5s — fonte principal
+    conectar();                             // SSE como complemento
 
     return () => {
       if (sseTimer) clearTimeout(sseTimer);
@@ -93,7 +84,7 @@ function AppContent() {
         <div className="content">
           <ErrorBoundary>
             <Routes>
-              <Route path="/" element={<PageDashboard />} />
+              <Route path="/" element={<PageDashboard status={botStatus} />} />
               <Route path="/chamados" element={<PageChamados />} />
               <Route path="/clientes" element={<PageClientes onBasesCarregadas={setBases} />} />
               <Route path="/promessas" element={<PagePromessas />} />
@@ -106,7 +97,6 @@ function AppContent() {
               <Route path="/cancelamentos" element={<PageCancelamentos />} />
               <Route path="/inadimplentes" element={<PageInadimplentes />} />
               <Route path="/agendamentos" element={<PageAgendamentos />} />
-              <Route path="/qr" element={<PageQR status={botStatus} />} />
             </Routes>
           </ErrorBoundary>
         </div>

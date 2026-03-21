@@ -131,9 +131,20 @@ app.get('/api/status', (req, res) => {
         }
     });
 
-    // Rede
-    app.get('/api/rede', (req, res) => {
-        res.json({ situacaoRede, previsaoRetorno });
+    // Rede — busca direto do Firebase para garantir valor correto mesmo antes do ready
+    app.get('/api/rede', async (req, res) => {
+        try {
+            const [redeDoc, previsaoDoc] = await Promise.all([
+                firebaseDb.collection('config').doc('situacao_rede').get(),
+                firebaseDb.collection('config').doc('previsao_retorno').get(),
+            ]);
+            res.json({
+                situacaoRede: redeDoc.exists ? redeDoc.data().valor : (ctx.situacaoRede || 'normal'),
+                previsaoRetorno: previsaoDoc.exists ? previsaoDoc.data().valor : (ctx.previsaoRetorno || 'sem previsão'),
+            });
+        } catch(e) {
+            res.json({ situacaoRede: ctx.situacaoRede || 'normal', previsaoRetorno: ctx.previsaoRetorno || 'sem previsão' });
+        }
     });
 
     app.post('/api/rede', async (req, res) => {
