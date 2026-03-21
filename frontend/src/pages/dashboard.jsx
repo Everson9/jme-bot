@@ -213,11 +213,11 @@ export function PageDashboard({ status, refetch }) {
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
               <div style={{
                 width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
-                background: botStatus?.online ? "#22c55e" : "#ef4444",
-                boxShadow: botStatus?.online ? "0 0 8px #22c55e88" : "none"
+                background: botStatus?.online ? "#22c55e" : botStatus === null ? "#f59e0b" : "#ef4444",
+                boxShadow: botStatus?.online ? "0 0 8px #22c55e88" : "none" 
               }} />
-              <span style={{ fontSize: 22, fontWeight: 800, color: botStatus?.online ? "#22c55e" : "#ef4444" }}>
-                {botStatus?.online ? "Online" : "Offline"}
+              <span style={{ fontSize: 22, fontWeight: 800, color: botStatus?.online ? "#22c55e" : botStatus === null ? "#f59e0b" : "#ef4444" }}>
+                {botStatus === null ? "Conectando..." : botStatus?.online ? "Online" : "Offline"}
               </span>
             </div>
             {botStatus?.iniciadoEm && (
