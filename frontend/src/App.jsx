@@ -18,7 +18,7 @@ import { PageLogs } from './pages/logs';
 import { PageCobranca } from './pages/cobranca';
 import { PageSGP } from './pages/sgp';
 import { PageNovos } from './pages/novos';
-import { PageQR } from './pages/qr';
+import { PageQR } from './pages/PageQR';
 import { PageEstados } from './pages/estados';
 import { PageInadimplentes } from './pages/inadimplentes';
 import { PageAgendamentos } from './pages/agendamentos';
@@ -35,6 +35,16 @@ function AppContent() {
   useEffect(() => {
     let es = null;
     let sseTimer = null;
+    let pollTimer = null;
+
+    // Consulta REST uma vez para pegar o estado real imediatamente
+    // Necessário porque o SSE pode conectar antes do bot estar pronto
+    const fetchStatus = async () => {
+      try {
+        const r = await fetch(API + '/api/status');
+        if (r.ok) setBotStatus(await r.json());
+      } catch(_) {}
+    };
 
     const conectar = () => {
       if (es) { try { es.close(); } catch(_) {} }
@@ -48,12 +58,21 @@ function AppContent() {
         es.close();
         sseTimer = setTimeout(conectar, 5000);
       };
+
+      // Ao reconectar, re-busca o status atual via REST
+      // (o SSE só envia quando muda, não re-envia o estado atual ao reconectar)
+      fetchStatus();
     };
 
     conectar();
 
+    // Polling leve a cada 30s apenas para garantir sincronia
+    // Não faz leitura no Firebase — /api/status só lê variáveis em memória
+    pollTimer = setInterval(fetchStatus, 30000);
+
     return () => {
       if (sseTimer) clearTimeout(sseTimer);
+      if (pollTimer) clearInterval(pollTimer);
       if (es) es.close();
     };
   }, []);
