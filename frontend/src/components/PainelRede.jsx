@@ -11,10 +11,23 @@ export const PainelRede = ({ situacaoRede: inicial, previsaoRetorno: prevInicial
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState("");
 
+  // Busca o status real ao montar — não depende do SSE chegar a tempo
   useEffect(() => {
-    if (inicial) setStatus(inicial);
-  }, [inicial]);
+    const API = import.meta.env.VITE_API_URL || "";
+    fetch(API + "/api/rede")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d) {
+          setStatus(d.situacaoRede || "normal");
+          setPrevisao(d.previsaoRetorno === "sem previsão" ? "" : d.previsaoRetorno || "");
+        }
+      }).catch(() => {});
+  }, []); // só ao montar
 
+  // Sincroniza quando SSE atualiza (outro admin mudou o status)
+  useEffect(() => {
+    if (inicial && inicial !== "normal") setStatus(inicial);
+  }, [inicial]);
   useEffect(() => {
     if (prevInicial && prevInicial !== "sem previsão") setPrevisao(prevInicial);
   }, [prevInicial]);
