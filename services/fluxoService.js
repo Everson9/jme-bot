@@ -172,16 +172,29 @@ async function processarMensagem(deQuem, msg, ctx) {
         const dadosCliente = await banco.buscarStatusCliente(deQuem);
         
         if (!dadosCliente) {
-            console.log(`🆔 Cliente não identificado por telefone. Iniciando identificação.`);
+            console.log(`🆔 Cliente não identificado por telefone — processando intenção diretamente`);
+            // Não pede nome de cara — classifica a intenção e responde direto
+            // O nome só será pedido se o fluxo precisar (financeiro, promessa etc)
             const intencoes = await detectorMultiplas.detectarMultiplasIntencoes(msg.body || '');
-            state.iniciar(deQuem, 'identificacao', 'aguardando_nome', { 
-                msgOriginal: msg.body, intencoes 
-            });
-            await client.sendMessage(deQuem, 
-                `🤖 *Assistente JMENET*\n\nOlá! Não encontrei seu cadastro pelo telefone. 😊\n\n` +
-                `Para melhor atendê-lo, poderia me informar o *nome completo do titular* da internet?`
-            );
+            state.atualizar(deQuem, { msgOriginal: msg.body, intencoes });
             await banco.dbIniciarAtendimento(deQuem);
+
+            if (intencoes.length > 0) {
+                // Tem intenção clara — vai direto pro fluxo
+                await iniciarFluxoPorIntencao(intencoes[0], deQuem, msg);
+            } else {
+                // Sem intenção clara — sauda e mostra menu
+                const hora = new Date(Date.now() - 3 * 60 * 60 * 1000);
+                const h = hora.getUTCHours();
+                const saudacao = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
+                await client.sendMessage(deQuem,
+                    `🤖 *Assistente JMENET*\n\n${saudacao}! Como posso te ajudar? 😊\n\n` +
+                    `1️⃣ Problema com a internet\n` +
+                    `2️⃣ Pagamento / PIX\n` +
+                    `3️⃣ Falar com atendente`
+                );
+                state.iniciar(deQuem, 'menu_rapido', 'aguardando_escolha', { msgOriginal: msg.body });
+            }
             return;
         }
 

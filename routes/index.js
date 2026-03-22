@@ -1293,6 +1293,30 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 atualizado_em: new Date().toISOString()
             });
             if (ctx.sseService) ctx.sseService.notificar('clientes');
+
+            // Registrar no caixa do dia quando status vira pago
+            if (status === 'pago') {
+                try {
+                    const clienteDoc = await firebaseDb.collection('clientes').doc(clienteId).get();
+                    if (clienteDoc.exists) {
+                        const cd = clienteDoc.data();
+                        const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+                        const hoje = agoraBR.toISOString().split('T')[0];
+                        const planoLower = (cd.plano || '').toLowerCase();
+                        let valor_plano = null;
+                        if (planoLower.includes('iptv') || planoLower.includes('70')) valor_plano = 70;
+                        else if (planoLower.includes('200') || planoLower.includes('fibra')) valor_plano = 60;
+                        else if (planoLower.includes('50') || planoLower.includes('cabo')) valor_plano = 50;
+                        await firebaseDb.collection('pagamentos_hoje').doc(clienteId + '_' + hoje).set({
+                            data: hoje, cliente_id: clienteId,
+                            nome: cd.nome || '—', plano: cd.plano,
+                            forma_pagamento: cd.forma_pagamento,
+                            forma_baixa: 'Painel', pago_em: new Date().toISOString(), valor_plano
+                        });
+                    }
+                } catch(_) {}
+            }
+
             res.json({ ok: true, status });
         } catch (error) {
             console.error('Erro ao atualizar status:', error);
