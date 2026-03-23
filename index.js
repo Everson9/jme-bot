@@ -613,14 +613,17 @@ async function iniciarFluxoPorIntencao(intencao, deQuem, msg) {
         case 'PROMESSA': await _fluxoPromessa.iniciar(deQuem, msg); break;
         case 'NOVO_CLIENTE': await _fluxoNovoCliente.iniciar(deQuem); break;
         case 'CANCELAMENTO': await _fluxoCancelamento.iniciar(deQuem, msg); break;
-        case 'SAUDACAO':
+        case 'SAUDACAO': {
             const h = horaLocal();
             const saudacao = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
             const resp = `${saudacao}! Como posso te ajudar hoje?\n\n1️⃣ Suporte\n2️⃣ Financeiro\n3️⃣ Planos`;
             await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\n${resp}`);
             await banco.dbSalvarHistorico(deQuem, 'assistant', resp);
             await banco.dbIniciarAtendimento(deQuem);
+            // Inicia menu_rapido para capturar a escolha do cliente
+            state.iniciar(deQuem, 'menu_rapido', 'aguardando_escolha', { msgOriginal: msg?.body });
             break;
+        }
         default:
             // Conta mensagens consecutivas não entendidas
             const dadosNaoEnt = state.getDados(deQuem) || {};
