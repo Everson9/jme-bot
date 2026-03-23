@@ -57,8 +57,7 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null) {
             if (!telefoneLimpo.startsWith('55')) telefoneLimpo = '55' + telefoneLimpo;
             
             const nome = cliente.nome?.split(' ')[0] || '';
-            const mensagem = gerarMensagemCobranca(nome, data, tipo);
-            const msgCompleta = mensagem; // prefixo já incluído em gerarMensagemCobranca
+            const { mensagem: msgTexto, pix: msgPix } = gerarMensagemCobranca(nome, data, tipo);
             
             const numerosParaTentar = telefoneLimpo.length === 12 
                 ? [`55${telefoneLimpo.slice(2,4)}9${telefoneLimpo.slice(4)}`, telefoneLimpo]
@@ -66,9 +65,10 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null) {
             
             let enviado = false;
             for (const numero of numerosParaTentar) {
-                const resultado = await enviarMensagemSegura(client, numero + '@c.us', msgCompleta);
+                const resultado = await enviarMensagemSegura(client, numero + '@c.us', msgTexto);
                 if (resultado.sucesso) {
-                    // PIX já está embutido na mensagem de cobrança — não envia mensagem adicional
+                    // Envia o PIX separado após 1s para facilitar a cópia
+                    setTimeout(() => client.sendMessage(resultado.numero, msgPix).catch(() => {}), 1000);
                     await firebaseDb.collection('log_cobrancas').add({
                         numero: resultado.numero, 
                         nome: cliente.nome,

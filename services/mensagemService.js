@@ -5,51 +5,53 @@ const NOME_TITULAR_PIX = "ERIVALDO CLEMENTINO DA SILVA";
 const CHAVE_EMAIL = "jmetelecomnt@gmail.com";
 const CHAVE_TELEFONE = "+55 81 98750-0456";
 
+// Retorna { mensagem, pix } — dois textos separados para envio em sequência
 function gerarMensagemCobranca(nome, data, tipo) {
     const prNome = nome ? nome.split(' ')[0] : null;
     const oi = prNome ? `Oi *${prNome}*` : 'Oi';
 
-    // Bloco PIX embutido — direto e fácil de copiar
-    const bloco_pix = 
-        `💳 *Chave PIX:*\n` +
-        `${CHAVE_EMAIL}\n` +
-        `ou ${CHAVE_TELEFONE}\n` +
-        `👤 *Titular:* ${NOME_TITULAR_PIX}`;
+    // Mensagem PIX separada — mais fácil de copiar
+    const pix =
+        `💳 *Chave PIX para pagamento:*\n\n` +
+        `📧 ${CHAVE_EMAIL}\n` +
+        `📱 ${CHAVE_TELEFONE}\n\n` +
+        `👤 *Titular:* ${NOME_TITULAR_PIX}\n\n` +
+        `_Após pagar, mande o comprovante aqui! ✅_`;
 
     let corpo = '';
     switch(tipo) {
         case 'lembrete':
-            corpo = `${oi}! 😊 Só lembrando que amanhã, dia *${data}*, vence sua mensalidade da JMENET.\n\n` +
-                    `Pode pagar via PIX na hora:\n\n${bloco_pix}\n\n` +
-                    `Após o pagamento, pode mandar o comprovante aqui que a gente dá baixa! ✅`;
+            corpo = `${oi}! 😊 Só um lembrete: amanhã, dia *${data}*, vence sua mensalidade da JMENET.\n\n` +
+                    `Pague com antecedência e evite atrasos! A chave PIX está logo abaixo. 👇`;
             break;
         case 'atraso':
+            // D+3 — cliente NÃO está suspenso ainda
             corpo = `${oi}! Sua mensalidade do dia *${data}* está com *3 dias de atraso*. 😕\n\n` +
-                    `Ainda dá tempo de resolver — é só fazer o PIX:\n\n${bloco_pix}\n\n` +
-                    `Mande o comprovante aqui e a gente libera na hora! 😊`;
+                    `Ainda dá tempo de regularizar antes de qualquer suspensão. A chave PIX está logo abaixo. 👇`;
             break;
         case 'atraso_final':
+            // D+5 — cliente NÃO está suspenso ainda
             corpo = `${oi}! Sua mensalidade do dia *${data}* está com *5 dias de atraso*. 😟\n\n` +
-                    `Quer resolver agora? PIX:\n\n${bloco_pix}\n\n` +
-                    `Qualquer dificuldade é só responder aqui, a gente ajuda!`;
+                    `Por favor, regularize o quanto antes para evitar a suspensão do serviço. A chave PIX está logo abaixo. 👇`;
             break;
         case 'reconquista':
-            corpo = `${oi}! 😊 Sentimos sua falta! A mensalidade do dia *${data}* ainda está em aberto.\n\n` +
-                    `Bora resolver? PIX:\n\n${bloco_pix}\n\n` +
-                    `Manda o comprovante aqui quando pagar! ✅`;
+            // D+7 — aviso sério
+            corpo = `${oi}! A mensalidade do dia *${data}* ainda está em aberto — já são *7 dias*. 😔\n\n` +
+                    `Evite a suspensão do serviço. A chave PIX está logo abaixo. 👇`;
             break;
         case 'reconquista_final':
-            corpo = `${oi}! A mensalidade do dia *${data}* ainda está pendente e o serviço pode ser cancelado. 😢\n\n` +
-                    `Se quiser continuar com a gente, é só pagar via PIX:\n\n${bloco_pix}\n\n` +
-                    `Qualquer dúvida é só chamar!`;
+            // D+10 — última chance antes do bloqueio
+            corpo = `${oi}! Última chance: a mensalidade do dia *${data}* está com *10 dias de atraso*. ⚠️\n\n` +
+                    `Após esse aviso, o serviço poderá ser suspenso. A chave PIX está logo abaixo. 👇`;
             break;
         default:
-            corpo = `${oi}! 😊 Sua mensalidade com vencimento dia *${data}* está disponível para pagamento.\n\n` +
-                    `PIX:\n\n${bloco_pix}\n\n` +
-                    `Mande o comprovante aqui quando pagar! ✅`;
+            corpo = `${oi}! 😊 Sua mensalidade com vencimento dia *${data}* está disponível para pagamento.\n\nA chave PIX está logo abaixo. 👇`;
     }
 
-    return `🤖 *JMENET TELECOM*\n\n${corpo}`;
+    return {
+        mensagem: `🤖 *JMENET TELECOM*\n\n${corpo}`,
+        pix
+    };
 }
 
 async function enviarChavesPix(client, deQuem, nome) {

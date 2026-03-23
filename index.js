@@ -95,7 +95,6 @@ const metrics = {
 // MAPAS GLOBAIS
 // =====================================================
 const processingLock = new Map();
-const _mensagensBot = new Set(); // IDs de mensagens enviadas pelo bot — não confundir com admin digitando
 const filaEspera = new Map();
 const mensagensPendentes = new Map();
 const debounceTimers = new Map();
@@ -310,18 +309,6 @@ const client = new Client({
     authStrategy: new LocalAuth({ dataPath: path.join(DATA_PATH, '.wwebjs_auth') }),
     puppeteer: { args: ['--no-sandbox', '--disable-setuid-sandbox'], headless: true }
 });
-
-// Interceptar sendMessage para rastrear IDs de mensagens do bot
-const _sendOrig = client.sendMessage.bind(client);
-client.sendMessage = async (...args) => {
-    const result = await _sendOrig(...args);
-    if (result?.id?._serialized) {
-        _mensagensBot.add(result.id._serialized);
-        // Limpa após 30s para não vazar memória
-        setTimeout(() => _mensagensBot.delete(result.id._serialized), 30000);
-    }
-    return result;
-};
 
 client.on('qr', (qr) => { ultimoQR = qr; console.log('📱 QR Code gerado. Acesse /qr para escanear.'); });
 
@@ -677,10 +664,19 @@ function agendarProcessamento(deQuem, delay) {
         mensagensPendentes.delete(deQuem);
         debounceTimers.delete(deQuem);
         if (fila.length === 0) return;
-        if (state.isAtendimentoHumano(deQuem)) return;
 
         const temAudio = fila.some(f => ['audio','ptt'].includes(f.tipo));
         const temMidia = fila.some(f => ['image','document'].includes(f.tipo));
+
+        // Se está em atendimento humano, só processa comprovantes (imagem/PDF)
+        // Texto e áudio são ignorados — o admin está respondendo
+        if (state.isAtendimentoHumano(deQuem)) {
+            if (temMidia) {
+                const itemMidia = fila.find(f => ['image','document'].includes(f.tipo));
+                await processarMidiaAutomatico(deQuem, itemMidia.msg);
+            }
+            return;
+        }
         const textos = fila.filter(f => f.tipo === 'texto').map(f => f.msg.body || '').filter(Boolean);
 
         if (temAudio) {
@@ -725,12 +721,13 @@ function agendarProcessamento(deQuem, delay) {
 client.on('message_create', async (msg) => {
     if (!msg.fromMe) return; // só mensagens enviadas por nós
 
-    // Ignorar mensagens enviadas pelo próprio bot programaticamente
-    if (msg.id?._serialized && _mensagensBot.has(msg.id._serialized)) return;
-
     const para = msg.to;
     if (!para || para.includes('@g.us') || para === 'status@broadcast') return;
     if (ADMINISTRADORES.includes(para)) return; // conversa entre admins — ignora
+
+    // Ignorar mensagens automáticas do bot (começam com 🤖 ou são do sistema)
+    const corpo = msg.body || '';
+    if (corpo.startsWith('🤖') || corpo.startsWith('✅') || corpo === '') return;
 
     // Admin digitou para um cliente → assume o atendimento
     if (!state.isAtendimentoHumano(para)) {
@@ -926,14 +923,7 @@ client.on('message', async (msg) => {
         ? (['audio','ptt'].includes(msg.type) ? 'audio' : ['image','document'].includes(msg.type) ? msg.type : 'outro')
         : 'texto';
 
-    if (tipo === 'outro' || tipo === 'image' || (msg.hasMedia && msg.mimetype === 'application/pdf')) {
-        const processado = await processarMidiaAutomatico(deQuem, msg);
-        if (processado) return;
-        // 🔥 CORRIGIDO: Usa messageContext
-        await processarMensagem(deQuem, msg, messageContext);
-        return;
-    }
-
+    // Todas as mensagens (texto, áudio, imagem) entram na fila com debounce
     const fila = mensagensPendentes.get(deQuem) || [];
     fila.push({ msg, tipo });
     mensagensPendentes.set(deQuem, fila);
