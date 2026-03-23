@@ -327,7 +327,7 @@ async function handleIdentificacao(deQuem, msg, ctx) {
         
         if (clientes.length === 0) {
             state.atualizar(deQuem, { etapa: 'aguardando_cpf', tentativasCpf: 1, nomeTentado: nomeBusca });
-            await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\nNão encontrei *${nomeBusca}* na minha base. 😕\n\nPode me informar o *CPF* do titular? (só os números)`);
+            await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\nPode me informar o *CPF* do titular? (só os números) 😊`);
             state.iniciarTimer(deQuem);
             return;
         }

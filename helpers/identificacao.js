@@ -13,7 +13,7 @@ module.exports = function criarIdentificacao(state, client, utils, banco, verifi
             if (!texto || texto.length < 3) {
                 await client.sendMessage(deQuem, 
                     `🤖 *Assistente JMENET*\n\n` +
-                    `Por favor, me informe o *nome completo do titular* da internet. 😊`
+                    `Para continuar, qual é o *nome completo* do titular da internet? 😊`
                 );
                 state.iniciarTimer(deQuem);
                 return;
@@ -39,8 +39,7 @@ module.exports = function criarIdentificacao(state, client, utils, banco, verifi
                 });
                 await client.sendMessage(deQuem, 
                     `🤖 *Assistente JMENET*\n\n` +
-                    `Não encontrei *${texto}* na minha base. 😕\n\n` +
-                    `Para facilitar a busca, poderia me informar o *CPF* do titular? (apenas números)`
+                    `Pode me informar o *CPF* do titular? (apenas números) 😊`
                 );
                 state.iniciarTimer(deQuem);
                 return;
@@ -56,8 +55,7 @@ module.exports = function criarIdentificacao(state, client, utils, banco, verifi
                 });
                 await client.sendMessage(deQuem, 
                     `🤖 *Assistente JMENET*\n\n` +
-                    `Encontrei *${clientes.length}* clientes com esse nome. 😕\n\n` +
-                    `Para identificar corretamente, poderia me informar o *CPF* do titular? (apenas números)`
+                    `Para identificar corretamente, pode me informar o *CPF* do titular? (apenas números) 😊`
                 );
                 state.iniciarTimer(deQuem);
                 return;
@@ -109,8 +107,7 @@ module.exports = function criarIdentificacao(state, client, utils, banco, verifi
             
             await client.sendMessage(deQuem, 
                 `🤖 *Assistente JMENET*\n\n` +
-                `Não encontrei o CPF na base. 😕\n\n` +
-                `Última tentativa: poderia me informar o *telefone de contato* do titular? (com DDD, apenas números)`
+                `Pode informar o *telefone de contato* do titular? (com DDD, só números) 😊`
             );
             return;
         }

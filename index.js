@@ -95,6 +95,7 @@ const metrics = {
 // MAPAS GLOBAIS
 // =====================================================
 const processingLock = new Map();
+const _mensagensBot = new Set(); // IDs de mensagens enviadas pelo bot — não confundir com admin digitando
 const filaEspera = new Map();
 const mensagensPendentes = new Map();
 const debounceTimers = new Map();
@@ -302,10 +303,25 @@ async function verificarETransferir(deQuem, motivo) {
 // =====================================================
 // CLIENTE DO WHATSAPP
 // =====================================================
+// Wrapper que rastreia mensagens enviadas pelo bot
+const _sendMessageOriginal = null; // será setado após client ser criado
+
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: path.join(DATA_PATH, '.wwebjs_auth') }),
     puppeteer: { args: ['--no-sandbox', '--disable-setuid-sandbox'], headless: true }
 });
+
+// Interceptar sendMessage para rastrear IDs de mensagens do bot
+const _sendOrig = client.sendMessage.bind(client);
+client.sendMessage = async (...args) => {
+    const result = await _sendOrig(...args);
+    if (result?.id?._serialized) {
+        _mensagensBot.add(result.id._serialized);
+        // Limpa após 30s para não vazar memória
+        setTimeout(() => _mensagensBot.delete(result.id._serialized), 30000);
+    }
+    return result;
+};
 
 client.on('qr', (qr) => { ultimoQR = qr; console.log('📱 QR Code gerado. Acesse /qr para escanear.'); });
 
@@ -705,11 +721,14 @@ function agendarProcessamento(deQuem, delay) {
 // =====================================================
 client.on('message_create', async (msg) => {
     if (!msg.fromMe) return; // só mensagens enviadas por nós
-    
+
+    // Ignorar mensagens enviadas pelo próprio bot programaticamente
+    if (msg.id?._serialized && _mensagensBot.has(msg.id._serialized)) return;
+
     const para = msg.to;
     if (!para || para.includes('@g.us') || para === 'status@broadcast') return;
     if (ADMINISTRADORES.includes(para)) return; // conversa entre admins — ignora
-    
+
     // Admin digitou para um cliente → assume o atendimento
     if (!state.isAtendimentoHumano(para)) {
         state.setAtendimentoHumano(para, true);
