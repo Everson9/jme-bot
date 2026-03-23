@@ -2121,47 +2121,59 @@ app.delete('/api/promessas/:id', async (req, res) => {
     app.get('/api/relatorio/inadimplentes', async (req, res) => {
         const dias = parseInt(req.query.dias) || 5;
         try {
-            const limite = new Date();
-            limite.setDate(limite.getDate() - dias);
-            
+            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+            const diaHoje = agoraBR.getUTCDate();
+            const mesHoje = agoraBR.getUTCMonth() + 1;
+            const anoHoje = agoraBR.getUTCFullYear();
+
             const snapshot = await firebaseDb.collection('clientes')
                 .where('status', '==', 'pendente')
                 .get();
-            
+
+            // Buscar bases uma vez só
+            const basesSnap = await firebaseDb.collection('bases').get();
+            const baseMap = {};
+            basesSnap.docs.forEach(d => { baseMap[d.id] = d.data().nome; });
+
             const inadimplentes = [];
-            
-            for (const doc of snapshot.docs) {
+
+            snapshot.docs.forEach(doc => {
                 const cliente = doc.data();
-                const atualizadoEm = new Date(cliente.atualizado_em || cliente.criado_em);
-                const diasPendente = Math.floor((Date.now() - atualizadoEm) / (1000 * 60 * 60 * 24));
-                
-                if (diasPendente > dias) {
-                    let base_nome = null;
-                    if (cliente.base_id) {
-                        const baseDoc = await firebaseDb.collection('bases').doc(cliente.base_id).get();
-                        if (baseDoc.exists) {
-                            base_nome = baseDoc.data().nome;
-                        }
-                    }
-                    
-                    inadimplentes.push({
-                        id: doc.id,
-                        nome: cliente.nome,
-                        telefone: cliente.telefone,
-                        plano: cliente.plano,
-                        dia_vencimento: cliente.dia_vencimento,
-                        atualizado_em: cliente.atualizado_em,
-                        base_nome,
-                        dias_pendente: diasPendente
-                    });
+                const venc = parseInt(cliente.dia_vencimento) || 10;
+
+                // Calcular dias desde o vencimento do mês atual
+                // Se ainda não venceu este mês → não é inadimplente
+                let diasAtraso;
+                if (diaHoje >= venc) {
+                    diasAtraso = diaHoje - venc;
+                } else {
+                    // Ainda não venceu este mês — verificar mês anterior
+                    const diasMesAnt = new Date(anoHoje, mesHoje - 1, 0).getDate();
+                    diasAtraso = (diasMesAnt - venc) + diaHoje;
+                    // Se o atraso calculado for muito grande (> 40 dias),
+                    // significa que o cliente pagou no mês anterior e voltou a pendente
+                    // Nesse caso, ainda não venceu → ignorar
+                    if (diasAtraso > 40) return;
                 }
-            }
-            
+
+                if (diasAtraso < dias) return; // ainda dentro da tolerância
+
+                inadimplentes.push({
+                    id: doc.id,
+                    nome: cliente.nome,
+                    telefone: cliente.telefone,
+                    plano: cliente.plano,
+                    dia_vencimento: venc,
+                    base_nome: baseMap[String(cliente.base_id)] || null,
+                    dias_pendente: diasAtraso
+                });
+            });
+
             inadimplentes.sort((a, b) => b.dias_pendente - a.dias_pendente);
-            
             res.json(inadimplentes);
-        } catch(e) { 
-            res.json([]); 
+        } catch(e) {
+            console.error('Erro inadimplentes:', e.message);
+            res.json([]);
         }
     });
 
