@@ -42,10 +42,16 @@ async function processarMensagem(deQuem, msg, ctx) {
         const agora = Date.now();
         
         if (ultimaAtualizacao && (agora - ultimaAtualizacao > 60 * 60 * 1000)) {
-            console.log(`🔄 Sessão expirada para ${deQuem.slice(-8)}`);
-            state.encerrarFluxo(deQuem);
-            await banco.dbLimparHistorico(deQuem);
+            // Só expira sessão se NÃO estiver em atendimento humano
+            if (!state.isAtendimentoHumano(deQuem)) {
+                console.log(`🔄 Sessão expirada para ${deQuem.slice(-8)}`);
+                state.encerrarFluxo(deQuem);
+                await banco.dbLimparHistorico(deQuem);
+            }
         }
+
+        // Se está em atendimento humano, não processa — admin está respondendo
+        if (state.isAtendimentoHumano(deQuem)) return;
 
         const fluxoAtivo = state.getFluxo(deQuem);
         
@@ -420,15 +426,35 @@ async function delegarParaFluxo(fluxo, deQuem, msg, ctx) {
 
 async function responderComIA(deQuem, msg, ctx) {
     const { banco, client, groqChatFallback } = ctx;
+    const texto = (msg.body || '').trim();
+
+    // Não responde mensagens muito curtas sem sinal de pergunta
+    // Evita responder sobre cidades, nomes ou palavras soltas com IA geral
+    const palavras = texto.split(/\s+/).length;
+    const temPergunta = texto.includes('?') || /como|quando|onde|qual|quanto|por que|porque|preciso|quero|pode/i.test(texto);
+    if (palavras <= 2 && !temPergunta) {
+        // Mensagem muito curta e sem pergunta — não processa com IA, mostra menu
+        await client.sendMessage(deQuem,
+            `🤖 *Assistente JMENET*\n\nComo posso te ajudar? 😊\n\n1️⃣ Problema com a internet\n2️⃣ Pagamento / PIX\n3️⃣ Falar com atendente`
+        );
+        state.iniciar(deQuem, 'menu_rapido', 'aguardando_escolha', {});
+        return;
+    }
+
     const historico = await banco.dbCarregarHistorico(deQuem);
     const historicoSlice = historico.slice(-10);
-    const systemMsg = `Você é o assistente virtual da JMENET Telecom.`;
+    const systemMsg =
+        `Você é o assistente virtual da JMENET Telecom, um provedor de internet em Recife/PE.\n` +
+        `Responda APENAS sobre: pagamentos, internet, suporte técnico, planos da JMENET.\n` +
+        `Se perguntarem sobre qualquer outro assunto (cidades, pessoas famosas, receitas, etc), ` +
+        `responda educadamente que só pode ajudar com assuntos relacionados à JMENET Telecom.\n` +
+        `Seja breve e direto. Nunca invente informações sobre a empresa.`;
     try {
         const respostaIA = await groqChatFallback([
             { role: 'system', content: systemMsg },
             ...historicoSlice,
-            { role: 'user', content: msg.body }
-        ], 0.5);
+            { role: 'user', content: texto }
+        ], 0.3);
         
         if (respostaIA) {
             await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\n${respostaIA}`);
