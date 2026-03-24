@@ -9,6 +9,16 @@ class SSEService {
     init(ctx) { this.ctx = ctx; }
 
     addClient(res) {
+        // Limpa conexões mortas antes de adicionar nova
+        this.clients = this.clients.filter(c => {
+            try { return !c.destroyed && !c.writableEnded; } catch(_) { return false; }
+        });
+        // Limite de segurança — evita acúmulo infinito
+        if (this.clients.length >= 10) {
+            console.warn(`📡 SSE: Limite de 10 conexões atingido — removendo a mais antiga`);
+            try { this.clients[0].end(); } catch(_) {}
+            this.clients.shift();
+        }
         this.clients.push(res);
         console.log(`📡 SSE: Cliente conectado. Total: ${this.clients.length}`);
     }

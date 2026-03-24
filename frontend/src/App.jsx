@@ -45,7 +45,7 @@ function AppContent() {
       } catch(_) {}
     };
 
-    // SSE para atualizações em tempo real (atendimentos, toggle bot etc)
+    // SSE para atualizações em tempo real
     const conectar = () => {
       if (es) { try { es.close(); } catch(_) {} }
       es = new EventSource(API + '/api/status-stream');
@@ -53,14 +53,16 @@ function AppContent() {
         try { setBotStatus(JSON.parse(event.data)); } catch(_) {}
       };
       es.onerror = () => {
-        es.close();
-        sseTimer = setTimeout(conectar, 8000);
+        try { es.close(); } catch(_) {}
+        es = null;
+        // Reconecta depois de 30s — polling já mantém status atualizado
+        sseTimer = setTimeout(conectar, 30000);
       };
     };
 
-    fetchStatus();                          // imediato
-    pollTimer = setInterval(fetchStatus, 5000); // a cada 5s — fonte principal
-    conectar();                             // SSE como complemento
+    fetchStatus();                           // imediato
+    pollTimer = setInterval(fetchStatus, 30000); // a cada 30s — suficiente
+    conectar();
 
     return () => {
       if (sseTimer) clearTimeout(sseTimer);
