@@ -137,29 +137,39 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
     // =====================================================
     const diasVenc = [10, 20, 30];
     const cobrancasParaExecutar = [];
+
+    // Se hoje é segunda (diaSemana=1), também verifica o domingo que passou
+    // pois cobranças de domingo são puladas e devem ser feitas na segunda
+    const diasParaVerificar = [dia];
+    if (diaSemana === 1) {
+        diasParaVerificar.push(dia - 1); // ontem = domingo
+    }
     
     for (const venc of diasVenc) {
         let tipo = null;
 
-        // Verificar lembrete ANTES de calcular atraso de virada
-        // dia 9 → venc 10, dia 19 → venc 20, dia 29 → venc 30
-        if (dia === venc - 1) {
-            tipo = 'lembrete';
-        } else {
-            // Calcula atraso considerando virada de mês
-            let atraso;
-            if (dia >= venc) {
-                atraso = dia - venc; // mesmo mês
+        for (const diaVerif of diasParaVerificar) {
+            // Verificar lembrete ANTES de calcular atraso de virada
+            // dia 9 → venc 10, dia 19 → venc 20, dia 29 → venc 30
+            if (diaVerif === venc - 1) {
+                tipo = 'lembrete';
+                break;
             } else {
-                // Dia atual < venc → estamos no mês seguinte ao vencimento
-                const diasNoMesAnterior = new Date(ano, mes - 1, 0).getDate();
-                atraso = (diasNoMesAnterior - venc) + dia;
-            }
+                // Calcula atraso considerando virada de mês
+                let atraso;
+                if (diaVerif >= venc) {
+                    atraso = diaVerif - venc; // mesmo mês
+                } else {
+                    // Dia atual < venc → estamos no mês seguinte ao vencimento
+                    const diasNoMesAnterior = new Date(ano, mes - 1, 0).getDate();
+                    atraso = (diasNoMesAnterior - venc) + diaVerif;
+                }
 
-            if (atraso === 3)  tipo = 'atraso';
-            else if (atraso === 5)  tipo = 'atraso_final';
-            else if (atraso === 7)  tipo = 'reconquista';
-            else if (atraso === 10) tipo = 'reconquista_final';
+                if (atraso === 3)  { tipo = 'atraso'; break; }
+                else if (atraso === 5)  { tipo = 'atraso_final'; break; }
+                else if (atraso === 7)  { tipo = 'reconquista'; break; }
+                else if (atraso === 10) { tipo = 'reconquista_final'; break; }
+            }
         }
         
         if (tipo) {
