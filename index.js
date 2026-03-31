@@ -857,6 +857,134 @@ client.on('message_create', async (msg) => {
 });
 
 // =====================================================
+// =====================================================
+// MENUS
+// =====================================================
+const MENU_PRINCIPAL = `🤖 *Assistente JMENET*
+
+Olá! Como posso te ajudar? 😊
+
+1️⃣ Problema com a internet
+2️⃣ Pagamento / Financeiro
+3️⃣ Cancelamento
+4️⃣ Falar com atendente`;
+
+const MENU_FINANCEIRO = `🤖 *Assistente JMENET*
+
+Como prefere pagar? 💰
+
+1️⃣ PIX
+2️⃣ Boleto bancário
+3️⃣ Carnê físico
+4️⃣ Dinheiro (cobrador)
+5️⃣ Já efetuei o pagamento`;
+
+// =====================================================
+// DETECTAR PROMESSA/AGENDAMENTO NA FALA DO ADMIN
+// =====================================================
+async function detectarAcaoAdmin(para, textoAdmin) {
+    const t = textoAdmin.toLowerCase();
+    const utils = criarUtils(groqChatFallback);
+
+    // Detecta promessa de pagamento
+    const padroePromessa = [
+        /promete[uo]u?\s+pagar/i, /vai\s+pagar/i, /paga\s+(dia|amanhã|hoje)/i,
+        /prometeu\s+(dia|até)/i, /pagamento\s+(dia|até|amanhã)/i
+    ];
+    if (padroePromessa.some(r => r.test(t))) {
+        try {
+            const dataExtraida = await utils.extrairDataPromessa(textoAdmin);
+            if (dataExtraida) {
+                const clienteDoc = await banco.buscarClientePorTelefone(
+                    para.replace('@c.us','').replace(/^55/,'')
+                );
+                await firebaseDb.collection('promessas').add({
+                    numero: para,
+                    nome: clienteDoc?.nome || null,
+                    data_promessa: dataExtraida,
+                    status: 'pendente',
+                    notificado: 0,
+                    criado_em: new Date().toISOString(),
+                    origem: 'admin'
+                });
+                if (clienteDoc?.id) {
+                    await firebaseDb.collection('clientes').doc(clienteDoc.id).update({
+                        status: 'promessa', atualizado_em: new Date().toISOString()
+                    });
+                }
+                sseService.notificar('clientes');
+                console.log(`🤝 Promessa registrada automaticamente: ${para.slice(-8)} — ${dataExtraida}`);
+                for (const adm of ADMINISTRADORES) {
+                    client.sendMessage(adm,
+                        `🤝 *Promessa registrada automaticamente*\n` +
+                        `👤 ${clienteDoc?.nome || para.replace('@c.us','')}\n` +
+                        `📅 Dia: ${dataExtraida}`
+                    ).catch(() => {});
+                }
+            }
+        } catch(e) { console.error('Erro ao registrar promessa do admin:', e.message); }
+    }
+
+    // Detecta agendamento de visita técnica
+    const padroesVisita = [
+        /agendei\s+(visita|técnico|instalação)/i, /vou\s+(passar|mandar)\s+(técnico|lá)/i,
+        /técnico\s+(vai|passa)\s+(dia|amanhã|hoje)/i, /visita\s+(dia|amanhã|hoje|marcada)/i
+    ];
+    if (padroesVisita.some(r => r.test(t))) {
+        try {
+            const dataExtraida = await utils.extrairDataPromessa(textoAdmin);
+            const clienteDoc = await banco.buscarClientePorTelefone(
+                para.replace('@c.us','').replace(/^55/,'')
+            );
+            await firebaseDb.collection('agendamentos').add({
+                numero: para,
+                nome: clienteDoc?.nome || null,
+                data: dataExtraida || null,
+                tipo: 'visita_tecnica',
+                status: 'agendado',
+                origem: 'admin',
+                criado_em: new Date().toISOString()
+            });
+            sseService.notificar('chamados');
+            console.log(`📅 Visita técnica registrada automaticamente: ${para.slice(-8)}`);
+        } catch(e) { console.error('Erro ao registrar visita:', e.message); }
+    }
+}
+
+// =====================================================
+// MENSAGENS ENVIADAS PELO ADMIN (fromMe)
+// =====================================================
+client.on('message_create', async (msg) => {
+    if (!msg.fromMe) return;
+    const para = msg.to;
+    if (!para || para.includes('@g.us') || para === 'status@broadcast') return;
+    if (ADMINISTRADORES.includes(para)) return;
+
+    const corpo = msg.body || '';
+    if (corpo.startsWith('🤖') || corpo.startsWith('💳') || corpo.startsWith('✅') || corpo === '') return;
+
+    // Assume atendimento automaticamente
+    if (!state.isAtendimentoHumano(para)) {
+        state.setAtendimentoHumano(para, true);
+        await banco.dbSalvarAtendimentoHumano(para).catch(() => {});
+        sseService.notificar('estados');
+        console.log(`👤 Admin assumiu ${para.replace('@c.us','')}`);
+    }
+
+    // Detecta promessa/agendamento no que o admin digitou
+    if (corpo.length > 10) {
+        detectarAcaoAdmin(para, corpo).catch(() => {});
+    }
+
+    state.iniciarTimer(para, async (numero) => {
+        state.setAtendimentoHumano(numero, false);
+        state.encerrarFluxo(numero);
+        await banco.dbRemoverAtendimentoHumano(numero).catch(() => {});
+        console.log(`⏰ Atendimento humano expirado: ${numero.replace('@c.us','')}`);
+    }, 2 * 60 * 60 * 1000);
+});
+
+// =====================================================
 // EVENTO DE MENSAGEM
 // =====================================================
 client.on('message', async (msg) => {
@@ -866,7 +994,7 @@ client.on('message', async (msg) => {
     if (!botIniciadoEm || (msg.timestamp * 1000) < botIniciadoEm) return;
     if (!botAtivo && !ADMINISTRADORES.includes(deQuem)) return;
 
-    // Comandos admin
+    // ── COMANDOS ADMIN ─────────────────────────────────
     if (ADMINISTRADORES.includes(deQuem)) {
         const texto = msg.body || '';
         const args = texto.split(' ');
@@ -892,15 +1020,13 @@ client.on('message', async (msg) => {
             if (args[1] === 'off') { botAtivo = false; sseService.broadcast(); return msg.reply('🔴 Bot desativado.'); }
             if (args[1] === 'on')  { botAtivo = true;  sseService.broadcast(); return msg.reply('🟢 Bot ativado.'); }
         }
-        if (comando === '!status') {
-            return msg.reply(`📊 Bot: ${botAtivo ? '✅' : '❌'} | Rede: ${situacaoRede} | Atendimentos: ${state?.stats()?.atendimentoHumano || 0}`);
-        }
+        if (comando === '!status') return msg.reply(`📊 Bot: ${botAtivo ? '✅' : '❌'} | Rede: ${situacaoRede} | Atendimentos: ${state?.stats()?.atendimentoHumano || 0}`);
         if (comando === '!rede') {
             const novoStatus = args[1];
             if (!['normal','instavel','manutencao','fibra_rompida'].includes(novoStatus))
                 return msg.reply('❌ Use: !rede normal | instavel | manutencao | fibra_rompida');
             ctxRotas.situacaoRede = novoStatus;
-            ctxRotas.previsaoRetorno = args.slice(2).join(' ').replace(/["\']/g,'') || 'sem previsão';
+            ctxRotas.previsaoRetorno = args.slice(2).join(' ').replace(/["']/g,'') || 'sem previsão';
             sseService.broadcast();
             return msg.reply(`✅ Rede: ${novoStatus}`);
         }
@@ -944,18 +1070,16 @@ client.on('message', async (msg) => {
         return;
     }
 
-    // ── CLIENTES ─────────────────────────────────────────
+    // ── CLIENTES ───────────────────────────────────────
     if (msg.type === 'sticker') return;
 
-    // Comprovante de pagamento — processa mesmo em atendimento humano
+    // Comprovante — processa mesmo em atendimento humano
     if (msg.hasMedia && ['image','document'].includes(msg.type)) {
-        const processado = await processarMidiaAutomatico(deQuem, msg);
-        if (processado) return;
-        // Imagem que não é comprovante — ignora silenciosamente
+        await processarMidiaAutomatico(deQuem, msg);
         return;
     }
 
-    // Se está em atendimento humano, não responde nada
+    // Se admin está respondendo, não interfere
     if (state.isAtendimentoHumano(deQuem)) return;
 
     const texto = msg.body?.trim() || '';
@@ -964,27 +1088,83 @@ client.on('message', async (msg) => {
     console.log(`\n📨 ${deQuem.slice(-8)}: "${texto}"`);
 
     const fluxoAtivo = state.getFluxo(deQuem);
+    const t = texto.toLowerCase();
 
-    // Fluxo: aguardando endereço para suporte
-    if (fluxoAtivo === 'suporte_simples') {
-        const endereco = texto;
-        await client.sendMessage(deQuem,
-            `${P}Obrigado! Abrindo chamado com seu endereço. 🔧\n\nUm técnico entrará em contato em breve!`
-        );
-        await abrirChamadoComMotivo(deQuem, null, 'Suporte técnico', { endereco });
+    // ── Fluxo ativo → delega para o fluxo correspondente ──
+    if (fluxoAtivo === 'suporte')      { await _fluxoSuporte.handle(deQuem, msg);      return; }
+    if (fluxoAtivo === 'financeiro')   { await _fluxoFinanceiro.handle(deQuem, msg);   return; }
+    if (fluxoAtivo === 'promessa')     { await _fluxoPromessa.handle(deQuem, msg);     return; }
+    if (fluxoAtivo === 'cancelamento') { await _fluxoCancelamento.handle(deQuem, msg); return; }
+    if (fluxoAtivo === 'novoCliente')  { await _fluxoNovoCliente.handle(deQuem, msg);  return; }
+
+    // ── Sub-menu financeiro ─────────────────────────────
+    if (fluxoAtivo === 'menu_financeiro') {
         state.encerrarFluxo(deQuem);
+        if (t === '1' || t.includes('pix') || t.includes('transferência') || t.includes('transferencia')) {
+            await _fluxoFinanceiro.iniciar(deQuem, msg, 'PIX'); return;
+        }
+        if (t === '2' || t.includes('boleto')) {
+            await _fluxoFinanceiro.iniciar(deQuem, msg, 'BOLETO'); return;
+        }
+        if (t === '3' || t.includes('carnê') || t.includes('carne') || t.includes('físico') || t.includes('fisico')) {
+            await _fluxoFinanceiro.iniciar(deQuem, msg, 'CARNE'); return;
+        }
+        if (t === '4' || t.includes('dinheiro') || t.includes('cobrador') || t.includes('espécie') || t.includes('especie')) {
+            await _fluxoFinanceiro.iniciar(deQuem, msg, 'DINHEIRO'); return;
+        }
+        if (t === '5' || t.includes('paguei') || t.includes('já paguei') || t.includes('feito') || t.includes('efetuei')) {
+            await _fluxoFinanceiro.iniciar(deQuem, msg, 'PAGO'); return;
+        }
+        // Não entendeu — mostra menu financeiro de novo
+        await client.sendMessage(deQuem, MENU_FINANCEIRO);
+        state.iniciar(deQuem, 'menu_financeiro', 'aguardando_escolha', {});
         return;
     }
 
-    // Fluxo: aguardando escolha do menu
-    if (fluxoAtivo === MENU_ESTADO) {
-        await processarMenuSimples(deQuem, texto);
+    // ── Menu principal ──────────────────────────────────
+    if (fluxoAtivo === 'menu') {
+        state.encerrarFluxo(deQuem);
+        if (t === '1' || t.includes('internet') || t.includes('caiu') || t.includes('lento') ||
+            t.includes('sinal') || t.includes('suporte') || t.includes('técnico') || t.includes('tecnico')) {
+            if (!redeNormal(situacaoRede)) {
+                const infoRede = falarSinalAmigavel(situacaoRede, previsaoRetorno, motivoRede);
+                const hora = new Date(Date.now() - 3 * 60 * 60 * 1000).getUTCHours();
+                const fora = hora < 8 || hora >= 20;
+                await client.sendMessage(deQuem,
+                    `${P}${infoRede}\n\n` + (fora
+                        ? `Sabemos do problema. Nossa equipe vai entrar em contato no início do expediente. 🙏`
+                        : `Nossa equipe já está trabalhando para resolver. 🙏`)
+                );
+                await abrirChamadoComMotivo(deQuem, null, `Reclamação — rede ${situacaoRede}`);
+                return;
+            }
+            await _fluxoSuporte.iniciar(deQuem, msg);
+            return;
+        }
+        if (t === '2' || t.includes('pagar') || t.includes('pagamento') || t.includes('pix') ||
+            t.includes('boleto') || t.includes('carnê') || t.includes('carne') || t.includes('financeiro')) {
+            await client.sendMessage(deQuem, MENU_FINANCEIRO);
+            state.iniciar(deQuem, 'menu_financeiro', 'aguardando_escolha', {});
+            return;
+        }
+        if (t === '3' || t.includes('cancelar') || t.includes('cancelamento') || t.includes('encerrar')) {
+            await _fluxoCancelamento.iniciar(deQuem, msg);
+            return;
+        }
+        if (t === '4' || t.includes('atendente') || t.includes('humano') || t.includes('pessoa') || t.includes('falar')) {
+            await client.sendMessage(deQuem, `${P}Vou chamar um atendente! Aguarda um instante. 😊`);
+            await abrirChamadoComMotivo(deQuem, null, 'Cliente solicitou atendente');
+            return;
+        }
+        // Não entendeu — mostra menu de novo
+        await client.sendMessage(deQuem, MENU_PRINCIPAL);
+        state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
         return;
     }
 
-    // Qualquer outra mensagem → mostra menu
-    await client.sendMessage(deQuem, MENU_TEXTO);
-    state.iniciar(deQuem, MENU_ESTADO, 'aguardando_escolha', {});
+    // ── Sem fluxo ativo → mostra menu principal ─────────
+    await client.sendMessage(deQuem, MENU_PRINCIPAL);
+    state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
 });
 
 // =====================================================
@@ -1129,6 +1309,7 @@ setInterval(async () => {
 // READY
 // =====================================================
 client.on('ready', async () => {
+    inicializarFluxos();
     ctxRotas.botIniciadoEm = Date.now();
 
     // ── Restaura configurações salvas no Firebase ANTES do broadcast ──
