@@ -747,193 +747,244 @@ client.on('message_create', async (msg) => {
 });
 
 // =====================================================
-// EVENTO DE MENSAGEM (SIMPLIFICADO)
+// =====================================================
+// MENU SIMPLES — sem IA, sem fluxos complexos
+// =====================================================
+
+const MENU_TEXTO = `🤖 *Assistente JMENET*
+
+Olá! Como posso te ajudar? 😊
+
+1️⃣ Problema com a internet
+2️⃣ Pagamento / Chave PIX
+3️⃣ Falar com atendente`;
+
+const MENU_ESTADO = 'menu'; // estado salvo no state
+
+async function processarMenuSimples(deQuem, texto) {
+    const t = texto.trim().toLowerCase();
+
+    // Opção 1 — Problema de internet
+    if (t === '1' || t.includes('internet') || t.includes('caiu') || t.includes('sinal') ||
+        t.includes('lento') || t.includes('suporte') || t.includes('técnico') || t.includes('tecnico')) {
+
+        // Rede com problema conhecido → informa direto
+        if (!redeNormal(situacaoRede)) {
+            const infoRede = falarSinalAmigavel(situacaoRede, previsaoRetorno, motivoRede);
+            const hora = new Date(Date.now() - 3 * 60 * 60 * 1000).getUTCHours();
+            const fora = hora < 8 || hora >= 20;
+            let resposta = `${P}${infoRede}\n\n`;
+            resposta += fora
+                ? `Sabemos do problema. Nossa equipe vai entrar em contato no início do expediente. 🙏`
+                : `Nossa equipe já está trabalhando para resolver. 🙏`;
+            await client.sendMessage(deQuem, resposta);
+            await abrirChamadoComMotivo(deQuem, null, `Reclamação — rede ${situacaoRede}`);
+            state.encerrarFluxo(deQuem);
+            return;
+        }
+
+        // Rede normal → coleta endereço para possível visita técnica
+        await client.sendMessage(deQuem,
+            `${P}Vou abrir um chamado de suporte para você! 🔧\n\n` +
+            `Para agilizar uma possível visita técnica, me informe:\n\n` +
+            `📍 *Endereço completo* (rua, número, bairro)`
+        );
+        state.iniciar(deQuem, 'suporte_simples', 'aguardando_endereco', {});
+        return;
+    }
+
+    // Opção 2 — Pagamento / PIX
+    if (t === '2' || t.includes('pix') || t.includes('pagar') || t.includes('pagamento') ||
+        t.includes('boleto') || t.includes('chave')) {
+        await client.sendMessage(deQuem,
+            `${P}Segue nossa chave PIX para pagamento! 😊\n\n` +
+            `Após pagar, envie o comprovante aqui que já dou baixa na hora! ✅`
+        );
+        // PIX separado logo em seguida
+        setTimeout(() => {
+            client.sendMessage(deQuem,
+                `💳 *Chave PIX:*\n\n` +
+                `📧 jmetelecomnt@gmail.com\n` +
+                `📱 +55 81 98750-0456\n\n` +
+                `👤 *Titular:* ERIVALDO CLEMENTINO DA SILVA`
+            ).catch(() => {});
+        }, 1000);
+        state.encerrarFluxo(deQuem);
+        return;
+    }
+
+    // Opção 3 — Falar com atendente
+    if (t === '3' || t.includes('atendente') || t.includes('humano') || t.includes('pessoa') ||
+        t.includes('falar') || t.includes('ligar')) {
+        await client.sendMessage(deQuem,
+            `${P}Vou chamar um atendente para te ajudar! 😊\n\nAguarda um instante.`
+        );
+        await abrirChamadoComMotivo(deQuem, null, 'Cliente solicitou atendente pelo menu');
+        state.encerrarFluxo(deQuem);
+        return;
+    }
+
+    // Não entendeu → mostra menu de novo
+    await client.sendMessage(deQuem, MENU_TEXTO);
+    state.iniciar(deQuem, MENU_ESTADO, 'aguardando_escolha', {});
+}
+
+// =====================================================
+// MENSAGENS ENVIADAS PELO ADMIN (fromMe)
+// =====================================================
+client.on('message_create', async (msg) => {
+    if (!msg.fromMe) return;
+    const para = msg.to;
+    if (!para || para.includes('@g.us') || para === 'status@broadcast') return;
+    if (ADMINISTRADORES.includes(para)) return;
+
+    // Ignorar mensagens automáticas do bot
+    const corpo = msg.body || '';
+    if (corpo.startsWith('🤖') || corpo.startsWith('💳') || corpo.startsWith('✅') || corpo === '') return;
+
+    // Admin digitou → assume conversa
+    if (!state.isAtendimentoHumano(para)) {
+        state.setAtendimentoHumano(para, true);
+        await banco.dbSalvarAtendimentoHumano(para).catch(() => {});
+        sseService.notificar('estados');
+        console.log(`👤 Admin assumiu ${para.replace('@c.us','')}`);
+    }
+    state.iniciarTimer(para, async (numero) => {
+        state.setAtendimentoHumano(numero, false);
+        state.encerrarFluxo(numero);
+        await banco.dbRemoverAtendimentoHumano(numero).catch(() => {});
+    }, 2 * 60 * 60 * 1000);
+});
+
+// =====================================================
+// EVENTO DE MENSAGEM
 // =====================================================
 client.on('message', async (msg) => {
-    console.log(`\n📨 MENSAGEM RECEBIDA: De: ${msg.from} Corpo: "${msg.body}"`);
-    
     if (msg.from === 'status@broadcast' || msg.from.includes('@g.us')) return;
-    
     const deQuem = msg.from;
     if (FUNCIONARIOS.includes(deQuem)) return;
     if (!botIniciadoEm || (msg.timestamp * 1000) < botIniciadoEm) return;
     if (!botAtivo && !ADMINISTRADORES.includes(deQuem)) return;
 
-    // COMANDOS ADMIN
+    // Comandos admin
     if (ADMINISTRADORES.includes(deQuem)) {
         const texto = msg.body || '';
         const args = texto.split(' ');
         const comando = args[0].toLowerCase();
 
-        // !sim ou !nao — responde à última votação pendente
         if (comando === '!sim' || comando === '!nao' || comando === '!cobrar-sim' || comando === '!cobrar-nao') {
             const resposta = (comando === '!sim' || comando === '!cobrar-sim') ? 'aprovado' : 'negado';
-
-            // Suporte ao formato antigo com ID explícito
             let votacaoId = args[1] || null;
-
-            // Sem ID → pega a última votação ativa
             if (!votacaoId) {
-                const ultimaDoc = await firebaseDb.collection('config').doc('ultima_votacao').get();
-                votacaoId = ultimaDoc.exists ? ultimaDoc.data().votacaoId : null;
+                const doc = await firebaseDb.collection('config').doc('ultima_votacao').get();
+                votacaoId = doc.exists ? doc.data().votacaoId : null;
             }
-
-            if (!votacaoId) {
-                return msg.reply('❌ Nenhuma votação ativa no momento.');
-            }
-
-            const votacaoDoc = await firebaseDb.collection('votacoes').doc(votacaoId).get();
-            if (!votacaoDoc.exists || votacaoDoc.data().resolvido) {
-                return msg.reply('❌ Votação não encontrada ou já encerrada.');
-            }
-
+            if (!votacaoId) return msg.reply('❌ Nenhuma votação ativa.');
+            const vDoc = await firebaseDb.collection('votacoes').doc(votacaoId).get();
+            if (!vDoc.exists || vDoc.data().resolvido) return msg.reply('❌ Votação não encontrada.');
             await firebaseDb.collection('votacoes').doc(votacaoId).update({
-                status: 'respondido',
-                resolvido: true,
-                resultado: resposta,
-                respondido_por: deQuem,
-                respondido_em: new Date().toISOString()
+                status: 'respondido', resolvido: true, resultado: resposta,
+                respondido_por: deQuem, respondido_em: new Date().toISOString()
             });
-
-            const emoji = resposta === 'aprovado' ? '✅' : '❌';
-            return msg.reply(`${emoji} ${resposta === 'aprovado' ? 'Cobrança autorizada!' : 'Cobrança pulada.'}`);
+            return msg.reply(resposta === 'aprovado' ? '✅ Cobrança autorizada!' : '❌ Cobrança pulada.');
         }
-        
         if (comando === '!bot') {
-            if (args[1] === 'off') { 
-                botAtivo = false; 
-                sseService.broadcast();
-                return msg.reply("🔴 *IA DESATIVADA.*"); 
-            }
-            if (args[1] === 'on') { 
-                botAtivo = true; 
-                sseService.broadcast();
-                return msg.reply("🟢 *IA ATIVADA.*"); 
-            }
+            if (args[1] === 'off') { botAtivo = false; sseService.broadcast(); return msg.reply('🔴 Bot desativado.'); }
+            if (args[1] === 'on')  { botAtivo = true;  sseService.broadcast(); return msg.reply('🟢 Bot ativado.'); }
         }
         if (comando === '!status') {
-            return msg.reply(
-                `📊 *STATUS*\n\n🤖 Bot: ${botAtivo ? '✅ ATIVO' : '❌ INATIVO'}\n` +
-                `📡 Rede: ${situacaoRede}\n🔮 Previsão: ${previsaoRetorno}\n` +
-                `⏰ Cobrança: ${horarioCobranca.inicio}h-${horarioCobranca.fim}h\n` +
-                `👥 Atendimentos: ${state?.stats()?.atendimentoHumano || 0}`
-            );
+            return msg.reply(`📊 Bot: ${botAtivo ? '✅' : '❌'} | Rede: ${situacaoRede} | Atendimentos: ${state?.stats()?.atendimentoHumano || 0}`);
         }
         if (comando === '!rede') {
             const novoStatus = args[1];
-            const validos = ['normal', 'instavel', 'manutencao', 'fibra_rompida'];
-            if (!novoStatus || !validos.includes(novoStatus)) {
-                return msg.reply(`❌ Use: !rede normal | instavel | manutencao | fibra_rompida "previsão"`);
-            }
-            let previsao = 'sem previsão';
-            if (args.length > 2) previsao = args.slice(2).join(' ').replace(/["']/g, '');
-            
-            ctxRotas.situacaoRede = novoStatus; 
-            ctxRotas.previsaoRetorno = previsao;
-            situacaoRede = novoStatus; 
-            previsaoRetorno = previsao;
-            
+            if (!['normal','instavel','manutencao','fibra_rompida'].includes(novoStatus))
+                return msg.reply('❌ Use: !rede normal | instavel | manutencao | fibra_rompida');
+            ctxRotas.situacaoRede = novoStatus;
+            ctxRotas.previsaoRetorno = args.slice(2).join(' ').replace(/["\']/g,'') || 'sem previsão';
             sseService.broadcast();
-            
-            try {
-                await firebaseDb.collection('config').doc('situacao_rede').set({ valor: novoStatus });
-                await firebaseDb.collection('config').doc('previsao_retorno').set({ valor: previsao });
-            } catch (e) {}
-            
-            return msg.reply(`✅ *REDE ATUALIZADA*\n\n📡 Status: ${novoStatus}\n🔮 Previsão: ${previsao}`);
+            return msg.reply(`✅ Rede: ${novoStatus}`);
         }
         if (comando === '!cobrar') {
             const data = args[1];
-            if (!data || !['10', '20', '30'].includes(data)) return msg.reply("❌ Use: !cobrar 10 | 20 | 30");
-            msg.reply(`⏳ Iniciando cobrança...`);
+            if (!['10','20','30'].includes(data)) return msg.reply('❌ Use: !cobrar 10|20|30');
+            msg.reply('⏳ Iniciando...');
             setTimeout(async () => {
                 const total = await dispararCobrancaReal(client, firebaseDb, data, args[2] || null);
-                await client.sendMessage(deQuem, `✅ *COBRANÇA*\n\n📅 Data: ${data}\n📨 Mensagens: ${total}`);
+                client.sendMessage(deQuem, `✅ Cobrança dia ${data}: ${total} mensagens`);
             }, 100);
             return;
         }
-        if (comando === '!pendentes') {
-            const data = args[1];
-            if (!data || !['10', '20', '30'].includes(data)) return msg.reply("❌ Use: !pendentes 10 | 20 | 30");
-            msg.reply(`⏳ Buscando...`);
-            setTimeout(async () => {
-                const snap = await firebaseDb.collection('clientes')
-                    .where('dia_vencimento', '==', parseInt(data))
-                    .where('status', '==', 'pendente')
-                    .get();
-                if (snap.empty) return client.sendMessage(deQuem, `✅ Nenhum pendente dia ${data}`);
-                let resp = `📋 *PENDENTES DIA ${data}*\nTotal: ${snap.size}\n\n`;
-                snap.docs.slice(0, 20).forEach((d, i) => {
-                    const c = d.data();
-                    resp += `${i+1}. ${c.nome} - ${c.telefone || 'sem tel'}\n`;
-                });
-                if (snap.size > 20) resp += `\n... e mais ${snap.size - 20}`;
-                await client.sendMessage(deQuem, resp);
-            }, 100);
-            return;
-        }
-        // !assumir NUMERO — admin toma a conversa, bot para de responder
         if (comando === '!assumir') {
-            const numRaw = args[1]?.replace(/\D/g, '');
-            if (!numRaw) return msg.reply('❌ Use: !assumir 819xxxxxxx');
-            const numWpp = (numRaw.startsWith('55') ? numRaw : '55' + numRaw) + '@c.us';
+            const num = args[1]?.replace(/\D/g,'');
+            if (!num) return msg.reply('❌ Use: !assumir 819xxxxxxx');
+            const numWpp = (num.startsWith('55') ? num : '55' + num) + '@c.us';
             state.setAtendimentoHumano(numWpp, true);
             await banco.dbSalvarAtendimentoHumano(numWpp).catch(() => {});
-            return msg.reply(`✅ Você assumiu o atendimento de *${numRaw}*\nO bot não vai mais responder esse cliente.\n\nQuando terminar: *!liberar ${numRaw}*`);
+            return msg.reply(`✅ Assumido ${num}. Use !liberar ${num} para devolver.`);
         }
-
-        // !liberar NUMERO — devolve a conversa para o bot
         if (comando === '!liberar') {
-            const numRaw = args[1]?.replace(/\D/g, '');
-            if (!numRaw) return msg.reply('❌ Use: !liberar 819xxxxxxx');
-            const numWpp = (numRaw.startsWith('55') ? numRaw : '55' + numRaw) + '@c.us';
+            const num = args[1]?.replace(/\D/g,'');
+            if (!num) return msg.reply('❌ Use: !liberar 819xxxxxxx');
+            const numWpp = (num.startsWith('55') ? num : '55' + num) + '@c.us';
             state.setAtendimentoHumano(numWpp, false);
             state.encerrarFluxo(numWpp);
             await banco.dbRemoverAtendimentoHumano(numWpp).catch(() => {});
-            await client.sendMessage(numWpp,
-                `🤖 *Assistente JMENET*\n\nOlá! Se precisar de algo, é só chamar! 😊`
-            ).catch(() => {});
-            return msg.reply(`✅ Conversa de *${numRaw}* devolvida para o bot.`);
+            await client.sendMessage(numWpp, `${P}Olá! Se precisar de algo é só chamar! 😊`).catch(() => {});
+            return msg.reply(`✅ ${num} devolvido ao bot.`);
         }
-
-        // !listar — mostra quem está em atendimento humano
         if (comando === '!listar') {
-            const stats = state.stats();
-            const humanos = Object.entries(state.todos())
-                .filter(([, v]) => v.atendimentoHumano)
-                .map(([num]) => num.replace('@c.us', '').replace(/^55/, ''));
-            if (humanos.length === 0) return msg.reply('✅ Nenhum cliente em atendimento humano no momento.');
-            return msg.reply(`👤 *EM ATENDIMENTO HUMANO:*\n\n${humanos.map((n, i) => `${i+1}. ${n}`).join('\n')}\n\nUse *!liberar NUMERO* para devolver ao bot.`);
+            const humanos = Object.entries(state.todos?.() || {})
+                .filter(([,v]) => v.atendimentoHumano)
+                .map(([n]) => n.replace('@c.us','').replace(/^55/,''));
+            return msg.reply(humanos.length ? `👤 Em atendimento:\n${humanos.join('\n')}` : '✅ Nenhum em atendimento.');
         }
-
         if (comando === '!ajuda') {
-            return msg.reply(
-                `📚 *COMANDOS*\n\n` +
-                `🤖 *!bot on/off*\n📡 *!status*\n🌐 *!rede*\n💰 *!cobrar 10|20|30*\n` +
-                `📋 *!pendentes 10|20|30*\n👤 *!assumir NUMERO*\n🔓 *!liberar NUMERO*\n📋 *!listar*`
-            );
+            return msg.reply(`📚 *COMANDOS*\n!bot on/off | !status | !rede | !cobrar 10|20|30 | !assumir N | !liberar N | !listar`);
         }
         return;
     }
 
-    // FLUXO NORMAL (CLIENTES)
+    // ── CLIENTES ─────────────────────────────────────────
     if (msg.type === 'sticker') return;
-    
-    const tipo = msg.hasMedia
-        ? (['audio','ptt'].includes(msg.type) ? 'audio' : ['image','document'].includes(msg.type) ? msg.type : 'outro')
-        : 'texto';
 
-    // Todas as mensagens (texto, áudio, imagem) entram na fila com debounce
-    const fila = mensagensPendentes.get(deQuem) || [];
-    fila.push({ msg, tipo });
-    mensagensPendentes.set(deQuem, fila);
+    // Comprovante de pagamento — processa mesmo em atendimento humano
+    if (msg.hasMedia && ['image','document'].includes(msg.type)) {
+        const processado = await processarMidiaAutomatico(deQuem, msg);
+        if (processado) return;
+        // Imagem que não é comprovante — ignora silenciosamente
+        return;
+    }
 
-    const temAudio = fila.some(f => ['audio','ptt'].includes(f.tipo));
-    const temMidia = fila.some(f => ['image','document'].includes(f.tipo));
-    const delay = temAudio ? DEBOUNCE_AUDIO : temMidia ? DEBOUNCE_MIDIA : DEBOUNCE_TEXTO;
+    // Se está em atendimento humano, não responde nada
+    if (state.isAtendimentoHumano(deQuem)) return;
 
-    if (state.cancelarTimer) state.cancelarTimer(deQuem);
-    agendarProcessamento(deQuem, delay);
+    const texto = msg.body?.trim() || '';
+    if (!texto) return;
+
+    console.log(`\n📨 ${deQuem.slice(-8)}: "${texto}"`);
+
+    const fluxoAtivo = state.getFluxo(deQuem);
+
+    // Fluxo: aguardando endereço para suporte
+    if (fluxoAtivo === 'suporte_simples') {
+        const endereco = texto;
+        await client.sendMessage(deQuem,
+            `${P}Obrigado! Abrindo chamado com seu endereço. 🔧\n\nUm técnico entrará em contato em breve!`
+        );
+        await abrirChamadoComMotivo(deQuem, null, 'Suporte técnico', { endereco });
+        state.encerrarFluxo(deQuem);
+        return;
+    }
+
+    // Fluxo: aguardando escolha do menu
+    if (fluxoAtivo === MENU_ESTADO) {
+        await processarMenuSimples(deQuem, texto);
+        return;
+    }
+
+    // Qualquer outra mensagem → mostra menu
+    await client.sendMessage(deQuem, MENU_TEXTO);
+    state.iniciar(deQuem, MENU_ESTADO, 'aguardando_escolha', {});
 });
 
 // =====================================================
@@ -1078,7 +1129,6 @@ setInterval(async () => {
 // READY
 // =====================================================
 client.on('ready', async () => {
-    inicializarFluxos();
     ctxRotas.botIniciadoEm = Date.now();
 
     // ── Restaura configurações salvas no Firebase ANTES do broadcast ──
