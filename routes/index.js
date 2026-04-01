@@ -14,6 +14,33 @@ module.exports = function setupRoutes(app, ctx) {
     } = ctx;
 
     // =====================================================
+    // HELPER: busca histórico dos 2 meses relevantes e calcula status
+    // =====================================================
+    async function calcularStatusComHistorico(cliente) {
+        const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+        const mesHoje = agoraBR.getUTCMonth() + 1;
+        const anoHoje = agoraBR.getUTCFullYear();
+        const mesAtualKey = `${String(mesHoje).padStart(2,'0')}-${anoHoje}`;
+        const mesAnteriorDate = new Date(anoHoje, mesHoje - 2, 1);
+        const mesAnteriorKey = `${String(mesAnteriorDate.getMonth() + 1).padStart(2,'0')}-${mesAnteriorDate.getFullYear()}`;
+
+        try {
+            const [docAtual, docAnterior] = await Promise.all([
+                firebaseDb.collection('clientes').doc(cliente.id)
+                    .collection('historico_pagamentos').doc(mesAtualKey).get(),
+                firebaseDb.collection('clientes').doc(cliente.id)
+                    .collection('historico_pagamentos').doc(mesAnteriorKey).get(),
+            ]);
+            const _historico = {};
+            if (docAtual.exists) _historico[mesAtualKey] = docAtual.data();
+            if (docAnterior.exists) _historico[mesAnteriorKey] = docAnterior.data();
+            return calcularStatusCliente({ ...cliente, _historico });
+        } catch {
+            return cliente.status || 'pendente';
+        }
+    }
+
+    // =====================================================
     // ROTAS BÁSICAS (NÃO MUDAM)
     // =====================================================
     
@@ -53,29 +80,24 @@ module.exports = function setupRoutes(app, ctx) {
     // =====================================================
     // STATUS DO BOT
     // =====================================================
-    // =====================================================
-// STATUS DO BOT - CORRIGIDO
-// =====================================================
-// =====================================================
-// STATUS DO BOT - COM LOGS PARA DEBUG
-// =====================================================
-app.get('/api/status', (req, res) => {
-    console.log('📊 ROTA /api/status CHAMADA');
-    console.log('   botIniciadoEm no ctx:', ctx.botIniciadoEm);
-    console.log('   botAtivo no ctx:', ctx.botAtivo);
-    
-    const response = {
-        botAtivo: ctx.botAtivo,
-        online: ctx.botIniciadoEm ? true : false,
-        iniciadoEm: ctx.botIniciadoEm,
-        atendimentosAtivos: state?.stats()?.atendimentoHumano || 0,
-        situacaoRede: ctx.situacaoRede,
-        previsaoRetorno: ctx.previsaoRetorno,
-    };
-    
-    console.log('   resposta:', response);
-    res.json(response);
-});
+    app.get('/api/status', (req, res) => {
+        console.log('📊 ROTA /api/status CHAMADA');
+        console.log('   botIniciadoEm no ctx:', ctx.botIniciadoEm);
+        console.log('   botAtivo no ctx:', ctx.botAtivo);
+        
+        const response = {
+            botAtivo: ctx.botAtivo,
+            online: ctx.botIniciadoEm ? true : false,
+            iniciadoEm: ctx.botIniciadoEm,
+            atendimentosAtivos: state?.stats()?.atendimentoHumano || 0,
+            situacaoRede: ctx.situacaoRede,
+            previsaoRetorno: ctx.previsaoRetorno,
+        };
+        
+        console.log('   resposta:', response);
+        res.json(response);
+    });
+
     // =====================================================
     // ROTA PARA LIGAR/DESLIGAR O BOT
     // =====================================================
@@ -88,7 +110,6 @@ app.get('/api/status', (req, res) => {
             await firebaseDb.collection('config').doc('bot_ativo').set({ valor: novoEstado });
             
             ctx.botAtivo = novoEstado;
-            // Atualiza via SSE para todos os frontends abertos
             if (ctx.sseService) ctx.sseService.broadcast();
             
             console.log(`🤖 Bot ${ctx.botAtivo ? 'ligado' : 'desligado'} via API`);
@@ -132,7 +153,7 @@ app.get('/api/status', (req, res) => {
         }
     });
 
-    // Rede — busca direto do Firebase para garantir valor correto mesmo antes do ready
+    // Rede
     app.get('/api/rede', async (req, res) => {
         try {
             const [redeDoc, previsaoDoc] = await Promise.all([
@@ -175,7 +196,6 @@ app.get('/api/status', (req, res) => {
     // ROTAS DE CLIENTES E BASES
     // =====================================================
     
-    // Busca global
     app.get('/api/clientes/buscar', async (req, res) => {
         const { q } = req.query;
         if (!q || q.trim().length < 2) return res.json([]);
@@ -199,7 +219,6 @@ app.get('/api/status', (req, res) => {
         }
     });
 
-    // Busca global detalhada
     app.get('/api/clientes/busca-global', async (req, res) => {
         const { q } = req.query;
         if (!q || q.length < 2) return res.json([]);
@@ -212,7 +231,6 @@ app.get('/api/status', (req, res) => {
         }
     });
 
-    // BASES - ROTA PRINCIPAL
     app.get('/api/bases', async (req, res) => {
         try {
             const basesSnapshot = await firebaseDb.collection('bases').orderBy('criado_em', 'asc').get();
@@ -220,13 +238,11 @@ app.get('/api/status', (req, res) => {
             const result = await Promise.all(basesSnapshot.docs.map(async (baseDoc) => {
                 const base = { id: baseDoc.id, ...baseDoc.data() };
                 
-                // Buscar dias da base
                 const diasSnapshot = await firebaseDb.collection('bases').doc(baseDoc.id).collection('datas_base')
                     .orderBy('dia', 'asc')
                     .get();
                 const dias = diasSnapshot.docs.map(d => d.data().dia);
                 
-                // Buscar clientes da base - CORRIGIDO com parseInt
                 const clientesSnapshot = await firebaseDb.collection('clientes')
                     .where('base_id', '==', parseInt(baseDoc.id))
                     .get();
@@ -244,7 +260,6 @@ app.get('/api/status', (req, res) => {
         }
     });
 
-    // Criar base
     app.post('/api/bases', async (req, res) => {
         const { nome, descricao, dias } = req.body;
         if (!nome) return res.status(400).json({ erro: 'Nome obrigatório' });
@@ -295,7 +310,6 @@ app.get('/api/status', (req, res) => {
         }
     });
 
-    // Deletar base
     app.delete('/api/bases/:id', async (req, res) => {
         const { id } = req.params;
         
@@ -312,7 +326,6 @@ app.get('/api/status', (req, res) => {
             
             const batch = firebaseDb.batch();
             
-            // CORRIGIDO com parseInt
             const clientesSnapshot = await firebaseDb.collection('clientes')
                 .where('base_id', '==', parseInt(baseDoc.id))
                 .get();
@@ -332,101 +345,114 @@ app.get('/api/status', (req, res) => {
         }
     });
 
-    // Clientes de uma base - CORRIGIDO!
+    // =====================================================
+    // CORREÇÃO 1: /api/bases/:id/clientes — busca histórico real
+    // =====================================================
     app.get('/api/bases/:id/clientes', async (req, res) => {
-  const { id } = req.params;
-  const { dia, busca } = req.query;
-  
-  console.log('🔍 Buscando clientes para base ID:', id);
-  
-  try {
-    // 🔥 SOLUÇÃO: tenta número e string
-    const baseIdNum = parseInt(id);
-    const baseIdStr = String(id);
-    
-    console.log('   Tentando como número:', baseIdNum);
-    console.log('   Tentando como string:', baseIdStr);
-    
-    // Busca clientes com base_id = número OU base_id = string
-    const snapshotNum = await firebaseDb.collection('clientes')
-      .where('base_id', '==', baseIdNum)
-      .get();
-      
-    const snapshotStr = await firebaseDb.collection('clientes')
-      .where('base_id', '==', baseIdStr)
-      .get();
-    
-    // Junta os resultados (removendo duplicatas)
-    const clientesMap = new Map();
-    
-    snapshotNum.docs.forEach(doc => {
-      clientesMap.set(doc.id, { id: doc.id, ...doc.data() });
-    });
-    
-    snapshotStr.docs.forEach(doc => {
-      clientesMap.set(doc.id, { id: doc.id, ...doc.data() });
-    });
-    
-    let clientes = Array.from(clientesMap.values());
-    
-    console.log(`   📊 Total clientes encontrados: ${clientes.length}`);
-    
-    // Filtrar por dia se necessário
-    if (dia) {
-      const diaNum = parseInt(dia);
-      clientes = clientes.filter(c => c.dia_vencimento === diaNum);
-      console.log(`   Após filtro de dia ${dia}: ${clientes.length} clientes`);
-    }
-    
-    // Filtrar por busca textual se necessário
-    if (busca) {
-      const termo = busca.toLowerCase();
-      clientes = clientes.filter(c => 
-        (c.nome && c.nome.toLowerCase().includes(termo)) ||
-        (c.cpf && c.cpf.includes(termo)) ||
-        (c.telefone && c.telefone.includes(termo)) ||
-        (c.endereco && c.endereco.toLowerCase().includes(termo))
-      );
-      console.log(`   Após busca textual: ${clientes.length} clientes`);
-    }
-    
-    // Ordenar por nome
-    clientes.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
-    
-    // Busca todas as promessas pendentes de uma vez (1 query) e faz join local
-    const promessasSnap = await firebaseDb.collection('promessas')
-      .where('status', '==', 'pendente')
-      .get();
-    
-    const promessaMap = {};
-    promessasSnap.docs.forEach(d => {
-      const p = d.data();
-      const tel = (p.numero || '').replace('@c.us','').replace(/^55/,'').replace(/\D/g,'').slice(-8);
-      if (tel) promessaMap[tel] = p;
-    });
-    
-    clientes = clientes.map(cliente => {
-      const tel = (cliente.telefone || '').replace(/\D/g,'').slice(-8);
-      const promessa = promessaMap[tel];
-      if (promessa) {
-        cliente.data_promessa = promessa.data_promessa;
-        cliente.promessa_status = promessa.status;
-      }
-      return cliente;
-    });
+        const { id } = req.params;
+        const { dia, busca } = req.query;
+        
+        console.log('🔍 Buscando clientes para base ID:', id);
+        
+        try {
+            const baseIdNum = parseInt(id);
+            const baseIdStr = String(id);
+            
+            const snapshotNum = await firebaseDb.collection('clientes')
+                .where('base_id', '==', baseIdNum)
+                .get();
+              
+            const snapshotStr = await firebaseDb.collection('clientes')
+                .where('base_id', '==', baseIdStr)
+                .get();
+            
+            const clientesMap = new Map();
+            snapshotNum.docs.forEach(doc => {
+                clientesMap.set(doc.id, { id: doc.id, ...doc.data() });
+            });
+            snapshotStr.docs.forEach(doc => {
+                clientesMap.set(doc.id, { id: doc.id, ...doc.data() });
+            });
+            
+            let clientes = Array.from(clientesMap.values());
+            
+            console.log(`   📊 Total clientes encontrados: ${clientes.length}`);
+            
+            if (dia) {
+                const diaNum = parseInt(dia);
+                clientes = clientes.filter(c => c.dia_vencimento === diaNum);
+            }
+            
+            if (busca) {
+                const termo = busca.toLowerCase();
+                clientes = clientes.filter(c => 
+                    (c.nome && c.nome.toLowerCase().includes(termo)) ||
+                    (c.cpf && c.cpf.includes(termo)) ||
+                    (c.telefone && c.telefone.includes(termo)) ||
+                    (c.endereco && c.endereco.toLowerCase().includes(termo))
+                );
+            }
+            
+            clientes.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+            
+            // Promessas
+            const promessasSnap = await firebaseDb.collection('promessas')
+                .where('status', '==', 'pendente')
+                .get();
+            
+            const promessaMap = {};
+            promessasSnap.docs.forEach(d => {
+                const p = d.data();
+                const tel = (p.numero || '').replace('@c.us','').replace(/^55/,'').replace(/\D/g,'').slice(-8);
+                if (tel) promessaMap[tel] = p;
+            });
+            
+            clientes = clientes.map(cliente => {
+                const tel = (cliente.telefone || '').replace(/\D/g,'').slice(-8);
+                const promessa = promessaMap[tel];
+                if (promessa) {
+                    cliente.data_promessa = promessa.data_promessa;
+                    cliente.promessa_status = promessa.status;
+                }
+                return cliente;
+            });
 
-     clientes = clientes.map(cliente => ({
-        ...cliente,
-        status_calculado: calcularStatusCliente(cliente)
-    }));
-    
-    res.json(clientes);
-    
-  } catch(e) { 
-    console.error('❌ Erro em /api/bases/:id/clientes:', e);
-    res.status(500).json({ erro: e.message }); 
-  }
-});
+            // ✅ CORREÇÃO: busca histórico real do Firebase para cada cliente
+            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+            const mesHoje = agoraBR.getUTCMonth() + 1;
+            const anoHoje = agoraBR.getUTCFullYear();
+            const mesAtualKey = `${String(mesHoje).padStart(2,'0')}-${anoHoje}`;
+            const mesAnteriorDate = new Date(anoHoje, mesHoje - 2, 1);
+            const mesAnteriorKey = `${String(mesAnteriorDate.getMonth() + 1).padStart(2,'0')}-${mesAnteriorDate.getFullYear()}`;
+
+            const historicos = await Promise.all(clientes.map(c =>
+                Promise.all([
+                    firebaseDb.collection('clientes').doc(c.id).collection('historico_pagamentos').doc(mesAtualKey).get(),
+                    firebaseDb.collection('clientes').doc(c.id).collection('historico_pagamentos').doc(mesAnteriorKey).get(),
+                ]).then(([docAtual, docAnterior]) => {
+                    const h = {};
+                    if (docAtual.exists) h[mesAtualKey] = docAtual.data();
+                    if (docAnterior.exists) h[mesAnteriorKey] = docAnterior.data();
+                    return { id: c.id, historico: h };
+                }).catch(() => ({ id: c.id, historico: {} }))
+            ));
+
+            const historicoMap = {};
+            historicos.forEach(h => { historicoMap[h.id] = h.historico; });
+
+            clientes = clientes.map(cliente => ({
+                ...cliente,
+                _historico: historicoMap[cliente.id] || {},
+                status_calculado: calcularStatusCliente({ ...cliente, _historico: historicoMap[cliente.id] || {} })
+            }));
+            
+            res.json(clientes);
+            
+        } catch(e) { 
+            console.error('❌ Erro em /api/bases/:id/clientes:', e);
+            res.status(500).json({ erro: e.message }); 
+        }
+    });
 
     // =====================================================
     // ROTAS DE COBRANÇA
@@ -446,7 +472,6 @@ app.get('/api/status', (req, res) => {
 
         const hoje = new Date().toISOString().split('T')[0];
         
-        // Só bloqueia se o MESMO tipo já foi disparado hoje para essa data
         const tipoVerificar = tipo || 'auto';
         let jaDisparouQuery = firebaseDb.collection('log_cobrancas')
             .where('data_vencimento', '==', data)
@@ -473,7 +498,6 @@ app.get('/api/status', (req, res) => {
 
         setTimeout(async () => {
             try {
-                // ctx.dispararCobrancaReal já tem client e firebaseDb embutidos
                 const total = await ctx.dispararCobrancaReal(data, tipo || null);
                 const tipoLabel = {
                     lembrete: 'Lembrete', atraso: 'Atraso', atraso_final: 'Atraso Final',
@@ -512,355 +536,336 @@ app.get('/api/status', (req, res) => {
         }, 100);
     });
 
-    // =====================================================
-// ROTA DE AGENDA OTIMIZADA (RÁPIDA)
-// =====================================================
-app.get('/api/cobrar/agenda', async (req, res) => {
-    try {
-        const agora = new Date();
-        const mes = agora.getMonth() + 1;
-        const ano = agora.getFullYear();
-        const dia = agora.getDate();
-        
-        console.log(`📅 Buscando agenda otimizada para ${mes}/${ano}`);
-        
-        // 🔥 1. UMA CONSULTA: busca TODOS os logs do mês
-        const inicioMes = `${ano}-${String(mes).padStart(2, '0')}-01`;
-        const fimMes = `${ano}-${String(mes).padStart(2, '0')}-31`;
-        
-        const logsSnapshot = await firebaseDb.collection('log_cobrancas')
-            .where('data_envio', '>=', inicioMes)
-            .where('data_envio', '<=', fimMes)
-            .get();
-        
-        console.log(`   📊 ${logsSnapshot.size} registros encontrados`);
-        
-        // 🔥 2. Organiza os logs por dia
-        const agenda = {};
-        
-        logsSnapshot.docs.forEach(doc => {
-            const c = doc.data();
-            const diaLog = parseInt(c.data_envio.split('-')[2]);
+    app.get('/api/cobrar/agenda', async (req, res) => {
+        try {
+            const agora = new Date();
+            const mes = agora.getMonth() + 1;
+            const ano = agora.getFullYear();
+            const dia = agora.getDate();
             
-            if (!agenda[diaLog]) agenda[diaLog] = [];
+            console.log(`📅 Buscando agenda otimizada para ${mes}/${ano}`);
             
-            // Agrupa por data_vencimento e tipo
-            const existente = agenda[diaLog].find(e => 
-                e.data === c.data_vencimento && e.tipo === (c.tipo || 'auto')
-            );
+            const inicioMes = `${ano}-${String(mes).padStart(2, '0')}-01`;
+            const fimMes = `${ano}-${String(mes).padStart(2, '0')}-31`;
             
-            if (existente) {
-                existente.clientes++;
-            } else {
-                agenda[diaLog].push({
-                    data: c.data_vencimento,
-                    tipo: c.tipo || 'auto',
-                    clientes: 1,
-                    status: 'realizado',
-                    origem: c.origem || 'auto'
-                });
-            }
-        });
-        
-        // 🔥 3. Busca pendência (outra consulta)
-        const pendenciaDoc = await firebaseDb.collection('config').doc('cobranca_adiada').get();
-        const pendencia = pendenciaDoc.exists ? pendenciaDoc.data().valor : null;
-        
-        // Adiciona pendência no dia
-        if (pendencia && pendencia.dia && pendencia.mes === mes && pendencia.ano === ano) {
-            if (!agenda[pendencia.dia]) agenda[pendencia.dia] = [];
+            const logsSnapshot = await firebaseDb.collection('log_cobrancas')
+                .where('data_envio', '>=', inicioMes)
+                .where('data_envio', '<=', fimMes)
+                .get();
             
-            pendencia.entradas?.forEach(entrada => {
-                // Evita duplicar se já foi realizado
-                const jaExiste = agenda[pendencia.dia].some(e => 
-                    e.data === entrada.data && e.tipo === entrada.tipo && e.status === 'realizado'
+            console.log(`   📊 ${logsSnapshot.size} registros encontrados`);
+            
+            const agenda = {};
+            
+            logsSnapshot.docs.forEach(doc => {
+                const c = doc.data();
+                const diaLog = parseInt(c.data_envio.split('-')[2]);
+                
+                if (!agenda[diaLog]) agenda[diaLog] = [];
+                
+                const existente = agenda[diaLog].find(e => 
+                    e.data === c.data_vencimento && e.tipo === (c.tipo || 'auto')
                 );
                 
-                if (!jaExiste) {
-                    agenda[pendencia.dia].push({
-                        data: entrada.data,
-                        tipo: entrada.tipo,
-                        clientes: entrada.clientes || 0,
-                        status: 'pendente',
-                        motivo: pendencia.motivoBloqueio
+                if (existente) {
+                    existente.clientes++;
+                } else {
+                    agenda[diaLog].push({
+                        data: c.data_vencimento,
+                        tipo: c.tipo || 'auto',
+                        clientes: 1,
+                        status: 'realizado',
+                        origem: c.origem || 'auto'
                     });
                 }
             });
-        }
-        
-        // 🔥 4. Busca previsões para dias 10,20,30 (3 consultas)
-        const diasVencimento = [10, 20, 30];
-        
-        for (const diaVenc of diasVencimento) {
-            // Pula se já tem registro neste dia
-            if (agenda[diaVenc]?.length > 0) continue;
             
-            const clientesSnapshot = await firebaseDb.collection('clientes')
-                .where('dia_vencimento', '==', diaVenc)
-                .get();
+            const pendenciaDoc = await firebaseDb.collection('config').doc('cobranca_adiada').get();
+            const pendencia = pendenciaDoc.exists ? pendenciaDoc.data().valor : null;
             
-            const pendentes = clientesSnapshot.docs.filter(doc => 
-                doc.data().status === 'pendente'
-            ).length;
-            
-            if (pendentes > 0) {
-                if (!agenda[diaVenc]) agenda[diaVenc] = [];
+            if (pendencia && pendencia.dia && pendencia.mes === mes && pendencia.ano === ano) {
+                if (!agenda[pendencia.dia]) agenda[pendencia.dia] = [];
                 
-                // Define se é futuro, hoje ou passado
-                let status = 'futuro';
-                if (diaVenc < dia) status = 'passado';
-                if (diaVenc === dia) status = 'hoje';
-                
-                agenda[diaVenc].push({
-                    data: String(diaVenc),
-                    tipo: 'previsao',
-                    clientes: pendentes,
-                    status: status,
-                    total_clientes: clientesSnapshot.size
+                pendencia.entradas?.forEach(entrada => {
+                    const jaExiste = agenda[pendencia.dia].some(e => 
+                        e.data === entrada.data && e.tipo === entrada.tipo && e.status === 'realizado'
+                    );
+                    
+                    if (!jaExiste) {
+                        agenda[pendencia.dia].push({
+                            data: entrada.data,
+                            tipo: entrada.tipo,
+                            clientes: entrada.clientes || 0,
+                            status: 'pendente',
+                            motivo: pendencia.motivoBloqueio
+                        });
+                    }
                 });
             }
+            
+            const diasVencimento = [10, 20, 30];
+            
+            for (const diaVenc of diasVencimento) {
+                if (agenda[diaVenc]?.length > 0) continue;
+                
+                const clientesSnapshot = await firebaseDb.collection('clientes')
+                    .where('dia_vencimento', '==', diaVenc)
+                    .get();
+                
+                const pendentes = clientesSnapshot.docs.filter(doc => 
+                    doc.data().status === 'pendente'
+                ).length;
+                
+                if (pendentes > 0) {
+                    if (!agenda[diaVenc]) agenda[diaVenc] = [];
+                    
+                    let status = 'futuro';
+                    if (diaVenc < dia) status = 'passado';
+                    if (diaVenc === dia) status = 'hoje';
+                    
+                    agenda[diaVenc].push({
+                        data: String(diaVenc),
+                        tipo: 'previsao',
+                        clientes: pendentes,
+                        status: status,
+                        total_clientes: clientesSnapshot.size
+                    });
+                }
+            }
+            
+            console.log(`   ✅ Agenda montada com ${Object.keys(agenda).length} dias`);
+            
+            res.json({ 
+                agenda, 
+                diaAtual: dia, 
+                mes, 
+                ano, 
+                pendencia,
+                consultas: logsSnapshot.size + 1 + diasVencimento.length
+            });
+            
+        } catch (error) {
+            console.error('❌ Erro na agenda:', error);
+            res.status(500).json({ erro: error.message });
         }
-        
-        console.log(`   ✅ Agenda montada com ${Object.keys(agenda).length} dias`);
-        
-        res.json({ 
-            agenda, 
-            diaAtual: dia, 
-            mes, 
-            ano, 
-            pendencia,
-            consultas: logsSnapshot.size + 1 + diasVencimento.length // Só pra debug
-        });
-        
-    } catch (error) {
-        console.error('❌ Erro na agenda:', error);
-        res.status(500).json({ erro: error.message });
-    }
-});
+    });
 
     // =====================================================
-// ROTAS DE PROMESSAS
-// =====================================================
+    // ROTAS DE PROMESSAS
+    // =====================================================
 
-app.get('/api/promessas', async (req, res) => {
-    try {
-        const { status } = req.query;
-        let query = firebaseDb.collection('promessas');
-        
-        if (status && status !== 'todos') {
-            query = query.where('status', '==', status);
-        }
-        
-        const snapshot = await query
-            .orderBy('criado_em', 'desc')
-            .limit(200)
-            .get();
-        
-        const promessas = await Promise.all(snapshot.docs.map(async doc => {
-            const promessa = { id: doc.id, ...doc.data() };
+    app.get('/api/promessas', async (req, res) => {
+        try {
+            const { status } = req.query;
+            let query = firebaseDb.collection('promessas');
             
-            const numero = promessa.numero?.replace('@c.us', '').replace('55', '');
-            const cliente = await banco.buscarClientePorTelefone(numero);
+            if (status && status !== 'todos') {
+                query = query.where('status', '==', status);
+            }
             
-            if (cliente) {
-                promessa.dia_vencimento = cliente.dia_vencimento;
+            const snapshot = await query
+                .orderBy('criado_em', 'desc')
+                .limit(200)
+                .get();
+            
+            const promessas = await Promise.all(snapshot.docs.map(async doc => {
+                const promessa = { id: doc.id, ...doc.data() };
                 
-                // Verifica se base_id existe E se não é uma string vazia/nula
-                if (cliente.base_id && typeof cliente.base_id === 'string' && cliente.base_id.trim() !== '') {
-                    try {
-                        const baseDoc = await firebaseDb.collection('bases').doc(cliente.base_id).get();
-                        if (baseDoc.exists) {
-                            promessa.base_nome = baseDoc.data().nome;
+                const numero = promessa.numero?.replace('@c.us', '').replace('55', '');
+                const cliente = await banco.buscarClientePorTelefone(numero);
+                
+                if (cliente) {
+                    promessa.dia_vencimento = cliente.dia_vencimento;
+                    
+                    if (cliente.base_id && typeof cliente.base_id === 'string' && cliente.base_id.trim() !== '') {
+                        try {
+                            const baseDoc = await firebaseDb.collection('bases').doc(cliente.base_id).get();
+                            if (baseDoc.exists) {
+                                promessa.base_nome = baseDoc.data().nome;
+                            }
+                        } catch (docError) {
+                            console.error(`Erro ao buscar base_id ${cliente.base_id}:`, docError);
                         }
-                    } catch (docError) {
-                        console.error(`Erro ao buscar base_id ${cliente.base_id}:`, docError);
-                        // Opcional: define um nome padrão ou ignora
+                    }
+                }
+                
+                return promessa;
+            }));
+            
+            const seteDiasAtras = new Date();
+            seteDiasAtras.setDate(seteDiasAtras.getDate() - 7);
+            
+            const promessasFiltradas = (!status || status === 'todos') 
+                ? promessas.filter(p => 
+                    p.status === 'pendente' || 
+                    (p.status !== 'pendente' && new Date(p.criado_em) >= seteDiasAtras)
+                  )
+                : promessas;
+            
+            res.json(promessasFiltradas);
+        } catch (error) {
+            console.error('Erro ao buscar promessas:', error);
+            res.status(500).json({ erro: error.message });
+        }
+    });
+
+    app.post('/api/promessas/:id/pago', async (req, res) => {
+        try {
+            const { id } = req.params;
+            
+            const promessaRef = firebaseDb.collection('promessas').doc(id);
+            const promessaDoc = await promessaRef.get();
+            
+            if (!promessaDoc.exists) {
+                return res.status(404).json({ erro: 'Promessa não encontrada' });
+            }
+            
+            const promessa = promessaDoc.data();
+            
+            await promessaRef.update({
+                status: 'pago',
+                pago_em: new Date().toISOString()
+            });
+            
+            if (promessa.nome) {
+                const clientes = await banco.buscarClientePorNome(promessa.nome);
+                const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
+                
+                if (cliente) {
+                    await firebaseDb.collection('clientes').doc(cliente.id).update({
+                        status: 'pago',
+                        atualizado_em: new Date().toISOString()
+                    });
+                    
+                    const hoje = new Date();
+                    const mesRef = `${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
+                    const docId = mesRef.replace('/', '-');
+                    
+                    await firebaseDb.collection('clientes')
+                        .doc(cliente.id)
+                        .collection('historico_pagamentos')
+                        .doc(docId)
+                        .set({
+                            referencia: mesRef,
+                            status: 'pago',
+                            forma_pagamento: 'Promessa',
+                            pago_em: new Date().toISOString(),
+                            data_vencimento: cliente.dia_vencimento || 10
+                        }, { merge: true });
+                }
+            }
+            
+            res.json({ ok: true, mensagem: 'Promessa marcada como paga' });
+        } catch (error) {
+            console.error('Erro ao marcar promessa como paga:', error);
+            res.status(500).json({ erro: error.message });
+        }
+    });
+
+    app.post('/api/promessas/:id/cancelar', async (req, res) => {
+        try {
+            const { id } = req.params;
+            
+            const promessaRef = firebaseDb.collection('promessas').doc(id);
+            const promessaDoc = await promessaRef.get();
+            
+            if (!promessaDoc.exists) {
+                return res.status(404).json({ erro: 'Promessa não encontrada' });
+            }
+            
+            const promessa = promessaDoc.data();
+            
+            await promessaRef.update({ status: 'cancelada' });
+            
+            if (promessa.nome) {
+                const clientes = await banco.buscarClientePorNome(promessa.nome);
+                const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
+                
+                if (cliente) {
+                    const clienteDoc = await firebaseDb.collection('clientes').doc(cliente.id).get();
+                    if (clienteDoc.exists && clienteDoc.data().status === 'promessa') {
+                        await firebaseDb.collection('clientes').doc(cliente.id).update({
+                            status: 'pendente',
+                            atualizado_em: new Date().toISOString()
+                        });
                     }
                 }
             }
             
-            return promessa;
-        }));
-        
-        const seteDiasAtras = new Date();
-        seteDiasAtras.setDate(seteDiasAtras.getDate() - 7);
-        
-        const promessasFiltradas = (!status || status === 'todos') 
-            ? promessas.filter(p => 
-                p.status === 'pendente' || 
-                (p.status !== 'pendente' && new Date(p.criado_em) >= seteDiasAtras)
-              )
-            : promessas;
-        
-        res.json(promessasFiltradas);
-    } catch (error) {
-        console.error('Erro ao buscar promessas:', error);
-        res.status(500).json({ erro: error.message });
-    }
-});
-
-app.post('/api/promessas/:id/pago', async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        const promessaRef = firebaseDb.collection('promessas').doc(id);
-        const promessaDoc = await promessaRef.get();
-        
-        if (!promessaDoc.exists) {
-            return res.status(404).json({ erro: 'Promessa não encontrada' });
+            res.json({ ok: true, mensagem: 'Promessa cancelada' });
+        } catch (error) {
+            console.error('Erro ao cancelar promessa:', error);
+            res.status(500).json({ erro: error.message });
         }
-        
-        const promessa = promessaDoc.data();
-        
-        await promessaRef.update({
-            status: 'pago',
-            pago_em: new Date().toISOString()
-        });
-        
-        if (promessa.nome) {
-            const clientes = await banco.buscarClientePorNome(promessa.nome);
-            const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
+    });
+
+    app.post('/api/promessas', async (req, res) => {
+        try {
+            const { nome, numero, data_promessa, cliente_id } = req.body;
             
-            if (cliente) {
-                await firebaseDb.collection('clientes').doc(cliente.id).update({
-                    status: 'pago',
-                    atualizado_em: new Date().toISOString()
-                });
+            if (!data_promessa) {
+                return res.status(400).json({ erro: 'data_promessa obrigatória' });
+            }
+            
+            const numWpp = numero ? (numero.replace(/\D/g,'').replace(/^0/,'55') + '@c.us') : null;
+            
+            const promessaRef = await firebaseDb.collection('promessas').add({
+                numero: numWpp || null,
+                nome: nome || null,
+                data_promessa: data_promessa,
+                status: 'pendente',
+                criado_em: new Date().toISOString()
+            });
+            
+            if (cliente_id) {
+                const clienteRef = firebaseDb.collection('clientes').doc(cliente_id);
+                const clienteDoc = await clienteRef.get();
                 
-                const hoje = new Date();
-                const mesRef = `${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
-                const docId = mesRef.replace('/', '-');
-                
-                await firebaseDb.collection('clientes')
-                    .doc(cliente.id)
-                    .collection('historico_pagamentos')
-                    .doc(docId)
-                    .set({
-                        referencia: mesRef,
-                        status: 'pago',
-                        forma_pagamento: 'Promessa',
-                        pago_em: new Date().toISOString(),
-                        data_vencimento: cliente.dia_vencimento || 10
-                    }, { merge: true });
-            }
-        }
-        
-        res.json({ ok: true, mensagem: 'Promessa marcada como paga' });
-    } catch (error) {
-        console.error('Erro ao marcar promessa como paga:', error);
-        res.status(500).json({ erro: error.message });
-    }
-});
-
-app.post('/api/promessas/:id/cancelar', async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        const promessaRef = firebaseDb.collection('promessas').doc(id);
-        const promessaDoc = await promessaRef.get();
-        
-        if (!promessaDoc.exists) {
-            return res.status(404).json({ erro: 'Promessa não encontrada' });
-        }
-        
-        const promessa = promessaDoc.data();
-        
-        await promessaRef.update({
-            status: 'cancelada'
-        });
-        
-        if (promessa.nome) {
-            const clientes = await banco.buscarClientePorNome(promessa.nome);
-            const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
-            
-            if (cliente) {
-                const clienteDoc = await firebaseDb.collection('clientes').doc(cliente.id).get();
-                if (clienteDoc.exists && clienteDoc.data().status === 'promessa') {
-                    await firebaseDb.collection('clientes').doc(cliente.id).update({
-                        status: 'pendente',
-                        atualizado_em: new Date().toISOString()
-                    });
-                }
-            }
-        }
-        
-        res.json({ ok: true, mensagem: 'Promessa cancelada' });
-    } catch (error) {
-        console.error('Erro ao cancelar promessa:', error);
-        res.status(500).json({ erro: error.message });
-    }
-});
-
-app.post('/api/promessas', async (req, res) => {
-    try {
-        const { nome, numero, data_promessa, cliente_id } = req.body;
-        
-        if (!data_promessa) {
-            return res.status(400).json({ erro: 'data_promessa obrigatória' });
-        }
-        
-        const numWpp = numero ? (numero.replace(/\D/g,'').replace(/^0/,'55') + '@c.us') : null;
-        
-        const promessaRef = await firebaseDb.collection('promessas').add({
-            numero: numWpp || null,
-            nome: nome || null,
-            data_promessa: data_promessa,
-            status: 'pendente',
-            criado_em: new Date().toISOString()
-        });
-        
-        if (cliente_id) {
-            const clienteRef = firebaseDb.collection('clientes').doc(cliente_id);
-            const clienteDoc = await clienteRef.get();
-            
-            if (clienteDoc.exists && clienteDoc.data().status === 'pendente') {
-                await clienteRef.update({
-                    status: 'promessa',
-                    atualizado_em: new Date().toISOString()
-                });
-            }
-        } else if (nome) {
-            const clientes = await banco.buscarClientePorNome(nome);
-            const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
-            
-            if (cliente) {
-                const clienteDoc = await firebaseDb.collection('clientes').doc(cliente.id).get();
                 if (clienteDoc.exists && clienteDoc.data().status === 'pendente') {
-                    await firebaseDb.collection('clientes').doc(cliente.id).update({
+                    await clienteRef.update({
                         status: 'promessa',
                         atualizado_em: new Date().toISOString()
                     });
                 }
+            } else if (nome) {
+                const clientes = await banco.buscarClientePorNome(nome);
+                const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
+                
+                if (cliente) {
+                    const clienteDoc = await firebaseDb.collection('clientes').doc(cliente.id).get();
+                    if (clienteDoc.exists && clienteDoc.data().status === 'pendente') {
+                        await firebaseDb.collection('clientes').doc(cliente.id).update({
+                            status: 'promessa',
+                            atualizado_em: new Date().toISOString()
+                        });
+                    }
+                }
             }
+            
+            res.json({ ok: true, id: promessaRef.id });
+        } catch (error) {
+            console.error('Erro ao criar promessa:', error);
+            res.status(500).json({ erro: error.message });
         }
-        
-        res.json({ ok: true, id: promessaRef.id });
-    } catch (error) {
-        console.error('Erro ao criar promessa:', error);
-        res.status(500).json({ erro: error.message });
-    }
-});
+    });
 
-app.post('/api/promessas/verificar', (req, res) => {
-    try {
-        if (verificarPromessasVencidas) {
-            verificarPromessasVencidas();
+    app.post('/api/promessas/verificar', (req, res) => {
+        try {
+            if (verificarPromessasVencidas) verificarPromessasVencidas();
+            res.json({ ok: true, msg: 'Verificação executada' });
+        } catch (error) {
+            res.status(500).json({ erro: error.message });
         }
-        res.json({ ok: true, msg: 'Verificação executada' });
-    } catch (error) {
-        res.status(500).json({ erro: error.message });
-    }
-});
+    });
 
-app.delete('/api/promessas/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        await firebaseDb.collection('promessas').doc(id).delete();
-        res.json({ ok: true });
-    } catch (error) {
-        res.status(500).json({ erro: error.message });
-    }
-});
+    app.delete('/api/promessas/:id', async (req, res) => {
+        try {
+            await firebaseDb.collection('promessas').doc(req.params.id).delete();
+            res.json({ ok: true });
+        } catch (error) {
+            res.status(500).json({ erro: error.message });
+        }
+    });
 
     // =====================================================
     // ROTAS DE LOGS
@@ -916,10 +921,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
         
         try {
             let query = firebaseDb.collection('log_bot');
-            
-            if (numero) {
-                query = query.where('numero', '==', numero);
-            }
+            if (numero) query = query.where('numero', '==', numero);
             
             const snapshot = await query
                 .orderBy('criado_em', 'desc')
@@ -927,11 +929,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 .get();
             
             const rows = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            
-            res.json({ 
-                rows, 
-                total: rows.length
-            });
+            res.json({ rows, total: rows.length });
         } catch (error) {
             res.status(500).json({ erro: error.message });
         }
@@ -1024,15 +1022,13 @@ app.delete('/api/promessas/:id', async (req, res) => {
             
             const correcoesSnapshot = await firebaseDb.collection('log_correcoes').get();
             
-            const stats = {
+            res.json({
                 total_hoje: hojeSnapshot.size,
                 entradas_hoje: entradasSnapshot.size,
                 intencoes: intencoes,
                 ultimos_numeros: ultimos_numeros,
                 total_correcoes: correcoesSnapshot.size
-            };
-            
-            res.json(stats);
+            });
         } catch (error) {
             console.error('Erro ao buscar stats:', error);
             res.status(500).json({ erro: error.message });
@@ -1043,122 +1039,118 @@ app.delete('/api/promessas/:id', async (req, res) => {
     // ROTA: Histórico de pagamentos do cliente
     // =====================================================
     app.get('/api/clientes/:clienteId/historico', async (req, res) => {
-    try {
-        const { clienteId } = req.params;
-        
-        const clienteDoc = await firebaseDb.collection('clientes').doc(clienteId).get();
-        if (!clienteDoc.exists) {
-            return res.status(404).json({ erro: 'Cliente não encontrado' });
-        }
-        
-        const cliente = { id: clienteDoc.id, ...clienteDoc.data() };
-        
-        const historicoSnapshot = await firebaseDb.collection('clientes')
-            .doc(clienteId)
-            .collection('historico_pagamentos')
-            .get(); // Remove orderBy temporariamente se der erro
-        
-        const historico = historicoSnapshot.docs.map(doc => ({ 
-            id: doc.id, 
-            ...doc.data() 
-        }));
+        try {
+            const { clienteId } = req.params;
+            
+            const clienteDoc = await firebaseDb.collection('clientes').doc(clienteId).get();
+            if (!clienteDoc.exists) {
+                return res.status(404).json({ erro: 'Cliente não encontrado' });
+            }
+            
+            const cliente = { id: clienteDoc.id, ...clienteDoc.data() };
+            
+            const historicoSnapshot = await firebaseDb.collection('clientes')
+                .doc(clienteId)
+                .collection('historico_pagamentos')
+                .get();
+            
+            const historico = historicoSnapshot.docs.map(doc => ({ 
+                id: doc.id, 
+                ...doc.data() 
+            }));
 
-        res.json({ cliente, historico });
-    } catch (error) {
-        console.error('Erro ao buscar histórico:', error);
-        res.status(500).json({ 
-            erro: 'Erro ao carregar histórico',
-            message: error.message 
-        });
-    }
-});
+            res.json({ cliente, historico });
+        } catch (error) {
+            console.error('Erro ao buscar histórico:', error);
+            res.status(500).json({ 
+                erro: 'Erro ao carregar histórico',
+                message: error.message 
+            });
+        }
+    });
 
     // =====================================================
     // ROTA: Dar baixa em pagamento
     // =====================================================
     app.post('/api/clientes/:clienteId/historico/:ref/pagar', async (req, res) => {
-    try {
-        const { clienteId, ref } = req.params;
-        const { forma_pagamento } = req.body;
-        const referencia = decodeURIComponent(ref);
-        
-        const clienteDoc = await firebaseDb.collection('clientes').doc(clienteId).get();
-        if (!clienteDoc.exists) {
-            return res.status(404).json({ erro: 'Cliente não encontrado' });
+        try {
+            const { clienteId, ref } = req.params;
+            const { forma_pagamento } = req.body;
+            const referencia = decodeURIComponent(ref);
+            
+            const clienteDoc = await firebaseDb.collection('clientes').doc(clienteId).get();
+            if (!clienteDoc.exists) {
+                return res.status(404).json({ erro: 'Cliente não encontrado' });
+            }
+            
+            const cliente = clienteDoc.data();
+            const documentId = referencia.replace(/\//g, '-');
+            
+            await firebaseDb.collection('clientes')
+                .doc(clienteId)
+                .collection('historico_pagamentos')
+                .doc(documentId)
+                .set({
+                    referencia: referencia,
+                    status: 'pago',
+                    forma_pagamento: forma_pagamento || null,
+                    pago_em: new Date().toISOString(),
+                    data_vencimento: cliente.dia_vencimento || 10
+                }, { merge: true });
+            
+            const hoje = new Date();
+            const refAtual = `${String(hoje.getMonth()+1).padStart(2,'0')}/${hoje.getFullYear()}`;
+            
+            if (referencia === refAtual) {
+                await firebaseDb.collection('clientes').doc(clienteId).update({
+                    status: 'pago',
+                    atualizado_em: new Date().toISOString()
+                });
+            }
+            if (ctx.sseService) ctx.sseService.notificar('clientes');
+            if (ctx.sseService) ctx.sseService.notificar('alertas');
+            res.json({ ok: true });
+        } catch (error) {
+            console.error('Erro ao dar baixa:', error);
+            res.status(500).json({ erro: error.message });
         }
-        
-        const cliente = clienteDoc.data();
-        
-        // 🔥 CORREÇÃO: substituir / por - no ID do documento
-        const documentId = referencia.replace(/\//g, '-'); // "03/2026" → "03-2026"
-        
-        await firebaseDb.collection('clientes')
-            .doc(clienteId)
-            .collection('historico_pagamentos')
-            .doc(documentId)  // ← Agora usa "03-2026"
-            .set({
-                referencia: referencia,  // mantém o formato original para exibição
-                status: 'pago',
-                forma_pagamento: forma_pagamento || null,
-                pago_em: new Date().toISOString(),
-                data_vencimento: cliente.dia_vencimento || 10
-            }, { merge: true });
-        
-        const hoje = new Date();
-        const refAtual = `${String(hoje.getMonth()+1).padStart(2,'0')}/${hoje.getFullYear()}`;
-        
-        if (referencia === refAtual) {
-            await firebaseDb.collection('clientes').doc(clienteId).update({
-                status: 'pago',
-                atualizado_em: new Date().toISOString()
-            });
-        }
-        if (ctx.sseService) ctx.sseService.notificar('clientes');
-        if (ctx.sseService) ctx.sseService.notificar('alertas');
-        res.json({ ok: true });
-    } catch (error) {
-        console.error('Erro ao dar baixa:', error);
-        res.status(500).json({ erro: error.message });
-    }
-});
+    });
 
     // =====================================================
     // ROTA: Reverter baixa
     // =====================================================
-   app.post('/api/clientes/:clienteId/historico/:ref/reverter', async (req, res) => {
-    try {
-        const { clienteId, ref } = req.params;
-        const referencia = decodeURIComponent(ref);
-        
-        // 🔥 CORREÇÃO: substituir / por - no ID do documento
-        const documentId = referencia.replace(/\//g, '-'); // "03/2026" → "03-2026"
-        
-        await firebaseDb.collection('clientes')
-            .doc(clienteId)
-            .collection('historico_pagamentos')
-            .doc(documentId)  // ← Agora usa "03-2026"
-            .update({
-                status: 'pendente',
-                pago_em: null,
-                forma_pagamento: null
-            });
-        
-        const hoje = new Date();
-        const refAtual = `${String(hoje.getMonth()+1).padStart(2,'0')}/${hoje.getFullYear()}`;
-        
-        if (referencia === refAtual) {
-            await firebaseDb.collection('clientes').doc(clienteId).update({
-                status: 'pendente',
-                atualizado_em: new Date().toISOString()
-            });
+    app.post('/api/clientes/:clienteId/historico/:ref/reverter', async (req, res) => {
+        try {
+            const { clienteId, ref } = req.params;
+            const referencia = decodeURIComponent(ref);
+            const documentId = referencia.replace(/\//g, '-');
+            
+            await firebaseDb.collection('clientes')
+                .doc(clienteId)
+                .collection('historico_pagamentos')
+                .doc(documentId)
+                .update({
+                    status: 'pendente',
+                    pago_em: null,
+                    forma_pagamento: null
+                });
+            
+            const hoje = new Date();
+            const refAtual = `${String(hoje.getMonth()+1).padStart(2,'0')}/${hoje.getFullYear()}`;
+            
+            if (referencia === refAtual) {
+                await firebaseDb.collection('clientes').doc(clienteId).update({
+                    status: 'pendente',
+                    atualizado_em: new Date().toISOString()
+                });
+            }
+            
+            res.json({ ok: true });
+        } catch (error) {
+            console.error('Erro ao reverter:', error);
+            res.status(500).json({ erro: error.message });
         }
-        
-        res.json({ ok: true });
-    } catch (error) {
-        console.error('Erro ao reverter:', error);
-        res.status(500).json({ erro: error.message });
-    }
-});
+    });
 
     // =====================================================
     // ROTAS DE RELATÓRIOS E GRÁFICOS
@@ -1182,22 +1174,15 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 .where('iniciado_em', '>=', seteDiasAtras.toISOString())
                 .get();
             
-            const dados = [];
             const diasMap = new Map();
-            
             snapshot.docs.forEach(doc => {
-                const data = doc.data();
-                const dia = data.iniciado_em?.split('T')[0];
-                if (dia) {
-                    diasMap.set(dia, (diasMap.get(dia) || 0) + 1);
-                }
+                const dia = doc.data().iniciado_em?.split('T')[0];
+                if (dia) diasMap.set(dia, (diasMap.get(dia) || 0) + 1);
             });
             
-            Array.from(diasMap.entries())
+            const dados = Array.from(diasMap.entries())
                 .sort((a, b) => a[0].localeCompare(b[0]))
-                .forEach(([dia, total]) => {
-                    dados.push({ dia, total });
-                });
+                .map(([dia, total]) => ({ dia, total }));
             
             res.json(dados);
         } catch (error) {
@@ -1214,22 +1199,15 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 .where('enviado_em', '>=', seteDiasAtras.toISOString())
                 .get();
             
-            const dados = [];
             const diasMap = new Map();
-            
             snapshot.docs.forEach(doc => {
-                const data = doc.data();
-                const dia = data.enviado_em?.split('T')[0];
-                if (dia) {
-                    diasMap.set(dia, (diasMap.get(dia) || 0) + 1);
-                }
+                const dia = doc.data().enviado_em?.split('T')[0];
+                if (dia) diasMap.set(dia, (diasMap.get(dia) || 0) + 1);
             });
             
-            Array.from(diasMap.entries())
+            const dados = Array.from(diasMap.entries())
                 .sort((a, b) => a[0].localeCompare(b[0]))
-                .forEach(([dia, total]) => {
-                    dados.push({ dia, total });
-                });
+                .map(([dia, total]) => ({ dia, total }));
             
             res.json(dados);
         } catch (error) {
@@ -1241,7 +1219,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
     // ROTAS DE CLIENTES (CRUD)
     // =====================================================
 
-    // Atualizar cliente
     app.put('/api/bases/:baseId/clientes/:clienteId', async (req, res) => {
         try {
             const { clienteId } = req.params;
@@ -1269,22 +1246,18 @@ app.delete('/api/promessas/:id', async (req, res) => {
             if (forma_pagamento !== undefined) updateData.forma_pagamento = forma_pagamento;
             if (plano !== undefined) updateData.plano = plano;
             if (status !== undefined) updateData.status = status;
-            
             updateData.atualizado_em = new Date().toISOString();
 
             await clienteRef.update(updateData);
 
             const clienteAtualizadoDoc = await clienteRef.get();
-            const clienteAtualizado = { id: clienteId, ...clienteAtualizadoDoc.data() };
-            
-            res.json(clienteAtualizado);
+            res.json({ id: clienteId, ...clienteAtualizadoDoc.data() });
         } catch (error) {
             console.error('Erro ao atualizar cliente:', error);
             res.status(500).json({ erro: error.message });
         }
     });
 
-    // Marcar cliente como pago / pendente
     app.post('/api/bases/:baseId/clientes/:clienteId/status', async (req, res) => {
         try {
             const { clienteId } = req.params;
@@ -1300,7 +1273,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
             });
             if (ctx.sseService) ctx.sseService.notificar('clientes');
 
-            // Registrar no caixa do dia quando status vira pago
             if (status === 'pago') {
                 try {
                     const clienteDoc = await firebaseDb.collection('clientes').doc(clienteId).get();
@@ -1330,7 +1302,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
         }
     });
 
-    // Deletar cliente
     app.delete('/api/bases/:baseId/clientes/:clienteId', async (req, res) => {
         try {
             const { clienteId } = req.params;
@@ -1345,7 +1316,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
             batch.delete(firebaseDb.collection('clientes').doc(clienteId));
             
             await batch.commit();
-            
             res.json({ ok: true });
         } catch (error) {
             console.error('Erro ao deletar cliente:', error);
@@ -1353,7 +1323,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
         }
     });
 
-    // Buscar cliente por ID
     app.get('/api/bases/:baseId/clientes/:clienteId', async (req, res) => {
         try {
             const { clienteId } = req.params;
@@ -1363,8 +1332,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 return res.status(404).json({ erro: 'Cliente não encontrado' });
             }
             
-            const cliente = { id: clienteDoc.id, ...clienteDoc.data() };
-            res.json(cliente);
+            res.json({ id: clienteDoc.id, ...clienteDoc.data() });
         } catch (error) {
             console.error('Erro ao buscar cliente:', error);
             res.status(500).json({ erro: error.message });
@@ -1402,10 +1370,8 @@ app.delete('/api/promessas/:id', async (req, res) => {
             if (ctx.sseService) ctx.sseService.notificar('chamados');
             const chamadoDoc = await firebaseDb.collection('chamados').doc(id).get();
             if (chamadoDoc.exists) {
-                const chamado = chamadoDoc.data();
-                await banco.dbRemoverAtendimentoHumano(chamado.numero);
+                await banco.dbRemoverAtendimentoHumano(chamadoDoc.data().numero);
             }
-            
             res.json({ sucesso: true });
         } catch (error) {
             res.status(500).json({ erro: error.message });
@@ -1420,16 +1386,10 @@ app.delete('/api/promessas/:id', async (req, res) => {
         const { status } = req.query;
         try {
             let query = firebaseDb.collection('cancelamentos');
-            if (status) {
-                query = query.where('status', '==', status);
-            }
+            if (status) query = query.where('status', '==', status);
             
-            const snapshot = await query
-                .orderBy('solicitado_em', 'desc')
-                .get();
-            
-            const cancelamentos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            res.json(cancelamentos);
+            const snapshot = await query.orderBy('solicitado_em', 'desc').get();
+            res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         } catch (error) {
             res.status(500).json({ erro: error.message });
         }
@@ -1448,9 +1408,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
             let dadosCliente = {};
             if (cliente_id) {
                 const clienteDoc = await firebaseDb.collection('clientes').doc(cliente_id).get();
-                if (clienteDoc.exists) {
-                    dadosCliente = clienteDoc.data();
-                }
+                if (clienteDoc.exists) dadosCliente = clienteDoc.data();
             }
 
             const cancelamentoRef = await firebaseDb.collection('cancelamentos').add({
@@ -1504,9 +1462,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
             const cancelamentoRef = firebaseDb.collection('cancelamentos').doc(id);
             const cancelamentoDoc = await cancelamentoRef.get();
             
-            if (!cancelamentoDoc.exists) {
-                return res.status(404).json({ erro: 'Não encontrado' });
-            }
+            if (!cancelamentoDoc.exists) return res.status(404).json({ erro: 'Não encontrado' });
             
             const cancel = cancelamentoDoc.data();
             
@@ -1524,7 +1480,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
             } else if (cancel.nome) {
                 const clientes = await banco.buscarClientePorNome(cancel.nome);
                 const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
-                
                 if (cliente) {
                     await firebaseDb.collection('clientes').doc(cliente.id).update({
                         status: 'cancelado',
@@ -1553,9 +1508,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
             const cancelamentoRef = firebaseDb.collection('cancelamentos').doc(id);
             const cancelamentoDoc = await cancelamentoRef.get();
             
-            if (!cancelamentoDoc.exists) {
-                return res.status(404).json({ erro: 'Não encontrado' });
-            }
+            if (!cancelamentoDoc.exists) return res.status(404).json({ erro: 'Não encontrado' });
             
             const cancel = cancelamentoDoc.data();
 
@@ -1585,10 +1538,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 }
             }
 
-            await cancelamentoRef.update({
-                status: 'desistiu'
-            });
-            
+            await cancelamentoRef.update({ status: 'desistiu' });
             res.json({ ok: true });
         } catch(e) {
             res.status(500).json({ erro: e.message });
@@ -1604,9 +1554,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
         }
     });
 
-
-
-
     // =====================================================
     // ROTAS DE INSTALAÇÕES
     // =====================================================
@@ -1615,16 +1562,10 @@ app.delete('/api/promessas/:id', async (req, res) => {
         const status = req.query.status;
         try {
             let query = firebaseDb.collection('novos_clientes');
-            if (status) {
-                query = query.where('status', '==', status);
-            }
+            if (status) query = query.where('status', '==', status);
             
-            const snapshot = await query
-                .orderBy('cadastrado_em', 'desc')
-                .get();
-            
-            const registros = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            res.json(registros);
+            const snapshot = await query.orderBy('cadastrado_em', 'desc').get();
+            res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         } catch (error) {
             res.status(500).json({ erro: error.message });
         }
@@ -1645,7 +1586,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
             if (disponibilidade !== undefined) updateData.disponibilidade = disponibilidade;
             if (obs !== undefined) updateData.obs = obs;
             if (status !== undefined) updateData.status = status;
-            
             updateData.atualizado_em = new Date().toISOString();
             
             await firebaseDb.collection('novos_clientes').doc(req.params.id).update(updateData);
@@ -1672,9 +1612,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
             const instalacaoRef = firebaseDb.collection('novos_clientes').doc(req.params.id);
             const instalacaoDoc = await instalacaoRef.get();
             
-            if (!instalacaoDoc.exists) {
-                return res.status(404).json({ erro: 'Não encontrado' });
-            }
+            if (!instalacaoDoc.exists) return res.status(404).json({ erro: 'Não encontrado' });
             
             const inst = instalacaoDoc.data();
             
@@ -1713,10 +1651,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
                             atualizado_em: new Date().toISOString()
                         });
                         
-                        if (isentarMesEntrada) {
-                            await isentarMesEntrada(clienteRef.id, dia);
-                        }
-                        
+                        if (isentarMesEntrada) await isentarMesEntrada(clienteRef.id, dia);
                         console.log(`✅ Cliente ${inst.nome} adicionado à base ${nomeBase} (mês isento)`);
                     }
                 }
@@ -1744,60 +1679,46 @@ app.delete('/api/promessas/:id', async (req, res) => {
         }
     });
 
-
-        // =====================================================
-// ROTA: Criar novo cliente
-// =====================================================
+    // =====================================================
+    // ROTA: Criar novo cliente
+    // =====================================================
     app.post('/api/clientes', async (req, res) => {
-    try {
-        const { base_id, nome, cpf, telefone, endereco, numero, senha, plano, dia_vencimento, observacao } = req.body;
-        
-        console.log('📝 Recebido POST /api/clientes:', { base_id, nome, telefone, dia_vencimento });
-        
-        if (!nome) {
-            return res.status(400).json({ erro: 'Nome é obrigatório' });
+        try {
+            const { base_id, nome, cpf, telefone, endereco, numero, senha, plano, dia_vencimento, observacao } = req.body;
+            
+            if (!nome) return res.status(400).json({ erro: 'Nome é obrigatório' });
+            if (!base_id) return res.status(400).json({ erro: 'base_id é obrigatório' });
+            
+            const baseIdNum = parseInt(base_id);
+            if (isNaN(baseIdNum)) return res.status(400).json({ erro: 'base_id inválido' });
+            
+            const diaVencimentoNum = dia_vencimento ? parseInt(dia_vencimento) : 10;
+            
+            const clienteRef = await firebaseDb.collection('clientes').add({
+                base_id: baseIdNum,
+                nome: nome.trim(),
+                cpf: cpf || null,
+                telefone: telefone || null,
+                endereco: endereco || null,
+                numero: numero || null,
+                senha: senha || null,
+                plano: plano || null,
+                dia_vencimento: diaVencimentoNum,
+                observacao: observacao || null,
+                status: 'pendente',
+                criado_em: new Date().toISOString(),
+                atualizado_em: new Date().toISOString()
+            });
+            
+            const novoCliente = await clienteRef.get();
+            console.log('✅ Cliente criado com ID:', clienteRef.id);
+            res.json({ id: clienteRef.id, ...novoCliente.data() });
+            
+        } catch (error) {
+            console.error('❌ Erro ao criar cliente:', error);
+            res.status(500).json({ erro: error.message });
         }
-        
-        if (!base_id) {
-            return res.status(400).json({ erro: 'base_id é obrigatório' });
-        }
-        
-        // Converte base_id para número
-        const baseIdNum = parseInt(base_id);
-        if (isNaN(baseIdNum)) {
-            return res.status(400).json({ erro: 'base_id inválido' });
-        }
-        
-        // Converte dia_vencimento para número
-        const diaVencimentoNum = dia_vencimento ? parseInt(dia_vencimento) : 10;
-        
-        const clienteRef = await firebaseDb.collection('clientes').add({
-            base_id: baseIdNum,
-            nome: nome.trim(),
-            cpf: cpf || null,
-            telefone: telefone || null,
-            endereco: endereco || null,
-            numero: numero || null,
-            senha: senha || null,
-            plano: plano || null,
-            dia_vencimento: diaVencimentoNum,
-            observacao: observacao || null,
-            status: 'pendente',
-            criado_em: new Date().toISOString(),
-            atualizado_em: new Date().toISOString()
-        });
-        
-        const novoCliente = await clienteRef.get();
-        console.log('✅ Cliente criado com ID:', clienteRef.id);
-        
-        res.json({ id: clienteRef.id, ...novoCliente.data() });
-        
-    } catch (error) {
-        console.error('❌ Erro ao criar cliente:', error);
-        res.status(500).json({ erro: error.message });
-    }
-});
-
+    });
 
     // =====================================================
     // ROTAS DE DASHBOARD
@@ -1810,7 +1731,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
             const result = await Promise.all(basesSnapshot.docs.map(async (baseDoc) => {
                 const base = { id: baseDoc.id, ...baseDoc.data() };
                 
-                // CORRIGIDO com parseInt
                 const clientesSnapshot = await firebaseDb.collection('clientes')
                     .where('base_id', '==', parseInt(baseDoc.id))
                     .get();
@@ -1825,14 +1745,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
                     else if (status === 'promessa') prom++;
                 });
                 
-                return { 
-                    id: baseDoc.id, 
-                    nome: base.nome, 
-                    total, 
-                    pagos, 
-                    pendentes: pend, 
-                    promessas: prom 
-                };
+                return { id: baseDoc.id, nome: base.nome, total, pagos, pendentes: pend, promessas: prom };
             }));
             
             const totalPendentes = result.reduce((acc, b) => acc + b.pendentes, 0);
@@ -1849,7 +1762,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
             const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
             const hoje = agoraBR.toISOString().split('T')[0];
 
-            // 1 query na coleção pagamentos_hoje — em vez de ler todos os clientes
             const snap = await firebaseDb.collection('pagamentos_hoje')
                 .where('data', '==', hoje)
                 .get();
@@ -1862,6 +1774,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
             res.json([]);
         }
     });
+
     app.get('/api/dashboard/alertas', async (req, res) => {
         try {
             const hoje = new Date();
@@ -1944,15 +1857,10 @@ app.delete('/api/promessas/:id', async (req, res) => {
             .where('status', '!=', 'cancelado')
             .get();
         
-        const totalAtivos = ativosSnapshot.size;
-
         const canceladosSnapshot = await firebaseDb.collection('clientes')
             .where('status', '==', 'cancelado')
             .get();
-        
-        const totalCancelados = canceladosSnapshot.size;
 
-        // Busca tudo de uma vez e agrupa no JS — 2 queries em vez de 12
         const [novosSnap, cancelSnap] = await Promise.all([
             firebaseDb.collection('novos_clientes').where('status', 'in', ['confirmado', 'finalizado']).get(),
             firebaseDb.collection('cancelamentos').where('status', '==', 'confirmado').get()
@@ -1974,8 +1882,8 @@ app.delete('/api/promessas/:id', async (req, res) => {
 
         res.json({
             mes: { entradas, saidas },
-            totalAtivos,
-            totalCancelados,
+            totalAtivos: ativosSnapshot.size,
+            totalCancelados: canceladosSnapshot.size,
             historico,
         });
     });
@@ -1988,13 +1896,9 @@ app.delete('/api/promessas/:id', async (req, res) => {
         const { status } = req.query;
         try {
             let query = firebaseDb.collection('carne_solicitacoes');
-            if (status) {
-                query = query.where('status', '==', status);
-            }
+            if (status) query = query.where('status', '==', status);
             
-            const snapshot = await query
-                .orderBy('solicitado_em', 'desc')
-                .get();
+            const snapshot = await query.orderBy('solicitado_em', 'desc').get();
             
             const solicitacoes = await Promise.all(snapshot.docs.map(async doc => {
                 const sol = { id: doc.id, ...doc.data() };
@@ -2026,9 +1930,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
             let dadosCli = {};
             if (cliente_id) {
                 const clienteDoc = await firebaseDb.collection('clientes').doc(cliente_id).get();
-                if (clienteDoc.exists) {
-                    dadosCli = clienteDoc.data();
-                }
+                if (clienteDoc.exists) dadosCli = clienteDoc.data();
             }
 
             if (cliente_id) {
@@ -2087,16 +1989,11 @@ app.delete('/api/promessas/:id', async (req, res) => {
             const solRef = firebaseDb.collection('carne_solicitacoes').doc(req.params.id);
             const solDoc = await solRef.get();
             
-            if (!solDoc.exists) {
-                return res.status(404).json({ erro: 'Não encontrado' });
-            }
+            if (!solDoc.exists) return res.status(404).json({ erro: 'Não encontrado' });
             
             const sol = solDoc.data();
             
-            await solRef.update({
-                status: 'entregue',
-                entregue_em: new Date().toISOString()
-            });
+            await solRef.update({ status: 'entregue', entregue_em: new Date().toISOString() });
             if (ctx.sseService) ctx.sseService.notificar('carne');
             
             if (botIniciadoEm && sol.numero) {
@@ -2136,7 +2033,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 .where('status', '==', 'pendente')
                 .get();
 
-            // Buscar bases uma vez só
             const basesSnap = await firebaseDb.collection('bases').get();
             const baseMap = {};
             basesSnap.docs.forEach(d => { baseMap[d.id] = d.data().nome; });
@@ -2147,22 +2043,16 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 const cliente = doc.data();
                 const venc = parseInt(cliente.dia_vencimento) || 10;
 
-                // Calcular dias desde o vencimento do mês atual
-                // Se ainda não venceu este mês → não é inadimplente
                 let diasAtraso;
                 if (diaHoje >= venc) {
                     diasAtraso = diaHoje - venc;
                 } else {
-                    // Ainda não venceu este mês — verificar mês anterior
                     const diasMesAnt = new Date(anoHoje, mesHoje - 1, 0).getDate();
                     diasAtraso = (diasMesAnt - venc) + diaHoje;
-                    // Se o atraso calculado for muito grande (> 40 dias),
-                    // significa que o cliente pagou no mês anterior e voltou a pendente
-                    // Nesse caso, ainda não venceu → ignorar
                     if (diasAtraso > 40) return;
                 }
 
-                if (diasAtraso < dias) return; // ainda dentro da tolerância
+                if (diasAtraso < dias) return;
 
                 inadimplentes.push({
                     id: doc.id,
@@ -2184,26 +2074,26 @@ app.delete('/api/promessas/:id', async (req, res) => {
     });
 
     // =====================================================
-    // ROTAS DE EXPORTAÇÃO - CORRIGIDA!
+    // CORREÇÃO 2: /api/exportar/clientes — usa histórico real
     // =====================================================
-    
     app.get('/api/exportar/clientes', async (req, res) => {
         try {
-            const clientesSnapshot = await firebaseDb.collection('clientes').get(); // CORRIGIDO: sem where
+            const clientesSnapshot = await firebaseDb.collection('clientes').get();
             
             const clientes = await Promise.all(clientesSnapshot.docs.map(async doc => {
-                const cliente = doc.data();
+                const cliente = { id: doc.id, ...doc.data() };
                 
                 let base_nome = null;
                 if (cliente.base_id) {
                     const baseDoc = await firebaseDb.collection('bases').doc(String(cliente.base_id)).get();
-                    if (baseDoc.exists) {
-                        base_nome = baseDoc.data().nome;
-                    }
+                    if (baseDoc.exists) base_nome = baseDoc.data().nome;
                 }
                 
+                // ✅ CORREÇÃO: busca histórico real
+                const status_calculado = await calcularStatusComHistorico(cliente);
+                
                 return {
-                    status_calculado: calcularStatusCliente(cliente),
+                    status_calculado,
                     nome: cliente.nome,
                     cpf: cliente.cpf,
                     telefone: cliente.telefone,
@@ -2234,7 +2124,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
     });
 
     // =====================================================
-    // ROTAS DE PLANILHA (JME) - CORRIGIDA!
+    // ROTAS DE PLANILHA
     // =====================================================
     
     app.get('/api/planilha/resumo', async (req, res) => {
@@ -2243,7 +2133,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
             
             for (const dia of ['10', '20', '30']) {
                 const clientesSnapshot = await firebaseDb.collection('clientes')
-                    .where('dia_vencimento', '==', parseInt(dia)) // CORRIGIDO
+                    .where('dia_vencimento', '==', parseInt(dia))
                     .get();
                 
                 const pagos = clientesSnapshot.docs.filter(doc => doc.data().status === 'pago').length;
@@ -2260,12 +2150,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
                     };
                 }).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
                 
-                result[dia] = { 
-                    pagos, 
-                    pendentes, 
-                    total: pagos + pendentes, 
-                    clientes 
-                };
+                result[dia] = { pagos, pendentes, total: pagos + pendentes, clientes };
             }
             
             res.json(result);
@@ -2329,7 +2214,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 .get();
             
             estadoQuery.docs.forEach(doc => batch.delete(doc.ref));
-            
             await batch.commit();
             
             state.limpar(numero);
@@ -2350,9 +2234,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
             const clientes = await banco.buscarClientePorNome(nome.trim());
             const cliente = clientes && clientes.length > 0 ? clientes[0] : null;
 
-            if (!cliente) {
-                return res.status(404).json({ erro: 'Cliente não encontrado' });
-            }
+            if (!cliente) return res.status(404).json({ erro: 'Cliente não encontrado' });
 
             await firebaseDb.collection('clientes').doc(cliente.id).update({
                 baixa_sgp: 1,
@@ -2366,18 +2248,14 @@ app.delete('/api/promessas/:id', async (req, res) => {
     });
 
     // =====================================================
-    // ROTAS DE MONITORAMENTO
+    // CORREÇÃO 3: /api/clientes/recentes — usa histórico real
     // =====================================================
-
-    // ── Últimos cadastrados ────────────────────────────────────────
     app.get('/api/clientes/recentes', async (req, res) => {
         const limite = parseInt(req.query.limite) || 50;
         try {
-            // Sem orderBy para não precisar de índice — ordena em memória
             const snap = await firebaseDb.collection('clientes').get();
             const clientes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-            // Enriquece com nome da base
             const basesSnap = await firebaseDb.collection('bases').get();
             const baseMap = {};
             basesSnap.docs.forEach(d => { baseMap[d.id] = d.data().nome; });
@@ -2385,11 +2263,12 @@ app.delete('/api/promessas/:id', async (req, res) => {
             clientes.forEach(c => {
                 c.base_nome = baseMap[String(c.base_id)] || null;
             });
-                clientes.forEach(c => {
-        c.status_calculado = calcularStatusCliente(c);
-    });
 
-            // Ordena por criado_em desc em memória
+            // ✅ CORREÇÃO: busca histórico real para cada cliente
+            await Promise.all(clientes.map(async c => {
+                c.status_calculado = await calcularStatusComHistorico(c);
+            }));
+
             clientes.sort((a, b) => {
                 const ta = a.criado_em || '';
                 const tb = b.criado_em || '';
@@ -2402,7 +2281,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
         }
     });
 
-    // ── Desconectar WhatsApp ────────────────────────────────────────
     app.post('/api/whatsapp/desconectar', async (req, res) => {
         try {
             await client.logout();
@@ -2436,7 +2314,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 .where('iniciado_em', '>=', hoje)
                 .get();
             
-            const metricas = {
+            res.json({
                 bot: {
                     ativo: botAtivo,
                     iniciadoEm: botIniciadoEm,
@@ -2450,17 +2328,13 @@ app.delete('/api/promessas/:id', async (req, res) => {
                     ativos: state?.stats?.()?.atendimentoHumano || 0,
                     totalHoje: atendimentosHojeSnapshot.size
                 },
-                mensagens: {
-                    ultimaHora: ultimaHoraSnapshot.size
-                },
+                mensagens: { ultimaHora: ultimaHoraSnapshot.size },
                 sistema: {
                     memoria: process.memoryUsage(),
                     cpu: process.cpuUsage(),
                     versao: process.version
                 }
-            };
-            
-            res.json(metricas);
+            });
         } catch (error) {
             res.status(500).json({ erro: error.message });
         }
@@ -2468,8 +2342,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
 
     app.get('/api/metricas/fluxos', async (req, res) => {
         try {
-            console.log('📊 Rota /api/metricas/fluxos chamada');
-            
             const seteDiasAtras = new Date();
             seteDiasAtras.setDate(seteDiasAtras.getDate() - 7);
             
@@ -2486,9 +2358,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 
                 fluxosMap.set(intencao, (fluxosMap.get(intencao) || 0) + 1);
                 
-                if (!clientesUnicosMap.has(intencao)) {
-                    clientesUnicosMap.set(intencao, new Set());
-                }
+                if (!clientesUnicosMap.has(intencao)) clientesUnicosMap.set(intencao, new Set());
                 clientesUnicosMap.get(intencao).add(data.numero);
             });
             
@@ -2499,8 +2369,6 @@ app.delete('/api/promessas/:id', async (req, res) => {
             }));
             
             fluxos.sort((a, b) => b.total - a.total);
-            
-            console.log('✅ Fluxos encontrados:', fluxos.length);
 
             res.json({
                 fluxos,
@@ -2509,10 +2377,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
 
         } catch (error) {
             console.error('❌ ERRO NA ROTA:', error);
-            res.status(500).json({ 
-                erro: error.message,
-                stack: error.stack
-            });
+            res.status(500).json({ erro: error.message, stack: error.stack });
         }
     });
 
@@ -2525,8 +2390,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 .limit(parseInt(limit))
                 .get();
             
-            const erros = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            res.json(erros);
+            res.json(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         } catch (error) {
             try {
                 const snapshot = await firebaseDb.collection('log_bot')
@@ -2551,9 +2415,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
     });
 
     app.get('/api/metricas/fila', (req, res) => {
-        res.json({
-            mensagem: 'Métricas de fila disponíveis apenas em tempo real',
-        });
+        res.json({ mensagem: 'Métricas de fila disponíveis apenas em tempo real' });
     });
 
     // =====================================================
@@ -2567,12 +2429,10 @@ app.delete('/api/promessas/:id', async (req, res) => {
     require('./backup')(app, ctx);
 
     // =====================================================
-    // FALLBACK PARA REACT ROUTER - VERSÃO CORRIGIDA
+    // FALLBACK PARA REACT ROUTER
     // =====================================================
     app.use((req, res, next) => {
-        if (req.path.startsWith('/api/')) {
-            return next();
-        }
+        if (req.path.startsWith('/api/')) return next();
         
         const indexPath = path.join(__dirname, '../frontend/dist/index.html');
         if (fs.existsSync(indexPath)) {
