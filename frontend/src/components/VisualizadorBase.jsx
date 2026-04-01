@@ -63,7 +63,11 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
   const filtrados = clientesDia.filter(c => {
     if (filtro !== "todos") {
       const statusParaComparar = c.status_calculado || c.status;
-      if (statusParaComparar !== filtro) return false;
+if (filtro === 'pendente') {
+  if (statusParaComparar !== 'pendente' && statusParaComparar !== 'em_dia') return false;
+} else {
+  if (statusParaComparar !== filtro) return false;
+}
     }
     const b = busca.toLowerCase();
     return !b || 
@@ -85,7 +89,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
     }).length,
     pend: arr.filter(c => {
       const status = c.status_calculado || c.status;
-      return status === "pendente";
+      return status === "pendente" || status === "em_dia";
     }).length,
     prom: arr.filter(c => {
       const status = c.status_calculado || c.status;

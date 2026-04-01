@@ -2,6 +2,8 @@
 
 function calcularStatusCliente(cliente) {
     if (!cliente) return 'pendente';
+
+    // Status definidos manualmente — nunca sobrescrever
     if (cliente.status === 'promessa') return 'promessa';
     if (cliente.status === 'cancelado') return 'cancelado';
 
@@ -19,18 +21,23 @@ function calcularStatusCliente(cliente) {
 
     const historico = cliente._historico || {};
 
+    // Pagou ou está isento no mês atual → pago
     if (historico[mesAtualKey]?.status === 'pago') return 'pago';
     if (historico[mesAtualKey]?.status === 'isento') return 'pago';
 
-    const limiteJanela = vencimento - 2;
-
-    if (diaHoje < vencimento) {
+    // Janela de cobrança: cliente só vira pendente 2 dias ANTES do vencimento
+    // Data 10 → pendente a partir do dia 9
+    // Data 20 → pendente a partir do dia 19
+    // Data 30 → pendente a partir do dia 29
+    if (diaHoje < vencimento - 1) {
+        // Ainda dentro do ciclo anterior
         if (historico[mesAnteriorKey]?.status === 'pago') return 'pago';
         if (historico[mesAnteriorKey]?.status === 'isento') return 'pago';
-        if (diaHoje <= limiteJanela) return 'em_dia';
-        return 'pendente';
+        // Sem histórico mas ainda no ciclo → em_dia (benefício da dúvida)
+        return 'em_dia';
     }
 
+    // Entrou na janela de cobrança
     if (historico[mesAtualKey]) return historico[mesAtualKey].status;
     return 'pendente';
 }
