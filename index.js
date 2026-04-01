@@ -56,7 +56,9 @@ instalacoesAgendadas.criarTabela();
 // =====================================================
 const DATA_PATH = (() => {
     if (process.env.RAILWAY_VOLUME_MOUNT_PATH) return process.env.RAILWAY_VOLUME_MOUNT_PATH;
-    return __dirname;
+    if (process.env.FLY_VOLUME_MOUNT_PATH) return process.env.FLY_VOLUME_MOUNT_PATH;
+    if (process.env.FLY_MOUNT_DIR) return process.env.FLY_MOUNT_DIR;
+    return '/data'; // Fallback para Fly.io
 })();
 
 console.log(`📁 Dados persistentes em: ${DATA_PATH}`);
@@ -324,7 +326,6 @@ client.on('disconnected', (reason) => {
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'frontend/dist')));
 
 app.get('/qr', async (req, res) => {
     if (!ultimoQR) return res.status(404).send('Nenhum QR Code disponível.');
@@ -1212,72 +1213,7 @@ setInterval(() => { if (new Date().getHours() === 3) limparLogsAntigos(); }, 60 
 // RESET MENSAL: todo dia 1 às 00:05 (horário Brasília)
 // Volta todos os clientes 'pago' para 'pendente'
 // =====================================================
-setInterval(async () => {
-    const agora = new Date();
-    const agoraBR = new Date(agora.getTime() - 3 * 60 * 60 * 1000);
-    const diaBR   = agoraBR.getUTCDate();
-    const horaBR  = agoraBR.getUTCHours();
-    const minBR   = agoraBR.getUTCMinutes();
 
-    // Verifica promessas vencidas todo dia às 0h01 (UTC-3)
-    if (horaBR === 0 && minBR === 1) {
-        await ctxRotas.verificarPromessasVencidas().catch(() => {});
-    }
-
-    // Reset de atendimentos humanos todo dia às 20h (fim do expediente)
-    if (horaBR === 20 && minBR === 0) {
-        try {
-            const atendimentos = await banco.dbCarregarAtendimentosHumanos();
-            if (atendimentos.length > 0) {
-                for (const a of atendimentos) {
-                    state.setAtendimentoHumano(a.numero, false);
-                    state.encerrarFluxo(a.numero);
-                    await banco.dbRemoverAtendimentoHumano(a.numero).catch(() => {});
-                }
-                sseService.broadcast();
-                console.log(`🔄 Reset de ${atendimentos.length} atendimento(s) humano(s) ao fim do expediente`);
-            }
-        } catch(e) {
-            console.error('Erro no reset de atendimentos:', e);
-        }
-    }
-
-    if (diaBR === 1 && horaBR === 0 && minBR === 5) {
-        console.log('📅 Reset mensal: voltando clientes pagos para pendente...');
-        try {
-            const snap = await firebaseDb.collection('clientes')
-                .where('status', '==', 'pago')
-                .get();
-
-            if (snap.empty) {
-                console.log('📅 Nenhum cliente pago para resetar.');
-                return;
-            }
-
-            // Processa em batches de 500 (limite do Firestore)
-            const batch_size = 500;
-            for (let i = 0; i < snap.docs.length; i += batch_size) {
-                const batch = firebaseDb.batch();
-                snap.docs.slice(i, i + batch_size).forEach(doc => {
-                    batch.update(doc.ref, {
-                        status: 'pendente',
-                        atualizado_em: new Date().toISOString()
-                    });
-                });
-                await batch.commit();
-            }
-            console.log(`📅 Reset mensal concluído: ${snap.size} clientes voltaram para pendente.`);
-
-            for (const adm of ADMINISTRADORES) {
-                await client.sendMessage(adm,
-                    `📅 *RESET MENSAL CONCLUÍDO*\n\n${snap.size} clientes voltaram para pendente.\nA cobrança automática já pode rodar normalmente!`
-                ).catch(() => {});
-            }
-        } catch(e) {
-            console.error('Erro no reset mensal:', e);
-        }
-    }
-}, 60 * 1000); // verifica a cada 1 min
 
 // =====================================================
 // PROMESSAS DO DIA
