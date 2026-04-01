@@ -16,7 +16,7 @@ export function PagePromessas() {
         setLoading(true);
         setErro('');
         try {
-            const url = `/api/promessas${filtroStatus !== 'todos' ? `?status=${filtroStatus}` : ''}`;
+            const url = `${API}/api/promessas${filtroStatus !== 'todos' ? `?status=${filtroStatus}` : ''}`;
             const response = await fetch(url);
             
             if (!response.ok) {
