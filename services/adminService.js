@@ -1,5 +1,7 @@
 // services/adminService.js - COMPLETO E CORRIGIDO
 
+const { calcularStatusCliente } = require('./statusService');
+
 // =====================================================
 // FUNÇÃO PARA PERGUNTAR AOS ADMINS (COM VOTAÇÃO)
 // =====================================================
@@ -185,18 +187,26 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
                 continue;
             }
             
-            // 🔥 BUSCA CLIENTES PENDENTES DESTE DIA
+            // 🔥 BUSCA CLIENTES COM VENCIMENTO NESTE DIA (sem filtrar por status)
             const clientesSnapshot = await firebaseDb.collection('clientes')
                 .where('dia_vencimento', '==', venc)
-                .where('status', '==', 'pendente')
                 .get();
             
             if (clientesSnapshot.size > 0) {
-                // 🔥 FILTRA CLIENTES QUE NÃO TÊM CARNÊ PENDENTE
+                // 🔥 FILTRA CLIENTES QUE REALMENTE PRECISAM SER COBRADOS
                 const clientesValidos = [];
                 
                 for (const doc of clientesSnapshot.docs) {
                     const cliente = doc.data();
+                    
+                    // 🔥 VERIFICA STATUS REAL (baseado no histórico)
+                    const statusReal = calcularStatusCliente(cliente);
+                    
+                    // Só cobra se NÃO pagou este mês
+                    if (statusReal === 'pago') {
+                        console.log(`   ✅ Cliente ${cliente.nome} já pagou este mês - não cobrar`);
+                        continue;
+                    }
                     
                     // ⚠️ VERIFICA SE TEM CARNÊ SOLICITADO PENDENTE
                     const carnesPendentes = await firebaseDb.collection('carne_solicitacoes')

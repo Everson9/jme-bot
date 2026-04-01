@@ -12,6 +12,7 @@ const QRCode = require('qrcode');
 const Groq = require('groq-sdk');
 const express = require('express');
 const cors = require('cors');
+const { calcularStatusCliente } = require('./services/statusService');
 
 // =====================================================
 // SERVIÇOS MODULARIZADOS

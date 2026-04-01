@@ -1,5 +1,6 @@
 // routes/index.js
 module.exports = function setupRoutes(app, ctx) {
+    const { calcularStatusCliente } = require('../services/statusService');
     const {
         db: firebaseDb,
         banco,
@@ -413,6 +414,11 @@ app.get('/api/status', (req, res) => {
       }
       return cliente;
     });
+
+     clientes = clientes.map(cliente => ({
+        ...cliente,
+        status_calculado: calcularStatusCliente(cliente)
+    }));
     
     res.json(clientes);
     
@@ -2197,6 +2203,7 @@ app.delete('/api/promessas/:id', async (req, res) => {
                 }
                 
                 return {
+                    status_calculado: calcularStatusCliente(cliente),
                     nome: cliente.nome,
                     cpf: cliente.cpf,
                     telefone: cliente.telefone,
@@ -2378,6 +2385,9 @@ app.delete('/api/promessas/:id', async (req, res) => {
             clientes.forEach(c => {
                 c.base_nome = baseMap[String(c.base_id)] || null;
             });
+                clientes.forEach(c => {
+        c.status_calculado = calcularStatusCliente(c);
+    });
 
             // Ordena por criado_em desc em memória
             clientes.sort((a, b) => {

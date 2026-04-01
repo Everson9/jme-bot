@@ -40,7 +40,8 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
     if (!silencioso) setLoading(true);
     try {
       const r = await fetch(`${API}/api/bases/${base.id}/clientes`);
-      setClientes(await r.json());
+      const data = await r.json();
+      setClientes(data);
     } catch (e) {
       console.error(e);
     }
@@ -60,7 +61,10 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
 
   const clientesDia = clientes.filter(c => c.dia_vencimento === diaAtivo);
   const filtrados = clientesDia.filter(c => {
-    if (filtro !== "todos" && c.status !== filtro) return false;
+    if (filtro !== "todos") {
+      const statusParaComparar = c.status_calculado || c.status;
+      if (statusParaComparar !== filtro) return false;
+    }
     const b = busca.toLowerCase();
     return !b || 
       (c.nome || "").toLowerCase().includes(b) || 
@@ -75,11 +79,23 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
   const totalPaginas = Math.ceil(filtrados.length / itensPorPagina);
 
   const stats = (arr) => ({
-    pagos: arr.filter(c => c.status === "pago").length,
-    pend: arr.filter(c => c.status === "pendente").length,
-    prom: arr.filter(c => c.status === "promessa").length,
+    pagos: arr.filter(c => {
+      const status = c.status_calculado || c.status;
+      return status === "pago";
+    }).length,
+    pend: arr.filter(c => {
+      const status = c.status_calculado || c.status;
+      return status === "pendente";
+    }).length,
+    prom: arr.filter(c => {
+      const status = c.status_calculado || c.status;
+      return status === "promessa";
+    }).length,
     total: arr.length,
-    pct: arr.length > 0 ? Math.round((arr.filter(c => c.status === "pago").length / arr.length) * 100) : 0,
+    pct: arr.length > 0 ? Math.round((arr.filter(c => {
+      const status = c.status_calculado || c.status;
+      return status === "pago";
+    }).length / arr.length) * 100) : 0,
   });
 
   const s = stats(clientesDia);
@@ -107,7 +123,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
         NumeroCasa: c.numero_casa || "",
         Plano: c.plano || "",
         FormaPgto: c.forma_pagamento || "",
-        Status: c.status || "",
+        Status: c.status_calculado || c.status || "",
         PPPoE: c.pppoe || "",
         Vencimento: c.dia_vencimento ? "Dia " + c.dia_vencimento : "",
         Base: c.base || "",
@@ -176,7 +192,10 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
         <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
           {base.dias.sort((a, b) => a - b).map(d => {
             const arr = clientes.filter(c => c.dia_vencimento === d);
-            const pg = arr.filter(c => c.status === "pago").length;
+            const pg = arr.filter(c => {
+              const status = c.status_calculado || c.status;
+              return status === "pago";
+            }).length;
             return (
               <button
                 key={d}
@@ -224,7 +243,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
         </div>
       </div>
 
-      {/* Resto do componente (igual ao VisualizadorBaseJME) */}
+      {/* Resto do componente */}
       <Card style={{ background: '#0f1117', borderRadius: 12, overflow: 'hidden' }}>
         <div style={{ padding: '16px', borderBottom: '1px solid #2d3148' }}>
           <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -296,7 +315,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
                     <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', fontSize: 11 }}>Endereço</th>
                     <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', fontSize: 11 }}>Plano</th>
                     <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', fontSize: 11 }}>Status</th>
-                  </tr>
+                   </tr>
                 </thead>
                 <tbody>
                   {clientesPagina.map(c => (
@@ -305,7 +324,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
                       <td style={{ padding: '12px', fontFamily: 'monospace', fontSize: 12, color: '#94a3b8' }}>{c.telefone || "—"}</td>
                       <td style={{ padding: '12px', color: '#94a3b8' }}>{c.endereco || "—"}</td>
                       <td style={{ padding: '12px' }}>{c.plano || "—"}</td>
-                      <td style={{ padding: '12px' }}><BadgeCliente status={c.status} /></td>
+                      <td style={{ padding: '12px' }}><BadgeCliente status={c.status_calculado || c.status} /></td>
                     </tr>
                   ))}
                 </tbody>
