@@ -2,8 +2,7 @@ app = 'jme-bot-backend'
 primary_region = 'gru'
 
 [build]
-  [build.args]
-    NODE_VERSION = "22"
+  dockerfile = "Dockerfile"
 
 [env]
   NODE_ENV = 'production'
@@ -16,7 +15,7 @@ primary_region = 'gru'
   min_machines_running = 1
 
   [http_service.http_options]
-    idle_timeout = "600s"
+    idle_timeout = 600
 
 [mounts]
   source = "whatsapp_session"
