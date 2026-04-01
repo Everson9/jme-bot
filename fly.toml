@@ -1,0 +1,25 @@
+app = "jme-bot-backend"
+
+[build]
+  [build.args]
+    NODE_VERSION = "22"
+
+[env]
+  NODE_ENV = "production"
+
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls"]
+  
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
