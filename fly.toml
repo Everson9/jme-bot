@@ -2,6 +2,8 @@ app = 'jme-bot-backend'
 primary_region = 'gru'
 
 [build]
+  [build.args]
+    NODE_VERSION = "22"
 
 [env]
   NODE_ENV = 'production'
