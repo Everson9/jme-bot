@@ -2419,6 +2419,77 @@ module.exports = function setupRoutes(app, ctx) {
     });
 
     // =====================================================
+    // ROTA: Dar baixa retroativa em lote (mês anterior)
+    // POST /api/admin/baixa-retroativa
+    // Body: { dia_vencimento: 30, mes: "03", ano: 2026 }
+    // =====================================================
+    app.post('/api/admin/baixa-retroativa', async (req, res) => {
+        const { dia_vencimento, mes, ano } = req.body;
+
+        if (!dia_vencimento || !mes || !ano) {
+            return res.status(400).json({ erro: 'dia_vencimento, mes e ano são obrigatórios' });
+        }
+
+        const diaNum = parseInt(dia_vencimento);
+        const mesStr = String(mes).padStart(2, '0');
+        const anoNum = parseInt(ano);
+        const docId = `${mesStr}-${anoNum}`;
+        const referencia = `${mesStr}/${anoNum}`;
+
+        try {
+            const snapshot = await firebaseDb.collection('clientes')
+                .where('dia_vencimento', '==', diaNum)
+                .get();
+
+            if (snapshot.empty) {
+                return res.json({ ok: true, processados: 0, pulados: 0, mensagem: 'Nenhum cliente encontrado' });
+            }
+
+            let processados = 0;
+            let pulados = 0;
+
+            for (const doc of snapshot.docs) {
+                const clienteId = doc.id;
+                const historicoRef = firebaseDb.collection('clientes')
+                    .doc(clienteId)
+                    .collection('historico_pagamentos')
+                    .doc(docId);
+
+                const historicoDoc = await historicoRef.get();
+
+                if (historicoDoc.exists) {
+                    pulados++;
+                    continue;
+                }
+
+                await historicoRef.set({
+                    referencia: referencia,
+                    status: 'pago',
+                    forma_pagamento: 'Retroativo',
+                    pago_em: new Date().toISOString(),
+                    data_vencimento: diaNum
+                });
+
+                processados++;
+            }
+
+            console.log(`✅ Baixa retroativa ${referencia} dia ${diaNum}: ${processados} processados, ${pulados} pulados`);
+
+            res.json({
+                ok: true,
+                processados,
+                pulados,
+                total: snapshot.size,
+                mensagem: `${processados} clientes com baixa em ${referencia}. ${pulados} já tinham registro.`
+            });
+
+        } catch (e) {
+            console.error('Erro na baixa retroativa:', e);
+            res.status(500).json({ erro: e.message });
+        }
+    });
+
+    // =====================================================
     // IMPORTAR ROTAS ADICIONAIS
     // =====================================================
     
