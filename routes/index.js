@@ -302,10 +302,10 @@ module.exports = function setupRoutes(app, ctx) {
 
             // status_calculado usa apenas o campo status do Firebase — sem buscar histórico
             // O campo status é mantido atualizado pelo backend quando o cliente paga/reverte
-            clientes = clientes.map(cliente => ({
+                clientes = clientes.map(cliente => ({
                 ...cliente,
-                status_calculado: calcularStatusCliente({ ...cliente, _historico: {} })
-            }));
+                status_calculado: cliente.status || 'pendente'
+                }));
 
             res.json(clientes);
         } catch(e) {
@@ -1317,7 +1317,7 @@ module.exports = function setupRoutes(app, ctx) {
             basesSnap.docs.forEach(d => { baseMap[d.id] = d.data().nome; });
             clientes.forEach(c => {
                 c.base_nome = baseMap[String(c.base_id)] || null;
-                c.status_calculado = calcularStatusCliente({ ...c, _historico: {} });
+                c.status_calculado = c.status || 'pendente';
             });
             clientes.sort((a, b) => (b.criado_em || '').localeCompare(a.criado_em || ''));
             res.json(clientes.slice(0, limite));
