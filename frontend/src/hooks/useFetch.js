@@ -2,6 +2,8 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 export function useFetch(url, intervalo = null) {
   const [data, setData] = useState(null);
@@ -11,7 +13,7 @@ export function useFetch(url, intervalo = null) {
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const r = await fetch(API + url);
+      const r = await fetch(API + url, { headers: authHeaders() });
       
       if (!r.ok) {
         throw new Error(`HTTP ${r.status}`);

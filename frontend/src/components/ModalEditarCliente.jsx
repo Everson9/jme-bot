@@ -4,6 +4,7 @@ import { BadgeCliente } from './BadgeCliente';
 import { PainelDatas } from './PainelDatas';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
 
 export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
   const [form, setForm] = useState({
@@ -58,7 +59,7 @@ export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
       // ✅ Rota correta para editar cliente
       const r = await fetch(`${API}/api/bases/${baseId}/clientes/${cliente.id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { "x-api-key": API_KEY } : {}) },
         body: JSON.stringify({ ...form, dia_vencimento: parseInt(form.dia_vencimento) }),
       });
       
@@ -87,7 +88,7 @@ export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
     try {
       const r = await fetch(`${API}/api/carne`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { "x-api-key": API_KEY } : {}) },
         body: JSON.stringify({
           cliente_id: cliente.id,
           nome: form.nome,
@@ -117,7 +118,7 @@ export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
     try {
       const r = await fetch(`${API}/api/promessas`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { "x-api-key": API_KEY } : {}) },
         body: JSON.stringify({
           nome: form.nome,
           numero: form.telefone || null,
@@ -128,7 +129,7 @@ export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
       if (json.ok) {
         await fetch(`${API}/api/bases/${baseId}/clientes/${cliente.id}/status`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(API_KEY ? { "x-api-key": API_KEY } : {}) },
           body: JSON.stringify({ status: "promessa" }),
         });
         setPromMsg({ ok: true, txt: `✅ Promessa registrada para ${dataPromessa}` });
@@ -146,7 +147,7 @@ export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
     const novoStatus = form.status === "pago" ? "pendente" : "pago";
     await fetch(`${API}/api/bases/${baseId}/clientes/${cliente.id}/status`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { "x-api-key": API_KEY } : {}) },
       body: JSON.stringify({ status: novoStatus }),
     });
     set("status", novoStatus);
@@ -538,7 +539,7 @@ export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
                       // Cancelamento atômico — /api/cancelamentos já deleta o cliente da base
                       const r = await fetch(`${API}/api/cancelamentos`, {
                         method: "POST",
-                        headers: { "Content-Type": "application/json" },
+                        headers: { "Content-Type": "application/json", ...(API_KEY ? { "x-api-key": API_KEY } : {}) },
                         body: JSON.stringify({
                           cliente_id: cliente.id,
                           base_id: baseId,

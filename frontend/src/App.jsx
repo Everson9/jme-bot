@@ -25,6 +25,8 @@ import { PageInadimplentes } from './pages/inadimplentes';
 import { PageAgendamentos } from './pages/agendamentos';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 function AppContent() {
   const [bases, setBases] = useState([]);

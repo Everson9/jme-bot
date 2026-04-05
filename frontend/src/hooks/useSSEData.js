@@ -7,6 +7,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 // SSE singleton — uma conexão só para toda a app
 let _es = null;
@@ -38,7 +40,7 @@ export function useSSEData(url, recurso) {
     const load = useCallback(async () => {
         try {
             setLoading(true);
-            const r = await fetch(API + url);
+            const r = await fetch(API + url, { headers: authHeaders() });
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const json = await r.json();
             if (mountedRef.current) { setData(json); setError(null); }

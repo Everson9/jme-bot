@@ -71,6 +71,12 @@ function calcularStatusCliente(cliente, _historico = null) {
 
     if (reg) {
         if (reg.status === 'pago' || reg.status === 'isento') return 'pago';
+        // Se pendente e já passou 5+ dias do vencimento → inadimplente
+        if (reg.status === 'pendente') {
+            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+            const diaHoje = agoraBR.getUTCDate();
+            if (diaHoje >= diaVencimento && (diaHoje - diaVencimento) >= 5) return 'inadimplente';
+        }
         return reg.status || 'pendente';
     }
 
@@ -82,12 +88,13 @@ function calcularStatusCliente(cliente, _historico = null) {
     if (diaVencimento === 10 && diaHoje < 10) return 'em_dia';
     if (diaVencimento === 20 && diaHoje < 20) return 'em_dia';
     if (diaVencimento === 30) {
-        // Data 30: ainda "em dia" se não passou o dia 30 do mês atual
-        // OU se é dia 1-5 do mês seguinte (getCicloAtual já aponta pro mês anterior)
         const { mesRef } = ciclo;
         if (mesRef === mesHoje && diaHoje < 30) return 'em_dia';
-        if (mesRef !== mesHoje && diaHoje <= 5)  return 'em_dia'; // tolerância
+        if (mesRef !== mesHoje && diaHoje <= 5)  return 'em_dia';
     }
+
+    // Sem registro e já passou do vencimento com 5+ dias → inadimplente
+    if (diaHoje >= diaVencimento && (diaHoje - diaVencimento) >= 5) return 'inadimplente';
 
     return 'pendente';
 }

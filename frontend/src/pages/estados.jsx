@@ -6,6 +6,8 @@ import { Spinner } from '../components/Spinner';
 import { fmtTel } from '../utils/formatadores';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 export function PageEstados() {
   const { data, loading, refetch } = useSSEData("/api/estados", "estados");
@@ -19,7 +21,7 @@ export function PageEstados() {
     if (!confirm(`Resetar conversa de ${fmtTel(numero)}?`)) return;
     setResetando(p => ({ ...p, [numero]: true }));
     try {
-      await fetch(`${API}/api/estados/${encodeURIComponent(numero)}/reset`, { method: "POST" });
+      await fetch(`${API}/api/estados/${encodeURIComponent(numero)}/reset`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() } });
       setTimeout(refetch, 500);
     } catch (e) {
       console.error(e);

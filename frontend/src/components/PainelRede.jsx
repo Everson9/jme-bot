@@ -4,6 +4,8 @@ import { Card } from './Card';
 import { REDE_LABELS } from '../constants';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 export const PainelRede = ({ situacaoRede: inicial, previsaoRetorno: prevInicial, onAtualizar }) => {
   const [status, setStatus] = useState(inicial || "normal");
@@ -14,8 +16,7 @@ export const PainelRede = ({ situacaoRede: inicial, previsaoRetorno: prevInicial
 
   // Busca o status real ao montar — não depende do SSE chegar a tempo
   useEffect(() => {
-    const API = import.meta.env.VITE_API_URL || "";
-    fetch(API + "/api/rede")
+    fetch(API + "/api/rede", { headers: authHeaders() })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d) {
@@ -40,7 +41,7 @@ export const PainelRede = ({ situacaoRede: inicial, previsaoRetorno: prevInicial
     try {
       const r = await fetch(API + "/api/rede", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ status, previsao: previsao || "sem previsão", motivo: motivo || "" })
       });
       if (r.ok) {

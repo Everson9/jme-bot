@@ -2,6 +2,8 @@
 import React, { useState } from 'react';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 export const ModalCriarBase = ({ onClose, onCriada }) => {
   const [form, setForm] = useState({
@@ -36,7 +38,7 @@ export const ModalCriarBase = ({ onClose, onCriada }) => {
     try {
       const r = await fetch(API + "/api/bases", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(form)
       });
       const json = await r.json();

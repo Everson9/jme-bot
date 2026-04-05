@@ -3,6 +3,8 @@ import { Card } from '../components/Card';
 import { Spinner } from '../components/Spinner';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 export function PageBoasVindas() {
   const [clientes, setClientes] = useState([]);
@@ -19,7 +21,7 @@ export function PageBoasVindas() {
   const carregarClientes = async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${API}/api/clientes/recentes?limite=15`);
+      const r = await fetch(`${API}/api/clientes/recentes?limite=15`, { headers: authHeaders() });
       if (r.ok) setClientes(await r.json());
     } catch(_) {}
     setLoading(false);
@@ -45,7 +47,7 @@ export function PageBoasVindas() {
     try {
       const r = await fetch(`${API}/api/boas-vindas/enviar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
           cliente_id: cliente.id,
           mensagem_carne: solicitarCarne ? (obsCarne || 'Solicitado via painel na boas-vindas') : null

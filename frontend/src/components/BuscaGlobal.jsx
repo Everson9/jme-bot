@@ -3,6 +3,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 export const BuscaGlobal = () => {
   const [q, setQ] = useState("");
@@ -28,7 +30,7 @@ export const BuscaGlobal = () => {
     const timer = setTimeout(async () => {
       setBuscando(true);
       try {
-        const r = await fetch(`${API}/api/clientes/busca-global?q=${encodeURIComponent(q)}`);
+        const r = await fetch(`${API}/api/clientes/busca-global?q=${encodeURIComponent(q)}`, { headers: authHeaders() });
         const json = await r.json();
         setResultados(json);
         setAberto(true);

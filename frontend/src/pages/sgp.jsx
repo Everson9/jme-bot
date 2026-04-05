@@ -6,6 +6,8 @@ import { Spinner } from '../components/Spinner';
 import { Badge } from '../components/Badge';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 export function PageSGP() {
   const { data: planilha, loading, refetch } = useSSEData("/api/planilha/resumo", "clientes");
@@ -28,7 +30,7 @@ export function PageSGP() {
     try {
       const r = await fetch(API + "/api/sgp/confirmar", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ nome, aba })
       });
       if (r.ok) {

@@ -3,6 +3,8 @@ import { useFetch } from '../hooks/useFetch';
 import { Pagination } from '../components/Pagination';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 export function PageAgendamentos() {
     const [filtroData, setFiltroData] = useState('todos');
@@ -21,7 +23,7 @@ export function PageAgendamentos() {
         setLoading(true);
         try {
             const url = `/api/agendamentos?data=${filtroData}&status=${filtroStatus}`;
-            const response = await fetch(url);
+            const response = await fetch(url, { headers: authHeaders() });
             
             // Verifica se a resposta foi bem sucedida
             if (!response.ok) {
@@ -52,7 +54,7 @@ export function PageAgendamentos() {
     async function concluirAgendamento(id) {
         if (confirm('Marcar como concluído?')) {
             try {
-                await fetch(API + `/api/agendamentos/${id}/concluir`, { method: 'POST' });
+                await fetch(API + `/api/agendamentos/${id}/concluir`, { method: 'POST', headers: { "Content-Type": "application/json", ...authHeaders() } });
                 fetchAgendamentos();
             } catch (error) {
                 console.error('Erro ao concluir agendamento:', error);
@@ -63,7 +65,7 @@ export function PageAgendamentos() {
     async function cancelarAgendamento(id) {
         if (confirm('Cancelar este agendamento?')) {
             try {
-                await fetch(API + `/api/agendamentos/${id}/cancelar`, { method: 'POST' });
+                await fetch(API + `/api/agendamentos/${id}/cancelar`, { method: 'POST', headers: { "Content-Type": "application/json", ...authHeaders() } });
                 fetchAgendamentos();
             } catch (error) {
                 console.error('Erro ao cancelar agendamento:', error);

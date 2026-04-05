@@ -2,6 +2,8 @@
 import React, { useState, useEffect } from 'react';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 export function PageQR({ status }) {
   const [qrUrl, setQrUrl] = useState(null);
@@ -25,7 +27,7 @@ export function PageQR({ status }) {
     if (!confirm('Desconectar o WhatsApp? Você precisará escanear o QR novamente.')) return;
     setDesconectando(true);
     try {
-      const r = await fetch(`${API}/api/whatsapp/desconectar`, { method: 'POST' });
+      const r = await fetch(`${API}/api/whatsapp/desconectar`, { method: 'POST', headers: { "Content-Type": "application/json", ...authHeaders() } });
       const j = await r.json();
       setMsg(j.ok ? { tipo: 'ok', texto: 'Desconectado com sucesso. Atualize a página em alguns segundos.' }
                   : { tipo: 'erro', texto: j.erro || 'Erro ao desconectar' });

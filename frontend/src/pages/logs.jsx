@@ -3,6 +3,8 @@ import { usePagination } from '../hooks/usePagination';
 import { Pagination } from '../components/Pagination';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 export function PageLogs() {
     const [filtroTipo, setFiltroTipo] = useState('');
@@ -14,7 +16,7 @@ export function PageLogs() {
         let url = `${API}/api/logs/bot?limit=${pageSize}&offset=${offset}`;
         if (filtroNumero) url += `&numero=${encodeURIComponent(filtroNumero)}`;
         
-        const response = await fetch(url);
+        const response = await fetch(url, { headers: authHeaders() });
         const json = await response.json();
         return {
             data: json.rows || [],

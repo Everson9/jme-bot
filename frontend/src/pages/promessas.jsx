@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -17,7 +19,7 @@ export function PagePromessas() {
         setErro('');
         try {
             const url = `${API}/api/promessas${filtroStatus !== 'todos' ? `?status=${filtroStatus}` : ''}`;
-            const response = await fetch(url);
+            const response = await fetch(url, { headers: authHeaders() });
             
             if (!response.ok) {
                 throw new Error(`Erro HTTP: ${response.status}`);
@@ -37,9 +39,9 @@ export function PagePromessas() {
         if (!confirm('Confirmar pagamento desta promessa?')) return;
         
         try {
-            const response = await fetch(API + `/api/promessas/${id}/pago`, { 
+            const response = await fetch(API + `/api/promessas/${id}/pago`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 'Content-Type': 'application/json', ...authHeaders() }
             });
             
             const data = await response.json();
@@ -60,9 +62,9 @@ export function PagePromessas() {
         if (!confirm('Cancelar esta promessa?')) return;
         
         try {
-            const response = await fetch(API + `/api/promessas/${id}/cancelar`, { 
+            const response = await fetch(API + `/api/promessas/${id}/cancelar`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 'Content-Type': 'application/json', ...authHeaders() }
             });
             
             const data = await response.json();

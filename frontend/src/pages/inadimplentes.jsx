@@ -1,32 +1,48 @@
 // src/pages/inadimplentes.jsx
 import React, { useState } from 'react';
+import { useFetch } from '../hooks/useFetch';
 import { useSSEData } from '../hooks/useSSEData';
 import { Card } from '../components/Card';
 import { Spinner } from '../components/Spinner';
+import { api } from '../api/client';
 import * as XLSX from "https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs";
 
-const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 // ── Aba 1: Inadimplentes por dias ──────────────────────────
 function AbaInadimplentes() {
   const [dias, setDias] = useState(5);
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
 
-  React.useEffect(() => {
+  // Usa fetch manual porque a URL muda com o parâmetro dias
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const carregar = async () => {
     setLoading(true);
-    fetch(`${API}/api/relatorio/inadimplentes?dias=${dias}`)
-      .then(r => r.json())
-      .then(d => { setData(d); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [dias]);
+    try {
+      const resp = await fetch(`${api.API}/api/relatorio/inadimplentes?dias=${dias}`, {
+        headers: { ...authHeaders() },
+      });
+      if (resp.ok) {
+        const json = await resp.json();
+        setData(json);
+      }
+    } catch(e) { /* ignora */ }
+    setLoading(false);
+  };
+
+  React.useEffect(() => { carregar(); }, [dias]);
 
   const exportar = () => {
     if (!data?.length) return;
     const rows = data.map(c => ({
-      Nome: c.nome, Telefone: c.telefone || "",
-      Plano: c.plano || "", Vencimento: c.dia_vencimento ? `Dia ${c.dia_vencimento}` : "",
-      Base: c.base_nome || "", "Dias pendente": c.dias_pendente,
+      Nome: c.nome,
+      Telefone: c.telefone || "",
+      Plano: c.plano || "",
+      Vencimento: c.dia_vencimento ? `Dia ${c.dia_vencimento}` : "",
+      Base: c.base_nome || "",
+      "Dias inadimplente": c.dias_pendente,
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
@@ -34,39 +50,75 @@ function AbaInadimplentes() {
     XLSX.writeFile(wb, `inadimplentes_${new Date().toLocaleDateString("pt-BR").replace(/\//g, "-")}.xlsx`);
   };
 
+  const corPorDias = (d) => {
+    if (d > 20) return '#ef4444';
+    if (d > 15) return '#f59e0b';
+    if (d > 10) return '#fbbf24';
+    return '#64748b';
+  };
+
+  // Resumo por vencimento
+  const porVencimento = [10, 20, 30].map(venc => {
+    const grupo = data.filter(c => c.dia_vencimento === venc);
+    if (!grupo.length) return null;
+    const max = Math.max(...grupo.map(c => c.dias_pendente));
+    return { venc, total: grupo.length, max };
+  }).filter(Boolean);
+
   return (
     <>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#94a3b8' }}>
-          Pendente há mais de
+          Inadimplente há mais de
           <select value={dias} onChange={e => setDias(Number(e.target.value))}
             style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid #374151',
               background: '#252836', color: '#e2e8f0', fontSize: 13 }}>
             {[3, 5, 7, 10, 15, 30].map(d => <option key={d} value={d}>{d} dias</option>)}
           </select>
         </div>
-        <button onClick={exportar}
+        <button onClick={exportar} disabled={!data?.length}
           style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid rgba(34,197,94,.3)',
-            background: 'rgba(34,197,94,.08)', color: '#4ade80', fontWeight: 600,
-            fontSize: 13, cursor: 'pointer' }}>
-          📥 Exportar
+            background: data?.length ? 'rgba(34,197,94,.08)' : 'rgba(100,116,139,.1)',
+            color: data?.length ? '#4ade80' : '#475569', fontWeight: 600,
+            fontSize: 13, cursor: data?.length ? 'pointer' : 'not-allowed' }}>
+          📥 Exportar Excel
+        </button>
+        <button onClick={carregar}
+          style={{ padding: '6px 12px', borderRadius: 8, border: 'none',
+            background: 'rgba(148,163,184,.1)', color: '#94a3b8', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+          ↻ Atualizar
         </button>
       </div>
 
+      {/* Resumo por vencimento */}
+      {!loading && porVencimento.length > 0 && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+          {porVencimento.map(g => (
+            <div key={g.venc} style={{ background: '#0f1117', borderRadius: 10, padding: '10px 16px',
+              border: `1px solid ${corPorDias(g.max)}33` }}>
+              <span style={{ fontWeight: 800, fontSize: 18, color: corPorDias(g.max) }}>{g.total}</span>
+              <span style={{ fontSize: 12, color: '#64748b', marginLeft: 6 }}>venc. {g.venc} • até {g.max}d</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {loading ? <Spinner /> : !data?.length ? (
         <Card><div className="td-empty" style={{ padding: 40, textAlign: 'center' }}>
-          🎉 Nenhum inadimplente há mais de {dias} dias
+          <div style={{ fontSize: 36 }}>🎉</div>
+          <div style={{ marginTop: 8 }}>Nenhum inadimplente há mais de {dias} dias</div>
         </div></Card>
       ) : (
         <Card style={{ padding: 0 }}>
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid #2d3148', fontSize: 13, color: '#94a3b8' }}>
-            {data.length} cliente{data.length !== 1 ? 's' : ''} pendente{data.length !== 1 ? 's' : ''} há mais de {dias} dias
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid #2d3148', fontSize: 13, color: '#94a3b8', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>{data.length} cliente{data.length !== 1 ? 's' : ''} inadimplente{data.length !== 1 ? 's' : ''}</span>
+            <span style={{ color: '#f87171' }}>⚠️ Apos {dias} dias do vencimento</span>
           </div>
           <div className="tabela-scroll">
             <table className="tabela">
               <thead><tr>
                 <th>Nome</th><th>Telefone</th><th>Plano</th>
-                <th>Vencimento</th><th>Base</th><th>Dias pendente</th>
+                <th>Vencimento</th><th>Base</th><th>Dias inadimplente</th>
               </tr></thead>
               <tbody>
                 {data.map((c, i) => (
@@ -77,8 +129,9 @@ function AbaInadimplentes() {
                     <td>{c.dia_vencimento ? `Dia ${c.dia_vencimento}` : "—"}</td>
                     <td style={{ fontSize: 11, color: '#64748b' }}>{c.base_nome || "—"}</td>
                     <td>
-                      <span style={{ fontWeight: 700,
-                        color: c.dias_pendente > 15 ? '#f87171' : c.dias_pendente > 7 ? '#f59e0b' : '#94a3b8' }}>
+                      <span style={{ fontWeight: 700, padding: '2px 8px', borderRadius: 12, fontSize: 12,
+                        color: corPorDias(c.dias_pendente),
+                        background: corPorDias(c.dias_pendente) + '18' }}>
                         {Math.round(c.dias_pendente)}d
                       </span>
                     </td>
@@ -244,7 +297,6 @@ export function PageInadimplentes() {
     <div className="page">
       <div className="page-title">Inadimplentes</div>
 
-      {/* Abas */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid #2d3148' }}>
         {abas.map(a => (
           <button key={a.id} onClick={() => setAba(a.id)}

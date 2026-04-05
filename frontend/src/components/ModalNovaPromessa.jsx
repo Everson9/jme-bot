@@ -2,6 +2,8 @@
 import React, { useState } from 'react';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 export const ModalNovaPromessa = ({ onClose, onSalva }) => {
   const [nome, setNome] = useState("");
@@ -20,7 +22,7 @@ export const ModalNovaPromessa = ({ onClose, onSalva }) => {
     try {
       const r = await fetch(`${API}/api/promessas`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           nome: nome.trim(),
           numero: numero || null,

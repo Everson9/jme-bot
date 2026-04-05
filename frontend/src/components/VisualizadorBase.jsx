@@ -9,6 +9,8 @@ import { ModalNovoClienteBase } from './ModalNovoClientebase';
 import * as XLSX from "https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs";
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 export const VisualizadorBase = ({ base, onVoltar }) => {
   const [diaAtivo, setDiaAtivo] = useState(base?.dias?.[0] || 10);
@@ -39,7 +41,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
     if (!base?.id) return;
     if (!silencioso) setLoading(true);
     try {
-      const r = await fetch(`${API}/api/bases/${base.id}/clientes`);
+      const r = await fetch(`${API}/api/bases/${base.id}/clientes`, { headers: authHeaders() });
       const data = await r.json();
       setClientes(data);
     } catch (e) {
@@ -117,7 +119,7 @@ if (filtro === 'pendente') {
 
   const exportarExcel = async () => {
     try {
-      const r = await fetch(`${API}/api/exportar/clientes`);
+      const r = await fetch(`${API}/api/exportar/clientes`, { headers: authHeaders() });
       const clientes = await r.json();
       const rows = clientes.map(c => ({
         Nome: c.nome || "",

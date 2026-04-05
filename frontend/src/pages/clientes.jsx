@@ -1,5 +1,7 @@
 // src/pages/Clientes.jsx
 import React, { useState, useEffect, useCallback } from 'react';
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useFetch } from '../hooks/useFetch';
 import { Card } from '../components/Card';
@@ -19,7 +21,7 @@ export function PageClientes({ onBasesCarregadas }) {
 
   const carregarBases = useCallback(async () => {
     try {
-      const r = await fetch(API + "/api/bases");
+      const r = await fetch(API + "/api/bases", { headers: authHeaders() });
       const b = await r.json();
       setBases(b);
       if (onBasesCarregadas) onBasesCarregadas(b);
@@ -44,7 +46,7 @@ export function PageClientes({ onBasesCarregadas }) {
   const deletarBase = async (base) => {
     if (!confirm(`Excluir a base "${base.nome}" e todos os seus clientes?`)) return;
     try {
-      await fetch(`${API}/api/bases/${base.id}`, { method: "DELETE" });
+      await fetch(`${API}/api/bases/${base.id}`, { method: "DELETE", headers: { ...authHeaders() } });
       carregarBases();
     } catch (error) {
       alert("Erro ao excluir base");

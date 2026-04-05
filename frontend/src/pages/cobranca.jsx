@@ -6,6 +6,8 @@ import { Spinner } from '../components/Spinner';
 import { fmtDate } from '../utils/formatadores';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 const TIPOS_COBRANCA = [
   { value: "", label: "🔄 Automático (por data)" },
@@ -31,7 +33,7 @@ export function PageCobranca() {
     try {
       const r = await fetch(API + "/api/cobrar/manual", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ data, tipo: tipo || undefined }),
       });
       const json = await r.json();

@@ -15,7 +15,12 @@
       "Bash(node --check index.js)",
       "Bash(node --check fluxos/promessa.js)",
       "Bash(node --check fluxos/cancelamento.js)",
-      "Bash(node --check fluxos/novoCliente.js)"
+      "Bash(node --check fluxos/novoCliente.js)",
+      "Bash(dir:*)",
+      "Bash(node:*)",
+      "Bash(for f:*)",
+      "Bash(do node:*)",
+      "Bash(done)"
     ]
   }
 }

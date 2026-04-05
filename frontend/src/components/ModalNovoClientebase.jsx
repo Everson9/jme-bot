@@ -2,6 +2,8 @@
 import React, { useState } from 'react';
 
 const API = import.meta.env.VITE_API_URL || "";
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
 export const ModalNovoClienteBase = ({ baseId, diaDefault, onClose, onSalvo }) => {
   const [form, setForm] = useState({
@@ -32,8 +34,8 @@ export const ModalNovoClienteBase = ({ baseId, diaDefault, onClose, onSalvo }) =
       // 🔥 CORREÇÃO: Rota correta para criar cliente
       const r = await fetch(`${API}/api/clientes`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
           ...form, 
           base_id: parseInt(baseId),  // ← IMPORTANTE: enviar o base_id como número
           dia_vencimento: parseInt(form.dia_vencimento) 

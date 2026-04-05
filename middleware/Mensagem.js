@@ -1,0 +1,273 @@
+'use strict';
+
+// =====================================================
+// HANDLERS DE MENSAGEM DO WHATSAPP
+// message_create (admin replies) e message (clientes)
+// =====================================================
+
+const MENU_PRINCIPAL = `🤖 *Assistente JMENET*
+
+Olá! Como posso te ajudar? 😊
+
+1️⃣ Problema com a internet
+2️⃣ Pagamento / Financeiro
+3️⃣ Cancelamento
+4️⃣ Consultar minha situação
+5️⃣ Falar com atendente`;
+
+const MENU_FINANCEIRO = `🤖 *Assistente JMENET*
+
+Como prefere pagar? 💰
+
+1️⃣ PIX
+2️⃣ Boleto bancário
+3️⃣ Carnê físico
+4️⃣ Dinheiro (cobrador)
+5️⃣ Já efetuei o pagamento`;
+
+let mensagensConfiguradas = false;
+function configurarMensagens(client, ctx, handlers) {
+    if (mensagensConfiguradas) return;
+    mensagensConfiguradas = true;
+    const { state, banco, sseService, ADMINISTRADORES, FUNCIONARIOS, P,
+            situacaoRede, previsaoRetorno, motivoRede, redeNormal, falarSinalAmigavel } = ctx;
+    const { processarMidiaAutomatico, detectarAcaoAdmin, consultarSituacao, abrirChamadoComMotivo } = handlers;
+    const { _fluxoSuporte, _fluxoFinanceiro, _fluxoPromessa, _fluxoNovoCliente, _fluxoCancelamento } = handlers;
+    const { dispararCobrancaReal, firebaseDb, groqChatFallback } = ctx;
+
+    const fotosPendentes = new Map();
+
+    // ── Admin envia mensagem no chat do cliente ──
+    client.on('message_create', async (msg) => {
+        if (!msg.fromMe) return;
+        const para = msg.to;
+        if (!para || para.includes('@g.us') || para === 'status@broadcast') return;
+        if (ADMINISTRADORES.includes(para)) return;
+
+        const corpo = msg.body || '';
+        if (corpo.startsWith('🤖') || corpo.startsWith('💳') || corpo.startsWith('✅') || corpo === '') return;
+
+        if (!state.isAtendimentoHumano(para)) {
+            state.setAtendimentoHumano(para, true);
+            await banco.dbSalvarAtendimentoHumano(para).catch(() => {});
+            sseService.notificar('estados');
+            console.log(`👤 Admin assumiu ${para.replace('@c.us','')}`);
+        }
+
+        if (corpo.length > 10) detectarAcaoAdmin(para, corpo).catch(() => {});
+
+        state.iniciarTimer(para, async (numero) => {
+            state.setAtendimentoHumano(numero, false);
+            state.encerrarFluxo(numero);
+            await banco.dbRemoverAtendimentoHumano(numero).catch(() => {});
+            console.log(`⏰ Atendimento humano expirado: ${numero.replace('@c.us','')}`);
+        }, 2 * 60 * 60 * 1000);
+    });
+
+    // ── Mensagem recebida ──
+    client.on('message', async (msg) => {
+        if (msg.from === 'status@broadcast' || msg.from.includes('@g.us')) return;
+        const deQuem = msg.from;
+        if (FUNCIONARIOS.includes(deQuem)) return;
+        if (!ctx.botIniciadoEm || (msg.timestamp * 1000) < ctx.botIniciadoEm) return;
+        if (!ctx.botAtivo && !ADMINISTRADORES.includes(deQuem)) return;
+
+        // Comandos admin
+        if (ADMINISTRADORES.includes(deQuem)) {
+            const texto = msg.body || '';
+            const args = texto.split(' ');
+            const comando = args[0].toLowerCase();
+
+            if (comando === '!sim' || comando === '!nao' || comando === '!cobrar-sim' || comando === '!cobrar-nao') {
+                const resposta = (comando === '!sim' || comando === '!cobrar-sim') ? 'aprovado' : 'negado';
+                let votacaoId = args[1] || null;
+                if (!votacaoId) {
+                    const doc = await firebaseDb.collection('config').doc('ultima_votacao').get();
+                    votacaoId = doc.exists ? doc.data().votacaoId : null;
+                }
+                if (!votacaoId) return msg.reply('❌ Nenhuma votação ativa.');
+                const vDoc = await firebaseDb.collection('votacoes').doc(votacaoId).get();
+                if (!vDoc.exists || vDoc.data().resolvido) return msg.reply('❌ Votação não encontrada.');
+                await firebaseDb.collection('votacoes').doc(votacaoId).update({
+                    status: 'respondido', resolvido: true, resultado: resposta,
+                    respondido_por: deQuem, respondido_em: new Date().toISOString()
+                });
+                return msg.reply(resposta === 'aprovado' ? '✅ Cobrança autorizada!' : '❌ Cobrança pulada.');
+            }
+            if (comando === '!bot') {
+                if (args[1] === 'off') { ctx.botAtivo = false; sseService.broadcast(); return msg.reply('🔴 Bot desativado.'); }
+                if (args[1] === 'on')  { ctx.botAtivo = true;  sseService.broadcast(); return msg.reply('🟢 Bot ativado.'); }
+            }
+            if (comando === '!status') return msg.reply(`📊 Bot: ${ctx.botAtivo ? '✅' : '❌'} | Rede: ${ctx.situacaoRede} | Atendimentos: ${state?.stats()?.atendimentoHumano || 0}`);
+            if (comando === '!rede') {
+                const novoStatus = args[1];
+                if (!['normal','instavel','manutencao','fibra_rompida'].includes(novoStatus))
+                    return msg.reply('❌ Use: !rede normal | instavel | manutencao | fibra_rompida');
+                ctx.situacaoRede = novoStatus;
+                ctx.previsaoRetorno = args.slice(2).join(' ').replace(/["']/g,'') || 'sem previsão';
+                sseService.broadcast();
+                return msg.reply(`✅ Rede: ${novoStatus}`);
+            }
+            if (comando === '!cobrar') {
+                const data = args[1];
+                if (!['10','20','30'].includes(data)) return msg.reply('❌ Use: !cobrar 10|20|30');
+                msg.reply('⏳ Iniciando...');
+                setTimeout(async () => {
+                    const total = await dispararCobrancaReal(client, firebaseDb, data, args[2] || null);
+                    client.sendMessage(deQuem, `✅ Cobrança dia ${data}: ${total} mensagens`);
+                }, 100);
+                return;
+            }
+            if (comando === '!assumir') {
+                const num = args[1]?.replace(/\D/g,'');
+                if (!num) return msg.reply('❌ Use: !assumir 819xxxxxxx');
+                const numWpp = (num.startsWith('55') ? num : '55' + num) + '@c.us';
+                state.setAtendimentoHumano(numWpp, true);
+                await banco.dbSalvarAtendimentoHumano(numWpp).catch(() => {});
+                return msg.reply(`✅ Assumido ${num}. Use !liberar ${num} para devolver.`);
+            }
+            if (comando === '!liberar') {
+                const num = args[1]?.replace(/\D/g,'');
+                if (!num) return msg.reply('❌ Use: !liberar 819xxxxxxx');
+                const numWpp = (num.startsWith('55') ? num : '55' + num) + '@c.us';
+                state.setAtendimentoHumano(numWpp, false);
+                state.encerrarFluxo(numWpp);
+                await banco.dbRemoverAtendimentoHumano(numWpp).catch(() => {});
+                await client.sendMessage(numWpp, `${P}Olá! Se precisar de algo é só chamar! 😊`).catch(() => {});
+                return msg.reply(`✅ ${num} devolvido ao bot.`);
+            }
+            if (comando === '!listar') {
+                const humanos = Object.entries(state.todos?.() || {})
+                    .filter(([,v]) => v.atendimentoHumano)
+                    .map(([n]) => n.replace('@c.us','').replace(/^55/,''));
+                return msg.reply(humanos.length ? `👤 Em atendimento:\n${humanos.join('\n')}` : '✅ Nenhum em atendimento.');
+            }
+            if (comando === '!ajuda') {
+                return msg.reply(`📚 *COMANDOS*\n!bot on/off | !status | !rede | !cobrar 10|20|30 | !assumir N | !liberar N | !listar`);
+            }
+            return;
+        }
+
+        // Clientes
+        if (msg.type === 'sticker') return;
+
+        if (msg.hasMedia && ['image','document'].includes(msg.type)) {
+            await processarMidiaAutomatico(deQuem, msg, fotosPendentes);
+            return;
+        }
+
+        if (state.isAtendimentoHumano(deQuem)) return;
+
+        const texto = msg.body?.trim() || '';
+        if (!texto) return;
+
+        console.log(`\n📨 ${deQuem.slice(-8)}: "${texto}"`);
+
+        const fluxoAtivo = state.getFluxo(deQuem);
+        const t = texto.toLowerCase();
+
+        // Voltar ao menu
+        if (fluxoAtivo && (t === '0' || t === 'menu' || t === 'voltar' || t === 'início' || t === 'inicio' || t === 'sair' || t === 'principal')) {
+            state.encerrarFluxo(deQuem);
+            await client.sendMessage(deQuem, `${P}Voltando ao menu! 😊\n\n${MENU_PRINCIPAL}`);
+            state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
+            return;
+        }
+
+        // Consulta situação
+        if (fluxoAtivo === 'consulta_situacao') {
+            state.encerrarFluxo(deQuem);
+            await consultarSituacao(deQuem, texto);
+            return;
+        }
+
+        // Fluxo ativo → delega
+        const fluxos = {
+            suporte:      _fluxoSuporte,
+            financeiro:   _fluxoFinanceiro,
+            promessa:     _fluxoPromessa,
+            cancelamento: _fluxoCancelamento,
+            novoCliente:  _fluxoNovoCliente,
+        };
+        if (fluxos[fluxoAtivo]?.handle) {
+            await fluxos[fluxoAtivo].handle(deQuem, msg);
+            return;
+        }
+
+        // Sub-menu financeiro
+        if (fluxoAtivo === 'menu_financeiro') {
+            state.encerrarFluxo(deQuem);
+            if (t === '1' || t.includes('pix') || t.includes('transferência') || t.includes('transferencia')) {
+                await _fluxoFinanceiro.iniciar(deQuem, msg, 'PIX'); return;
+            }
+            if (t === '2' || t.includes('boleto')) {
+                await _fluxoFinanceiro.iniciar(deQuem, msg, 'BOLETO'); return;
+            }
+            if (t === '3' || t.includes('carnê') || t.includes('carne') || t.includes('físico') || t.includes('fisico')) {
+                await _fluxoFinanceiro.iniciar(deQuem, msg, 'CARNE'); return;
+            }
+            if (t === '4' || t.includes('dinheiro') || t.includes('cobrador') || t.includes('espécie') || t.includes('especie')) {
+                await _fluxoFinanceiro.iniciar(deQuem, msg, 'DINHEIRO'); return;
+            }
+            if (t === '5' || t.includes('paguei') || t.includes('já paguei') || t.includes('feito') || t.includes('efetuei')) {
+                await _fluxoFinanceiro.iniciar(deQuem, msg, 'PAGO'); return;
+            }
+            await client.sendMessage(deQuem, MENU_FINANCEIRO);
+            state.iniciar(deQuem, 'menu_financeiro', 'aguardando_escolha', {});
+            return;
+        }
+
+        // Menu principal
+        if (fluxoAtivo === 'menu') {
+            state.encerrarFluxo(deQuem);
+            if (t === '1' || t.includes('internet') || t.includes('caiu') || t.includes('lento') ||
+                t.includes('sinal') || t.includes('suporte') || t.includes('técnico') || t.includes('tecnico')) {
+                if (!redeNormal()) {
+                    const infoRede = falarSinalAmigavel();
+                    const hora = new Date(Date.now() - 3 * 60 * 60 * 1000).getUTCHours();
+                    const fora = hora < 8 || hora >= 20;
+                    await client.sendMessage(deQuem,
+                        `${P}${infoRede}\n\n` + (fora
+                            ? `Sabemos do problema. Nossa equipe vai entrar em contato no início do expediente. 🙏`
+                            : `Nossa equipe já está trabalhando para resolver. 🙏`)
+                    );
+                    await abrirChamadoComMotivo(deQuem, null, `Reclamação — rede ${ctx.situacaoRede}`);
+                    return;
+                }
+                await _fluxoSuporte.iniciar(deQuem, msg);
+                return;
+            }
+            if (t === '2' || t.includes('pagar') || t.includes('pagamento') || t.includes('pix') ||
+                t.includes('boleto') || t.includes('carnê') || t.includes('carne') || t.includes('financeiro')) {
+                await client.sendMessage(deQuem, MENU_FINANCEIRO);
+                state.iniciar(deQuem, 'menu_financeiro', 'aguardando_escolha', {});
+                return;
+            }
+            if (t === '3' || t.includes('cancelar') || t.includes('cancelamento') || t.includes('encerrar')) {
+                await _fluxoCancelamento.iniciar(deQuem, msg);
+                return;
+            }
+            if (t === '4' || t.includes('situacao') || t.includes('situação') || t.includes('status') || t.includes('consultar') || t.includes('verificar')) {
+                await client.sendMessage(deQuem,
+                    `${P}Vou consultar para você! 📋\n\nMe informe seu *CPF* (somente números) ou seu *nome completo*:`
+                );
+                state.iniciar(deQuem, 'consulta_situacao', 'aguardando_dados', {});
+                return;
+            }
+            if (t === '5' || t.includes('atendente') || t.includes('humano') || t.includes('pessoa') || t.includes('falar')) {
+                await client.sendMessage(deQuem, `${P}Vou chamar um atendente! Aguarda um instante. 😊`);
+                await abrirChamadoComMotivo(deQuem, null, 'Cliente solicitou atendente');
+                return;
+            }
+            await client.sendMessage(deQuem, MENU_PRINCIPAL);
+            state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
+            return;
+        }
+
+        // Sem fluxo → mostra menu
+        await client.sendMessage(deQuem, MENU_PRINCIPAL);
+        state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
+    });
+}
+
+module.exports = { configurarMensagens };

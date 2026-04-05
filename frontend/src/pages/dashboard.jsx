@@ -1,5 +1,7 @@
 // src/pages/Dashboard.jsx
 import React, { useState, useEffect } from 'react';
+const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
+const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 import { useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 // useFetch inline — carrega uma vez ao montar, sem polling
@@ -7,7 +9,7 @@ function useFetch(url) {
   const [data, setData] = React.useState(null);
   React.useEffect(() => {
     const API = import.meta.env.VITE_API_URL || "";
-    fetch(API + url).then(r => r.ok ? r.json() : null).then(setData).catch(() => {});
+    fetch(API + url, { headers: authHeaders() }).then(r => r.ok ? r.json() : null).then(setData).catch(() => {});
   }, [url]);
   return { data };
 }
