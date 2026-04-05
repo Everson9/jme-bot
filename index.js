@@ -65,9 +65,6 @@ let botIniciadoEm = null;
 let ultimoQR = null;
 
 const state = new StateManager(null);
-
-const metrics = { erros: [] };
-
 let _fluxoSuporte, _fluxoFinanceiro, _fluxoPromessa, _fluxoNovoCliente, _fluxoCancelamento;
 
 const fotosPendentes = new Map();
@@ -122,7 +119,7 @@ async function processarMidiaAutomatico(deQuem, msg) {
             );
             await banco.dbLogComprovante(deQuem);
             for (const adm of ADMINISTRADORES) {
-                client.sendMessage(adm,
+                await client.sendMessage(adm,
                     `✅ *BAIXA AUTOMÁTICA VIA COMPROVANTE*\n\n` +
                     `👤 ${baixa.nomeCliente}\n` +
                     `📱 ${deQuem.replace('@c.us','')}\n` +
@@ -359,11 +356,12 @@ app.listen(PORT, () => console.log(`🌐 Painel rodando em http://localhost:${PO
 // =====================================================
 function inicializarFluxos() {
     const ctx = {
-        client, db: firebaseDb, banco, state, ADMINISTRADORES,
-        P, chavePixExibicao,
+        client, db: firebaseDb, banco, state, ADMINISTRADORES, P,
+        get sseService() { return sseService; },
         get situacaoRede() { return situacaoRede; },
         get previsaoRetorno() { return previsaoRetorno; },
-        falarSinalAmigavel: (...args) => falarSinalAmigavel(args[0] !== undefined ? args[0] : situacaoRede, args[1] !== undefined ? args[1] : previsaoRetorno),
+        get motivoRede() { return motivoRede; },
+        falarSinalAmigavel: (...args) => falarSinalAmigavel(args[0] !== undefined ? args[0] : situacaoRede, args[1] !== undefined ? args[1] : previsaoRetorno, args[2] !== undefined ? args[2] : motivoRede),
         redeNormal: (...args) => redeNormal(args[0] !== undefined ? args[0] : situacaoRede),
         atendenteDisponivel: () => atendenteDisponivel(horarioFuncionamento),
         proximoAtendimento: () => proximoAtendimento(horarioFuncionamento),
@@ -378,6 +376,7 @@ function inicializarFluxos() {
         dbSalvarNovoCliente: banco.dbSalvarNovoCliente,
         dbAbrirChamado: banco.dbAbrirChamado,
         dbAtualizarChamado: banco.dbAtualizarChamado,
+        dbLogComprovante: banco.dbLogComprovante,
     };
 
     // Callback de expiração de sessão por inatividade
@@ -431,7 +430,8 @@ Olá! Como posso te ajudar? 😊
 1️⃣ Problema com a internet
 2️⃣ Pagamento / Financeiro
 3️⃣ Cancelamento
-4️⃣ Falar com atendente`;
+4️⃣ Consultar minha situação
+5️⃣ Falar com atendente`;
 
 const MENU_FINANCEIRO = `🤖 *Assistente JMENET*
 
@@ -489,7 +489,104 @@ async function detectarAcaoAdmin(para, textoAdmin) {
         } catch(e) { console.error('Erro ao registrar promessa do admin:', e.message); }
     }
 
-    // Detecta agendamento de visita técnica
+// =====================================================
+// CONSULTAR SITUAÇÃO DO CLIENTE
+// =====================================================
+async function consultarSituacao(deQuem, textoCliente) {
+    const t = textoCliente.trim();
+    const cpfLimpo = t.replace(/\D/g, '');
+    let cliente = null;
+
+    // Tentativa 1: CPF (11 dígitos)
+    if (cpfLimpo.length === 11) {
+        cliente = await banco.buscarClientePorCPF(cpfLimpo);
+    }
+
+    // Tentativa 2: nome (se não achou por CPF)
+    if (!cliente && t.length >= 3) {
+        const resultados = await banco.buscarClientePorNome(t);
+        if (resultados && resultados.length === 1) {
+            cliente = resultados[0];
+        } else if (resultados && resultados.length > 1) {
+            // Vários clientes com mesmo nome — pede CPF
+            await client.sendMessage(deQuem,
+                `${P}Encontrei vários clientes com esse nome. 😕\n\n` +
+                `Por favor me informe o *CPF completo* (11 dígitos):`
+            );
+            state.iniciar(deQuem, 'consulta_situacao', 'aguardando_cpf', {});
+            return;
+        }
+    }
+
+    // Tentativa 3: telefone do WhatsApp
+    if (!cliente) {
+        const numTel = deQuem.replace('@c.us', '').replace(/^55/, '');
+        cliente = await banco.buscarClientePorTelefone(numTel);
+    }
+
+    // Não achou de jeito nenhum
+    if (!cliente) {
+        await client.sendMessage(deQuem,
+            `${P}Não encontrei nenhum cadastro com esses dados. 😕\n\n` +
+            `Verifique se digitou corretamente ou fale com um atendente.\n\n` +
+            `Digite *0* para voltar ao menu.`
+        );
+        return;
+    }
+
+    // Achou!
+    const nome = cliente.nome || 'Cliente';
+    const primeiroNome = nome.split(' ')[0];
+    const status = cliente.status || 'pendente';
+    const plano = cliente.plano || 'Não informado';
+    const diaVenc = parseInt(cliente.dia_vencimento) || 10;
+
+    // Calcular dias de atraso
+    const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    const diaHoje = agoraBR.getUTCDate();
+    const diasDoMesAnterior = new Date(agoraBR.getUTCFullYear(), agoraBR.getUTCMonth(), 0).getDate();
+    let diasAtraso = 0;
+    if (diaHoje >= diaVenc) {
+        diasAtraso = diaHoje - diaVenc;
+    } else {
+        diasAtraso = (diasDoMesAnterior - diaVenc) + diaHoje;
+        // Protege contra vencimentos que não existem no mês (ex: 31 em fevereiro)
+        if (diasAtraso < 0) diasAtraso = 0;
+    }
+
+    const inadimplente = diasAtraso >= 5;
+
+    if (status === 'pago') {
+        await client.sendMessage(deQuem,
+            `${P}✅ *${primeiroNome}*, sua situação está em dia!\n\n` +
+            `📡 Plano: ${plano}\n` +
+            `📅 Vencimento: Todo dia ${diaVenc}\n\n` +
+            `Seu acesso está normal. Se estiver com problema de internet, é algo técnico.\n\n` +
+            `Digite *0* para voltar ao menu ou diga o que precisa! 😊`
+        );
+    } else if (inadimplente) {
+        await client.sendMessage(deQuem,
+            `${P}⚠️ *${primeiroNome}*, encontrei aqui:\n\n` +
+            `📡 Plano: ${plano}\n` +
+            `📅 Vencimento: Todo dia ${diaVenc}\n` +
+            `💰 Situação: *Inadimplente* — ${diasAtraso} dias em atraso\n\n` +
+            `Sua internet pode estar suspensa por falta de pagamento.\n\n` +
+            `Para reativar, digite *2* para efetuar o pagamento ou *0* para voltar ao menu.`
+        );
+    } else {
+        // Pendente mas ainda dentro do prazo (menos de 5 dias de atraso)
+        await client.sendMessage(deQuem,
+            `${P}⏳ *${primeiroNome}*, encontrei aqui:\n\n` +
+            `📡 Plano: ${plano}\n` +
+            `📅 Vencimento: Todo dia ${diaVenc}\n` +
+            `💰 Situação: *Pendente* — pagamento ainda não localizado\n\n` +
+            `Seu dia de vencimento é *${diaVenc}*. Após ${diaVenc + 5} de atraso o serviço é suspenso automaticamente.\n\n` +
+            `Digite *2* para efetuar o pagamento ou *0* para voltar ao menu.`
+        );
+    }
+}
+
+// Detecta agendamento de visita técnica
     const padroesVisita = [
         /agendei\s+(visita|técnico|instalação)/i, /vou\s+(passar|mandar)\s+(técnico|lá)/i,
         /técnico\s+(vai|passa)\s+(dia|amanhã|hoje)/i, /visita\s+(dia|amanhã|hoje|marcada)/i
@@ -651,6 +748,21 @@ client.on('message', async (msg) => {
     const fluxoAtivo = state.getFluxo(deQuem);
     const t = texto.toLowerCase();
 
+    // ── Atalho: voltar ao menu de QUALQUER fluxo ──
+    if (fluxoAtivo && (t === '0' || t === 'menu' || t === 'voltar' || t === 'início' || t === 'inicio' || t === 'sair' || t === 'principal')) {
+        state.encerrarFluxo(deQuem);
+        await client.sendMessage(deQuem, `${P}Voltando ao menu! 😊\n\n${MENU_PRINCIPAL}`);
+        state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
+        return;
+    }
+
+    // ── Consulta situação (estado temporário) ─────────
+    if (fluxoAtivo === 'consulta_situacao') {
+        state.encerrarFluxo(deQuem);
+        await consultarSituacao(deQuem, texto);
+        return;
+    }
+
     // ── Fluxo ativo → delega para o fluxo correspondente ──
     if (fluxoAtivo === 'suporte')      { await _fluxoSuporte.handle(deQuem, msg);      return; }
     if (fluxoAtivo === 'financeiro')   { await _fluxoFinanceiro.handle(deQuem, msg);   return; }
@@ -712,7 +824,15 @@ client.on('message', async (msg) => {
             await _fluxoCancelamento.iniciar(deQuem, msg);
             return;
         }
-        if (t === '4' || t.includes('atendente') || t.includes('humano') || t.includes('pessoa') || t.includes('falar')) {
+        if (t === '4' || t.includes('situacao') || t.includes('situação') || t.includes('status') || t.includes('consultar') || t.includes('verificar')) {
+            await client.sendMessage(deQuem,
+                `${P}Vou consultar para você! 📋\n\n` +
+                `Me informe seu *CPF* (somente números) ou seu *nome completo*:`
+            );
+            state.iniciar(deQuem, 'consulta_situacao', 'aguardando_dados', {});
+            return;
+        }
+        if (t === '5' || t.includes('atendente') || t.includes('humano') || t.includes('pessoa') || t.includes('falar')) {
             await client.sendMessage(deQuem, `${P}Vou chamar um atendente! Aguarda um instante. 😊`);
             await abrirChamadoComMotivo(deQuem, null, 'Cliente solicitou atendente');
             return;

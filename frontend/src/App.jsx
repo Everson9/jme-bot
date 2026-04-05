@@ -14,6 +14,7 @@ import { PageClientes } from './pages/clientes';
 import { PagePromessas } from './pages/promessas';
 import { PageCarne } from './pages/carne';
 import { PageCancelamentos } from './pages/cancelamentos';
+import { PageBoasVindas } from './pages/boasvindas';
 import { PageChamados } from './pages/chamados';
 import { PageLogs } from './pages/logs';
 import { PageCobranca } from './pages/cobranca';
@@ -88,6 +89,7 @@ function AppContent() {
           <ErrorBoundary>
             <Routes>
               <Route path="/" element={<PageDashboard status={botStatus} />} />
+              <Route path="/boas-vindas" element={<PageBoasVindas />} />
               <Route path="/chamados" element={<PageChamados />} />
               <Route path="/clientes" element={<PageClientes onBasesCarregadas={setBases} />} />
               <Route path="/promessas" element={<PagePromessas />} />

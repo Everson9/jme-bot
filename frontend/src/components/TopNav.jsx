@@ -75,6 +75,7 @@ export const TopNav = ({ botAtivo, onToggle, bases }) => {
         { to: "/clientes?acao=nova", label: "➕ Nova Base", divider: true }
       ]
     },
+    { to: "/boas-vindas", label: "Boas-Vindas", icon: "👋" },
     { to: "/promessas", label: "Promessas", icon: "🤝" },
     { to: "/carne", label: "Carnês", icon: "📋" },
     { to: "/cobranca", label: "Cobranças", icon: "📬" },

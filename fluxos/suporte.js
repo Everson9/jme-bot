@@ -46,15 +46,16 @@ const AGENDAMENTO_CONFIG = {
 module.exports = function criarFluxoSuporte(ctx) {
     const {
         client, db: firebaseDb, banco,
-        state,
-        ADMINISTRADORES, P,
+        state, ADMINISTRADORES, P,
+        situacaoRede: _sr, motivoRede: _mr,
         falarSinalAmigavel, redeNormal, previsaoRetorno,
         horaLocal, atendenteDisponivel, proximoAtendimento,
         buscarStatusCliente, analisarImagem,
         groqChatFallback, normalizarTexto,
-        utils,
-        processarResposta
+        utils, dbLogComprovante, processarResposta,
     } = ctx;
+
+    
 
     const _fotosPendentes = new Map();
 
@@ -216,6 +217,12 @@ module.exports = function criarFluxoSuporte(ctx) {
         
         _fotosPendentes.delete(deQuem);
         console.log(`🎫 Chamado #${chamadoId} aberto: ${deQuem} — ${motivo}`);
+
+        // Notifica o front
+        if (ctx.sseService) {
+            ctx.sseService.notificar('chamados');
+            ctx.sseService.notificar('estados');
+        }
     }
 
     function msgConfirmacaoSuporte(nome, dataAgendamento = null) {
@@ -598,6 +605,7 @@ module.exports = function criarFluxoSuporte(ctx) {
                         const novasDatas = await gerarDatasDisponiveis();
                         state.atualizar(deQuem, { datasDisponiveis: novasDatas });
                         await client.sendMessage(deQuem, formatarMensagemDias(novasDatas));
+                        state.iniciarTimer(deQuem);
                         return;
                     }
                     
@@ -624,9 +632,10 @@ module.exports = function criarFluxoSuporte(ctx) {
             }
 
             
-            await client.sendMessage(deQuem, 
+            await client.sendMessage(deQuem,
                 `${P}Por favor, escolha um número de 1 a ${datas.length} para o dia da visita.`
             );
+            state.iniciarTimer(deQuem);
             return;
         }
 
@@ -660,9 +669,10 @@ module.exports = function criarFluxoSuporte(ctx) {
                     });
                     
                     await client.sendMessage(deQuem, `${P}${msg}`);
+                    state.iniciarTimer(deQuem);
                     return;
                 }
-                
+
                 const resultado = await banco.agendamentos.criarAgendamento(
                     dados.dataBanco,
                     periodo,
@@ -673,7 +683,13 @@ module.exports = function criarFluxoSuporte(ctx) {
                 
                 if (!resultado.sucesso) {
                     await client.sendMessage(deQuem, `${P}Ocorreu um erro no agendamento. Tente novamente.`);
+                    state.iniciarTimer(deQuem);
                     return;
+                }
+
+                // Notifica o front sobre novo agendamento
+                if (ctx.sseService) {
+                    ctx.sseService.notificar('agendamentos');
                 }
                 
                 const nome = dados.nome;

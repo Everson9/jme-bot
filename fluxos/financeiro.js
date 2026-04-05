@@ -18,6 +18,7 @@ module.exports = function criarFluxoFinanceiro(ctx) {
         abrirChamadoComMotivo,
     } = ctx;
 
+
     const _fotosPendentes = ctx.fotosPendentes;
 
     const FORMAS_PAGAMENTO = {
@@ -55,11 +56,12 @@ module.exports = function criarFluxoFinanceiro(ctx) {
             return;
         }
 
-        const msgStatus = dadosCliente
-            ? (dadosCliente.nome 
-                ? `${P}${dadosCliente.nome.split(' ')[0]}, encontrei seu cadastro! 😊\n\nConsta uma fatura com vencimento no dia *${dadosCliente.aba.replace('Data ','')}* ainda em aberto.\n\nQuer efetuar o pagamento agora? Escolha a forma que preferir:`
-                : `${P}Encontrei seu cadastro! 😊\n\nConsta uma fatura com vencimento no dia *${dadosCliente.aba.replace('Data ','')}* ainda em aberto.\n\nQuer efetuar o pagamento agora? Escolha a forma que preferir:`)
-            : `${P}Claro! Vou te ajudar com o pagamento. 😊\n\nTemos algumas formas disponíveis — qual funciona melhor pra você?`;
+            const aba = dadosCliente.aba?.replace('Data ','') || 'não informada';
+            const msgStatus = dadosCliente
+                ? (dadosCliente.nome
+                    ? `${P}${dadosCliente.nome.split(' ')[0]}, encontrei seu cadastro! 😊\n\nConsta uma fatura com vencimento no dia *${aba}* ainda em aberto.\n\nQuer efetuar o pagamento agora? Escolha a forma que preferir:`
+                    : `${P}Encontrei seu cadastro! 😊\n\nConsta uma fatura com vencimento no dia *${aba}* ainda em aberto.\n\nQuer efetuar o pagamento agora? Escolha a forma que preferir:`)
+                : `${P}Claro! Vou te ajudar com o pagamento. 😊\n\nTemos algumas formas disponíveis — qual funciona melhor pra você?`;
 
         await client.sendMessage(deQuem, msgStatus);
         await new Promise(r => setTimeout(r, 1200));
@@ -83,11 +85,9 @@ module.exports = function criarFluxoFinanceiro(ctx) {
 
     async function iniciarPix(deQuem, dadosCliente) {
         state.avancar(deQuem, 'pix_enviado', { nome: dadosCliente?.nome || null });
-        await client.sendMessage(deQuem, `${P}Ótimo! Segue nossa chave Pix. Assim que pagar, pode me enviar o comprovante por aqui! 😊`);
+        await client.sendMessage(deQuem, `${P}Ótimo! Segue nossas chaves Pix. Assim que pagar, pode me enviar o comprovante por aqui! 😊`);
         await new Promise(r => setTimeout(r, 1500));
-        await client.sendMessage(deQuem, `jmetelecomnt@gmail.com`, { linkPreview: false });
-        await new Promise(r => setTimeout(r, 800));
-        await client.sendMessage(deQuem, `+5581987500456`, { linkPreview: false });
+        await client.sendMessage(deQuem, `💳 *Chaves PIX:*\n\n\`\`\`jmetelecomnt@gmail.com\`\`\`\n\`\`\`+5581987500456\`\`\`\n\n👤 *Titular:* ERIVALDO CLEMENTINO DA SILVA\n\n💡 _Toque no código para copiar (cole como email ou telefone)_`);
         await dbSalvarHistorico(deQuem, 'assistant', 'Chave PIX enviada.');
         state.iniciarTimer(deQuem);
     }
@@ -247,7 +247,12 @@ module.exports = function criarFluxoFinanceiro(ctx) {
                     if (analise.valido) {
                         state.encerrarFluxo(deQuem);
                         await client.sendMessage(deQuem, `${P}Comprovante recebido e pagamento confirmado! ✅ Já dei baixa no sistema. Obrigado! 😊`);
-                        
+
+                        // Notifica o front
+                        if (ctx.sseService) {
+                            ctx.sseService.notificar('clientes');
+                        }
+
                         // 🔥 FIREBASE: Log de comprovante
                         await firebaseDb.collection('log_comprovantes').add({
                             numero: deQuem,
@@ -334,7 +339,12 @@ module.exports = function criarFluxoFinanceiro(ctx) {
             }
             
             state.encerrarFluxo(deQuem);
-            
+
+            // Notifica o front
+            if (ctx.sseService) {
+                ctx.sseService.notificar('carne');
+            }
+
             for (const adm of ADMINISTRADORES) {
                 await client.sendMessage(adm,
                     `📋 *SOLICITAÇÃO DE CARNÊ FÍSICO*\n\n` +

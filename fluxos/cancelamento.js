@@ -159,6 +159,11 @@ module.exports = function criarFluxoCancelamento(ctx) {
             
             await dbSalvarHistorico(deQuem, 'assistant', 'Cancelamento confirmado e registrado.');
 
+            // Notifica o front
+            if (ctx.sseService) {
+                ctx.sseService.notificar('cancelamentos');
+            }
+
             // Notifica ADM
             for (const adm of ADMINISTRADORES) {
                 await client.sendMessage(adm,

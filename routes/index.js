@@ -846,17 +846,20 @@ module.exports = function setupRoutes(app, ctx) {
         try {
             const agoraBR = new Date(Date.now()-3*60*60*1000);
             const diaHoje=agoraBR.getUTCDate(), mesHoje=agoraBR.getUTCMonth()+1, anoHoje=agoraBR.getUTCFullYear();
-            const snap = await firebaseDb.collection('clientes').where('status','==','pendente').get();
+            const snap = await firebaseDb.collection('clientes').get();
             const basesSnap = await firebaseDb.collection('bases').get();
             const baseMap = {}; basesSnap.docs.forEach(d=>{baseMap[d.id]=d.data().nome;});
             const lista = [];
             snap.docs.forEach(doc => {
-                const c=doc.data(); const venc=parseInt(c.dia_vencimento)||10;
+                const c=doc.data();
+                if (c.status === 'pago' || c.status === 'isento') return;
+                if (c.status === 'cancelado') return;
+                const venc=parseInt(c.dia_vencimento)||10;
                 let atraso;
                 if (diaHoje>=venc) atraso=diaHoje-venc;
-                else { atraso=(new Date(anoHoje,mesHoje-1,0).getDate()-venc)+diaHoje; if(atraso>40) return; }
+                else { atraso=(new Date(anoHoje,mesHoje-1,0).getDate()-venc)+diaHoje; if(atraso<0) return; }
                 if (atraso<dias) return;
-                lista.push({ id:doc.id, nome:c.nome, telefone:c.telefone, plano:c.plano, dia_vencimento:venc, base_nome:baseMap[String(c.base_id)]||null, dias_pendente:atraso });
+                lista.push({ id:doc.id, nome:c.nome, telefone:c.telefone, plano:c.plano, dia_vencimento:venc, base_nome:baseMap[String(c.base_id)]||null, dias_pendente:atraso, status_real: c.status });
             });
             lista.sort((a,b)=>b.dias_pendente-a.dias_pendente);
             res.json(lista);
@@ -946,6 +949,54 @@ module.exports = function setupRoutes(app, ctx) {
             const clientes = snap.docs.map(d=>({ id:d.id,...d.data(), base_nome:baseMap[String(d.data().base_id)]||null, status_calculado:d.data().status||'pendente' }));
             clientes.sort((a,b)=>(b.criado_em||'').localeCompare(a.criado_em||''));
             res.json(clientes.slice(0,limite));
+        } catch(e) { res.status(500).json({ erro: e.message }); }
+    });
+
+    // ─────────────────────────────────────────────────────
+    // BOAS-VINDAS (clientes recentes)
+    // ─────────────────────────────────────────────────────
+    app.post('/api/boas-vindas/enviar', async (req, res) => {
+        const { cliente_id, mensagem_carne } = req.body || {};
+        try {
+            const cliDoc = await firebaseDb.collection('clientes').doc(cliente_id).get();
+            if (!cliDoc.exists) return res.status(404).json({ erro: 'Cliente não encontrado' });
+            const cli = cliDoc.data();
+            const telefone = cli.telefone || null;
+            if (!telefone) return res.status(400).json({ erro: 'Cliente sem telefone' });
+            const numero = (telefone.replace(/\D/g,'').startsWith('55') ? telefone.replace(/\D/g,'') : '55' + telefone.replace(/\D/g,'')) + '@c.us';
+
+            // Mensagem de boas-vindas
+            const primeiroNome = (cli.nome || 'Cliente').split(' ')[0];
+            const msgBoasVindas = `🤖 *Assistente JMENET*\n\n` +
+                `Olá, *${primeiroNome}*! 🎉 Seja bem-vindo(a) à JMENET!\n\n` +
+                `📡 Plano: ${cli.plano || 'Não informado'}\n` +
+                `📅 Vencimento: Todo dia ${cli.dia_vencimento || '10'}\n\n` +
+                `Qualquer dúvida é só chamar! 😊`;
+
+            await client.sendMessage(numero, msgBoasVindas);
+
+            // Solicitar carnê físico
+            if (mensagem_carne) {
+                const anteriories = await firebaseDb.collection('carne_solicitacoes')
+                    .where('cliente_id', '==', cliente_id)
+                    .where('status', '==', 'solicitado').get();
+                const batch = firebaseDb.batch();
+                anteriories.docs.forEach(d => batch.delete(d.ref));
+                await batch.commit();
+
+                await firebaseDb.collection('carne_solicitacoes').add({
+                    cliente_id: cliente_id,
+                    nome: cli.nome || null,
+                    numero: cli.telefone || null,
+                    endereco: cli.endereco || null,
+                    origem: 'painel',
+                    status: 'solicitado',
+                    observado: mensagem_carne,
+                    solicitado_em: new Date().toISOString()
+                });
+            }
+
+            res.json({ ok: true });
         } catch(e) { res.status(500).json({ erro: e.message }); }
     });
 

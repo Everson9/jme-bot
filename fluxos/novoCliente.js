@@ -271,7 +271,13 @@ module.exports = function criarFluxoNovoCliente(ctx) {
                 
                 // 🔥 FIREBASE: Salva novo cliente usando a função do banco
                 await dbSalvarNovoCliente(deQuem, dadosSalvar);
-                
+
+                // Notifica o front sobre novo cliente
+                if (ctx.sseService) {
+                    ctx.sseService.notificar('instalacoes');
+                    ctx.sseService.notificar('clientes');
+                }
+
                 // =====================================================
                 // AGENDAMENTO DA INSTALAÇÃO
                 // =====================================================
@@ -335,7 +341,12 @@ module.exports = function criarFluxoNovoCliente(ctx) {
                     });
                     
                     state.encerrarFluxo(deQuem);
-                    
+
+                    // Notifica o front sobre instalação agendada
+                    if (ctx.sseService) {
+                        ctx.sseService.notificar('instalacoes');
+                    }
+
                     await client.sendMessage(deQuem,
                         `${P}✅ *Instalação agendada com sucesso!*\n\n` +
                         `📅 *Data:* ${diaEscolhido.label}\n` +

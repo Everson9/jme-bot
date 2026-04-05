@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -c index.js)",
+      "Bash(node -c fluxos/financeiro.js)",
+      "Bash(cd:*)",
+      "Bash(node -c fluxos/suporte.js)",
+      "Bash(node -c fluxos/promessa.js)",
+      "Bash(node -c fluxos/novoCliente.js)",
+      "Bash(node -c fluxos/cancelamento.js)",
+      "Bash(node --check fluxos/suporte.js)",
+      "Bash(echo \"EXIT: $?\")",
+      "Read(//c/Users/veri/Documents/GitHub/**)",
+      "Bash(node --check fluxos/financeiro.js)",
+      "Bash(node --check index.js)",
+      "Bash(node --check fluxos/promessa.js)",
+      "Bash(node --check fluxos/cancelamento.js)",
+      "Bash(node --check fluxos/novoCliente.js)"
+    ]
+  }
+}

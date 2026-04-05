@@ -139,6 +139,12 @@ module.exports = function criarFluxoPromessa(ctx) {
                     });
                 }
 
+                // Notifica o front
+                if (ctx.sseService) {
+                    ctx.sseService.notificar('promessas');
+                    ctx.sseService.notificar('clientes');
+                }
+
                 for (const adm of ADMINISTRADORES) {
                     await client.sendMessage(adm,
                         `🤝 *Promessa de Pagamento Registrada!*\n\n` +
