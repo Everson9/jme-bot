@@ -496,3 +496,58 @@ body {
   font-size: 12px;
   color: var(--green);
 }
+
+/* =====================================================
+   RESPONSIVIDADE MOBILE-FIRST
+   ===================================================== */
+
+@media (max-width: 768px) {
+  .page {
+    padding: 1rem;
+  }
+  .page-title {
+    font-size: 1.25rem;
+  }
+  .base-kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .modal-box {
+    max-width: 95vw;
+    padding: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .page {
+    padding: 0.5rem;
+  }
+  .filtro-group {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 600px) {
+  .tabela-scroll {
+    margin: 0 -0.5rem;
+    padding: 0 0.5rem;
+  }
+  .base-kpis {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .base-kpi {
+    padding: 0.75rem;
+  }
+  .bk-val {
+    font-size: 1.25rem;
+  }
+  .modal-box {
+    max-width: 95vw;
+  }
+  .dias-tabs {
+    flex-wrap: wrap;
+  }
+  .rede-btns {
+    flex-wrap: wrap;
+  }
+}

@@ -79,6 +79,21 @@ export function PagePromessas() {
         }
     }
 
+    const parseDataPromessa = (data) => {
+        if (!data) return '-';
+        // Se vier no formato DD/MM/YYYY
+        if (data.includes('/')) {
+            const [d, m, y] = data.split('/');
+            return new Date(y, m - 1, d).toLocaleDateString('pt-BR');
+        }
+        // Se vier no formato YYYY-MM-DD
+        if (data.includes('-')) {
+            const [y, m, d] = data.split('-').map(Number);
+            return new Date(y, m - 1, d).toLocaleDateString('pt-BR');
+        }
+        return new Date(data).toLocaleDateString('pt-BR');
+    };
+
     const getStatusBadge = (status) => {
         switch(status) {
             case 'pago': return 'badge-pago';
@@ -162,7 +177,7 @@ export function PagePromessas() {
                                     promessas.map(p => (
                                         <tr key={p.id}>
                                             <td className="td-nome">{p.nome}</td>
-                                            <td>{p.data_promessa ? new Date(p.data_promessa).toLocaleDateString('pt-BR') : '-'}</td>
+                                            <td>{parseDataPromessa(p.data_promessa)}</td>
                                             <td>Dia {p.dia_vencimento || 'N/A'}</td>
                                             <td>{p.base_nome || 'N/A'}</td>
                                             <td>
@@ -188,7 +203,7 @@ export function PagePromessas() {
                                                 )}
                                                 {p.status === 'pago' && (
                                                     <span style={{ color: 'var(--green)', fontSize: '12px' }}>
-                                                        ✅ Pago em {p.pago_em ? new Date(p.pago_em).toLocaleDateString() : ''}
+                                                        ✅ Pago em {parseDataPromessa(p.pago_em)}
                                                     </span>
                                                 )}
                                             </td>

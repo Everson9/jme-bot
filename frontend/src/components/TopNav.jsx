@@ -451,7 +451,7 @@ export const TopNav = ({ botAtivo, onToggle, bases }) => {
           })}
         </div>
 
-        <div style={{ position: "relative", flexShrink: 0 }}>
+        <div className="topnav-more-wrap" style={{ position: "relative", flexShrink: 0 }}>
           <button
             onClick={() => setMaisAberto((o) => !o)}
             style={{
@@ -480,8 +480,10 @@ export const TopNav = ({ botAtivo, onToggle, bases }) => {
               />
               <div
                 style={{
-                  position: "fixed",
-                  top: 52,
+                  position: "absolute",
+                  top: "100%",
+                  right: 0,
+                  marginTop: 6,
                   minWidth: 190,
                   background: "#0f1117",
                   border: "1px solid rgba(56,189,248,0.2)",
@@ -649,7 +651,7 @@ export const TopNav = ({ botAtivo, onToggle, bases }) => {
           <button className="bot-pill" onClick={onToggle}>
             <span className={`dot ${botAtivo ? "dot-on" : "dot-off"}`} />
             <span style={{ color: botAtivo ? "#4ade80" : "#ef4444" }}>
-              IA {botAtivo ? "Ativa" : "Inativa"}
+              Auto. {botAtivo ? "On" : "Off"}
             </span>
           </button>
         </div>

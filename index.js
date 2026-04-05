@@ -6,32 +6,18 @@ const criarFluxoPromessa    = require('./fluxos/promessa');
 const criarFluxoNovoCliente = require('./fluxos/novoCliente');
 const criarFluxoCancelamento = require('./fluxos/cancelamento');
 const StateManager          = require('./stateManager');
-const fs = require('fs');
-const path = require('path');
 const QRCode = require('qrcode');
-const Groq = require('groq-sdk');
 const express = require('express');
 const cors = require('cors');
-const { calcularStatusCliente } = require('./services/statusService');
 
 // =====================================================
-// SERVIÇOS MODULARIZADOS
+// SERVIÇOS
 // =====================================================
-const { dispararCobrancaReal, obterAgendaDia } = require('./services/cobrancaService');
-const { perguntarAdmins, verificarCobrancasAutomaticas } = require('./services/adminService');
-const { gerarMensagemCobranca, enviarChavesPix } = require('./services/mensagemService');
-const { enviarMensagemSegura } = require('./services/whatsappService');
+const { dispararCobrancaReal } = require('./services/cobrancaService');
+const { verificarCobrancasAutomaticas } = require('./services/adminService');
 const { analisarImagem } = require('./services/midiaService');
-const { transcreverAudio } = require('./services/audioService');
 const { horaLocal, atendenteDisponivel, proximoAtendimento, falarSinalAmigavel, redeNormal } = require('./services/utilsService');
 const sseService = require('./services/sseService');
-const {
-    processarMensagem,
-    handleIdentificacao,
-    delegarParaFluxo,
-    responderComIA,
-    processarAposIdentificacao
-} = require('./services/fluxoService');
 
 const P = "🤖 *Assistente JMENET*\n\n";
 
@@ -44,10 +30,8 @@ const agendamentos = require('./database/agendamentos-firebase')(firebaseDb);
 const instalacoesAgendadas = require('./database/instalacoes-agendadas-firebase')(firebaseDb);
 
 const criarUtils = require('./shared/utils');
-const criarClassificador = require('./shared/classificador');
-const criarDetectorMultiplas = require('./shared/multiplasIntencoes');
-
-const pdfParse = require('pdf-parse');
+const fs = require('fs');
+const path = require('path');
 
 agendamentos.inicializarTabela();
 instalacoesAgendadas.criarTabela();
@@ -65,12 +49,7 @@ const DATA_PATH = (() => {
 console.log(`📁 Dados persistentes em: ${DATA_PATH}`);
 if (!fs.existsSync(DATA_PATH)) fs.mkdirSync(DATA_PATH, { recursive: true });
 
-// =====================================================
-// UTILS E CLASSIFICADORES
-// =====================================================
 const utils = criarUtils(groqChatFallback);
-const classificador = criarClassificador(groqChatFallback);
-const detectorMultiplas = criarDetectorMultiplas(groqChatFallback);
 
 const ADMINISTRADORES = ['558184636954@c.us'].filter(Boolean);  // adicione mais números aqui
 const FUNCIONARIOS = ['558185937690@c.us', '558198594699@c.us', '558184597727@c.us', '558184065116@c.us']; 
@@ -87,42 +66,11 @@ let ultimoQR = null;
 
 const state = new StateManager(null);
 
-const metrics = {
-    mensagensProcessadas: 0,
-    temposResposta: [],
-    inicioBot: Date.now(),
-    erros: []
-};
-
-// =====================================================
-// MAPAS GLOBAIS
-// =====================================================
-const processingLock = new Map();
-const filaEspera = new Map();
-const mensagensPendentes = new Map();
-const debounceTimers = new Map();
-const fotosPendentes = new Map();
-
-const DEBOUNCE_TEXTO = 12000;
-const DEBOUNCE_AUDIO = 10000;
-const DEBOUNCE_MIDIA = 6000;
+const metrics = { erros: [] };
 
 let _fluxoSuporte, _fluxoFinanceiro, _fluxoPromessa, _fluxoNovoCliente, _fluxoCancelamento;
 
-// =====================================================
-// CONTEXTO PARA PROCESSAMENTO DE MENSAGENS (NOVO!)
-// =====================================================
-let messageContext = {}; // Será preenchido após inicialização dos fluxos
-
-// =====================================================
-// FUNÇÕES AUXILIARES RESTANTES (PEQUENAS)
-// =====================================================
-function logErro(contexto, erro, dados = {}) {
-    const entry = { timestamp: new Date().toISOString(), contexto, mensagem: erro.message, stack: erro.stack, dados };
-    console.error('❌', entry);
-    metrics.erros.push(entry);
-    if (metrics.erros.length > 100) metrics.erros.shift();
-}
+const fotosPendentes = new Map();
 
 async function groqChatFallback(messages, temperature = 0.5, tentativa = 1) {
     const MAX_TENTATIVAS = 3;
@@ -278,36 +226,9 @@ async function abrirChamadoComMotivo(deQuem, nome, motivo, extras = {}) {
     for (const adm of ADMINISTRADORES) await client.sendMessage(adm, msg).catch(() => {});
 }
 
-async function verificarETransferir(deQuem, motivo) {
-    const erros = state.incrementarErros ? state.incrementarErros(deQuem) : 1;
-    if (erros >= 5) {
-        state.setAtendimentoHumano(deQuem, true);
-        banco.dbSalvarAtendimentoHumano(deQuem);
-        const nome = state.getDados(deQuem)?.nomeCliente || 'não identificado';
-        banco.dbAbrirChamado(deQuem, nome, `Transferido por erro - ${motivo}`);
-        
-        const atendenteDisponivel = (new Date().getDay() >= 1 && new Date().getDay() <= 6 && horaLocal() >= 8 && horaLocal() < 20);
-        let mensagem = `🤖 *Assistente JMENET*\n\n`;
-        if (atendenteDisponivel) {
-            mensagem += `Estou com dificuldade. Já transferi para um *atendente humano*. 👤\n\nAguarde um momento!`;
-        } else {
-            mensagem += `Estou com dificuldade. 😕\n\nNo momento não temos atendentes disponíveis (seg-sáb 8h às 20h).\n\nUm atendente entrará em contato em breve.`;
-        }
-        await client.sendMessage(deQuem, mensagem);
-        for (const adm of ADMINISTRADORES) {
-            client.sendMessage(adm, `🆘 *TRANSFERÊNCIA POR ERRO*\n\nCliente: ${deQuem.replace('@c.us', '')}\nNome: ${nome}\nMotivo: ${motivo}\nErros: ${erros}`).catch(() => {});
-        }
-        return true;
-    }
-    return false;
-}
-
 // =====================================================
 // CLIENTE DO WHATSAPP
 // =====================================================
-// Wrapper que rastreia mensagens enviadas pelo bot
-const _sendMessageOriginal = null; // será setado após client ser criado
-
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: path.join(DATA_PATH, '.wwebjs_auth') }),
     puppeteer: { args: ['--no-sandbox', '--disable-setuid-sandbox'], headless: true }
@@ -450,11 +371,6 @@ function inicializarFluxos() {
         normalizarTexto: utils.normalizarTexto || (t => t),
         buscarStatusCliente: banco.buscarStatusCliente,
         darBaixaAutomatica, abrirChamadoComMotivo, utils,
-        classificador, detectorMultiplas,
-        iniciarFluxoPorIntencao: (i, d, m) => iniciarFluxoPorIntencao(i, d, m),
-        // processarResposta via lazy ref ao messageContext (populado depois de inicializarFluxos)
-        processarResposta: (d, m) => processarMensagem(d, m, messageContext),
-        verificarETransferir, fotosPendentes,
         dbLog: banco.dbLog, dbSalvarHistorico: banco.dbSalvarHistorico,
         dbCarregarHistorico: banco.dbCarregarHistorico,
         dbIniciarAtendimento: banco.dbIniciarAtendimento,
@@ -491,30 +407,6 @@ function inicializarFluxos() {
     _fluxoNovoCliente = criarFluxoNovoCliente(ctx);
     _fluxoCancelamento = criarFluxoCancelamento(ctx);
 
-    // 🔥 NOVO: Preenche o messageContext com todas as dependências
-    messageContext = {
-        state, banco, client, utils, classificador, detectorMultiplas,
-        verificarETransferir,
-        // fluxos para delegarParaFluxo
-        _fluxoSuporte, _fluxoFinanceiro, _fluxoPromessa, _fluxoNovoCliente, _fluxoCancelamento,
-        responderComIA: (d, m) => responderComIA(d, m, { banco, client, groqChatFallback }),
-        iniciarFluxoPorIntencao: (i, d, m) => iniciarFluxoPorIntencao(i, d, m),
-        processarResposta: (d, m) => processarMensagem(d, m, messageContext),
-        handleIdentificacao: (d, m) => handleIdentificacao(d, m, {
-            state, banco, client, utils, verificarETransferir,
-            processarAposIdentificacao: (d, n, o, i) => processarAposIdentificacao(d, n, o, i, {
-                banco, state, client, iniciarFluxoPorIntencao,
-                redeNormal: () => redeNormal(situacaoRede),
-                falarSinalAmigavel: () => falarSinalAmigavel(situacaoRede, previsaoRetorno),
-            })
-        }),
-        abrirChamadoComMotivo, darBaixaAutomatica,
-        processingLock, filaEspera, P, logErro, metrics, processarFila,
-        ADMINISTRADORES, sseService,
-        get situacaoRede() { return situacaoRede; },
-        get previsaoRetorno() { return previsaoRetorno; },
-    };
-
     console.log('✅ Fluxos inicializados!');
 }
 
@@ -529,336 +421,6 @@ app.get('/api/status', (req, res) => {
     });
 });
 
-async function iniciarFluxoPorIntencao(intencao, deQuem, msg) {
-    // Guarda: cliente dizendo que resolveu não abre suporte
-    if (intencao === 'SUPORTE') {
-        const textoLower = (msg?.body || '').toLowerCase();
-        const FRASES_RESOLVEU = [
-            'tudo certo','tá certo','ta certo','voltou','já voltou','ja voltou',
-            'resolveu','funcionou','tô bem','to bem','tudo bem','ficou bom',
-            'está funcionando','esta funcionando','voltou a funcionar',
-            'obrigado','obrigada','valeu','vlw','tmj','era só isso','era so isso',
-        ];
-        const parece_resolvido = FRASES_RESOLVEU.some(f => textoLower.includes(f));
-        if (parece_resolvido) {
-            console.log(`⚡ [SUPORTE] Falso-positivo bloqueado: "${msg?.body}"`);
-            return; // não abre suporte
-        }
-    }
-    // Reseta contador de não-entendidos quando detecta intenção válida
-    if (intencao !== 'OUTRO') {
-        state.atualizar(deQuem, { _naoEntendidos: 0 });
-    }
-    switch(intencao) {
-        case 'SUPORTE': {
-            // Se rede está com problema conhecido → responde direto sem pedir nome
-            if (!redeNormal(situacaoRede)) {
-                const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
-                const hora = agoraBR.getUTCHours();
-                const fora_horario = hora < 8 || hora >= 20;
-                const dadosCliente = state.getDados(deQuem) || {};
-                const jaAvisado = dadosCliente._avisadoInstabilidade || false;
-                const infoRede = falarSinalAmigavel(situacaoRede, previsaoRetorno, motivoRede);
-
-                let resposta;
-
-                if (!jaAvisado) {
-                    // Primeira vez que pergunta — explica completo
-                    resposta = `${infoRede}\n\n`;
-                    if (fora_horario) {
-                        resposta += `Sabemos do problema e nossa equipe vai entrar em contato assim que possível. 🙏\n\nSe a internet ainda estiver fora quando amanhecer, avisamos nossos técnicos para priorizarem o seu endereço.`;
-                    } else {
-                        resposta += `Nossa equipe já está trabalhando para resolver. Vamos entrar em contato assim que normalizar. 🙏`;
-                    }
-                    // Marca que já foi avisado para não repetir tudo de novo
-                    state.atualizar(deQuem, { _avisadoInstabilidade: true });
-
-                    // Abre chamado apenas na primeira vez
-                    const nome = dadosCliente.nomeCliente || null;
-                    await abrirChamadoComMotivo(deQuem, nome, `Reclamação durante instabilidade (${situacaoRede})`);
-                } else {
-                    // Cliente voltou a perguntar — resposta mais curta, verifica se ainda está com problema
-                    if (previsaoRetorno && previsaoRetorno !== 'sem previsão') {
-                        resposta = `Nossa equipe ainda está trabalhando para resolver. 🔧\n\n🕐 *Previsão de retorno:* ${previsaoRetorno}\n\nAssim que normalizar, entraremos em contato. Pedimos desculpas pelo transtorno! 🙏`;
-                    } else {
-                        resposta = `Nossa equipe ainda está trabalhando para resolver. 🔧\n\nAinda não temos uma previsão definida, mas estamos empenhados em resolver o mais rápido possível.\n\nPedimos desculpas pelo transtorno! 🙏`;
-                    }
-                }
-
-                await client.sendMessage(deQuem, `${P}${resposta}`);
-                return;
-            }
-
-            // Rede voltou ao normal — se o cliente estava esperando, celebra
-            const dadosCliente = state.getDados(deQuem) || {};
-            if (dadosCliente._avisadoInstabilidade) {
-                state.atualizar(deQuem, { _avisadoInstabilidade: false });
-            }
-            await _fluxoSuporte.iniciar(deQuem, msg);
-            break;
-        }
-        case 'FINANCEIRO': case 'PIX': case 'BOLETO': case 'CARNE': case 'DINHEIRO':
-            await _fluxoFinanceiro.iniciar(deQuem, msg, intencao); break;
-        case 'PROMESSA': await _fluxoPromessa.iniciar(deQuem, msg); break;
-        case 'NOVO_CLIENTE': await _fluxoNovoCliente.iniciar(deQuem); break;
-        case 'CANCELAMENTO': await _fluxoCancelamento.iniciar(deQuem, msg); break;
-        case 'SAUDACAO': {
-            const h = horaLocal();
-            const saudacao = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
-            const resp = `${saudacao}! Como posso te ajudar hoje?\n\n1️⃣ Suporte\n2️⃣ Financeiro\n3️⃣ Planos`;
-            await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\n${resp}`);
-            await banco.dbSalvarHistorico(deQuem, 'assistant', resp);
-            await banco.dbIniciarAtendimento(deQuem);
-            // Inicia menu_rapido para capturar a escolha do cliente
-            state.iniciar(deQuem, 'menu_rapido', 'aguardando_escolha', { msgOriginal: msg?.body });
-            break;
-        }
-        default:
-            // Conta mensagens consecutivas não entendidas
-            const dadosNaoEnt = state.getDados(deQuem) || {};
-            const naoEntendidos = (dadosNaoEnt._naoEntendidos || 0) + 1;
-            state.atualizar(deQuem, { _naoEntendidos: naoEntendidos });
-
-            if (naoEntendidos === 2) {
-                // Segunda tentativa — avisa que não entendeu e oferece menu
-                await client.sendMessage(deQuem,
-                    `${P}Hmm, não entendi muito bem. 😅 Pode me dizer com o que precisa de ajuda?\n\n` +
-                    `1️⃣ Problema com a internet\n` +
-                    `2️⃣ Pagamento / PIX\n` +
-                    `3️⃣ Falar com atendente`
-                );
-                state.iniciar(deQuem, 'menu_rapido', 'aguardando_escolha', {});
-            } else if (naoEntendidos >= 3) {
-                // Terceira tentativa — chama atendente
-                state.atualizar(deQuem, { _naoEntendidos: 0 });
-                await client.sendMessage(deQuem,
-                    `${P}Deixa eu chamar alguém pra te ajudar melhor. 😊 Aguarda um instante!`
-                );
-                await abrirChamadoComMotivo(deQuem,
-                    state.getDados(deQuem)?.nomeCliente || null,
-                    'Cliente — mensagem não reconhecida'
-                );
-            } else {
-                // Primeira tentativa — tenta IA
-                await responderComIA(deQuem, msg, { banco, client, groqChatFallback });
-            }
-    }
-}
-
-// =====================================================
-// FUNÇÕES DE FILA
-// =====================================================
-function processarFila(deQuem) {
-    const fila = filaEspera.get(deQuem) || [];
-    if (fila.length > 0) {
-        const proxima = fila.shift();
-        if (fila.length === 0) filaEspera.delete(deQuem);
-        else filaEspera.set(deQuem, fila);
-        // 🔥 CORRIGIDO: Usa messageContext
-        setImmediate(() => processarMensagem(deQuem, proxima, messageContext));
-    }
-}
-
-function agendarProcessamento(deQuem, delay) {
-    if (debounceTimers.has(deQuem)) clearTimeout(debounceTimers.get(deQuem));
-    const timer = setTimeout(async () => {
-        const fila = mensagensPendentes.get(deQuem) || [];
-        mensagensPendentes.delete(deQuem);
-        debounceTimers.delete(deQuem);
-        if (fila.length === 0) return;
-
-        const temAudio = fila.some(f => ['audio','ptt'].includes(f.tipo));
-        const temMidia = fila.some(f => ['image','document'].includes(f.tipo));
-
-        // Se está em atendimento humano, só processa comprovantes (imagem/PDF)
-        // Texto e áudio são ignorados — o admin está respondendo
-        if (state.isAtendimentoHumano(deQuem)) {
-            if (temMidia) {
-                const itemMidia = fila.find(f => ['image','document'].includes(f.tipo));
-                await processarMidiaAutomatico(deQuem, itemMidia.msg);
-            }
-            return;
-        }
-        const textos = fila.filter(f => f.tipo === 'texto').map(f => f.msg.body || '').filter(Boolean);
-
-        if (temAudio) {
-            const transcricoes = [];
-            for (const item of fila.filter(f => ['audio','ptt'].includes(f.tipo))) {
-                const t = await transcreverAudio(item.msg, process.env.GROQ_API_KEY);
-                if (t) transcricoes.push(t);
-            }
-            const tudoJunto = [...transcricoes, ...textos].join(' ').trim();
-            if (!tudoJunto) {
-                const transferiu = await verificarETransferir(deQuem, 'Não entendeu áudio');
-                if (transferiu) return;
-                await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\nNão consegui entender o áudio. Poderia digitar?`);
-                return;
-            }
-            const msgFake = { body: tudoJunto, from: deQuem, hasMedia: false };
-            // 🔥 CORRIGIDO: Usa messageContext
-            await processarMensagem(deQuem, msgFake, messageContext);
-        } else if (temMidia) {
-            const itemMidia = fila.find(f => ['image','document'].includes(f.tipo));
-            // Tenta processar como comprovante primeiro
-            const processado = await processarMidiaAutomatico(deQuem, itemMidia.msg);
-            if (!processado) {
-                // Não era comprovante — processa normalmente (ex: foto do roteador no suporte)
-                await processarMensagem(deQuem, itemMidia.msg, messageContext);
-            }
-        } else {
-            const textoJunto = textos.join(' ').trim();
-            if (!textoJunto) return;
-            const msgCombinada = { ...fila[fila.length - 1].msg, body: textoJunto };
-            // 🔥 CORRIGIDO: Usa messageContext
-            await processarMensagem(deQuem, msgCombinada, messageContext);
-        }
-    }, delay);
-    debounceTimers.set(deQuem, timer);
-}
-
-// =====================================================
-// MENSAGENS ENVIADAS PELO ADMIN (fromMe)
-// Quando admin digita direto no chat de um cliente, o bot para automaticamente
-// =====================================================
-client.on('message_create', async (msg) => {
-    if (!msg.fromMe) return; // só mensagens enviadas por nós
-
-    const para = msg.to;
-    if (!para || para.includes('@g.us') || para === 'status@broadcast') return;
-    if (ADMINISTRADORES.includes(para)) return; // conversa entre admins — ignora
-
-    // Ignorar mensagens automáticas do bot (começam com 🤖 ou são do sistema)
-    const corpo = msg.body || '';
-    if (corpo.startsWith('🤖') || corpo.startsWith('✅') || corpo === '') return;
-
-    // Admin digitou para um cliente → assume o atendimento
-    if (!state.isAtendimentoHumano(para)) {
-        state.setAtendimentoHumano(para, true);
-        await banco.dbSalvarAtendimentoHumano(para).catch(() => {});
-        sseService.notificar('estados');
-        console.log(`👤 Admin assumiu conversa com ${para.replace('@c.us','')} automaticamente`);
-    }
-    
-    // Reinicia o timer de expiração — se admin parar de digitar por 30min, bot volta
-    state.iniciarTimer(para, async (numero) => {
-        state.setAtendimentoHumano(numero, false);
-        state.encerrarFluxo(numero);
-        await banco.dbRemoverAtendimentoHumano(numero).catch(() => {});
-        console.log(`⏰ Atendimento humano expirado para ${numero.replace('@c.us','')} — bot retomou`);
-    }, 2 * 60 * 60 * 1000); // 2 horas sem digitar → bot volta
-});
-
-// =====================================================
-// =====================================================
-// MENU SIMPLES — sem IA, sem fluxos complexos
-// =====================================================
-
-const MENU_TEXTO = `🤖 *Assistente JMENET*
-
-Olá! Como posso te ajudar? 😊
-
-1️⃣ Problema com a internet
-2️⃣ Pagamento / Chave PIX
-3️⃣ Falar com atendente`;
-
-const MENU_ESTADO = 'menu'; // estado salvo no state
-
-async function processarMenuSimples(deQuem, texto) {
-    const t = texto.trim().toLowerCase();
-
-    // Opção 1 — Problema de internet
-    if (t === '1' || t.includes('internet') || t.includes('caiu') || t.includes('sinal') ||
-        t.includes('lento') || t.includes('suporte') || t.includes('técnico') || t.includes('tecnico')) {
-
-        // Rede com problema conhecido → informa direto
-        if (!redeNormal(situacaoRede)) {
-            const infoRede = falarSinalAmigavel(situacaoRede, previsaoRetorno, motivoRede);
-            const hora = new Date(Date.now() - 3 * 60 * 60 * 1000).getUTCHours();
-            const fora = hora < 8 || hora >= 20;
-            let resposta = `${P}${infoRede}\n\n`;
-            resposta += fora
-                ? `Sabemos do problema. Nossa equipe vai entrar em contato no início do expediente. 🙏`
-                : `Nossa equipe já está trabalhando para resolver. 🙏`;
-            await client.sendMessage(deQuem, resposta);
-            await abrirChamadoComMotivo(deQuem, null, `Reclamação — rede ${situacaoRede}`);
-            state.encerrarFluxo(deQuem);
-            return;
-        }
-
-        // Rede normal → coleta endereço para possível visita técnica
-        await client.sendMessage(deQuem,
-            `${P}Vou abrir um chamado de suporte para você! 🔧\n\n` +
-            `Para agilizar uma possível visita técnica, me informe:\n\n` +
-            `📍 *Endereço completo* (rua, número, bairro)`
-        );
-        state.iniciar(deQuem, 'suporte_simples', 'aguardando_endereco', {});
-        return;
-    }
-
-    // Opção 2 — Pagamento / PIX
-    if (t === '2' || t.includes('pix') || t.includes('pagar') || t.includes('pagamento') ||
-        t.includes('boleto') || t.includes('chave')) {
-        await client.sendMessage(deQuem,
-            `${P}Segue nossa chave PIX para pagamento! 😊\n\n` +
-            `Após pagar, envie o comprovante aqui que já dou baixa na hora! ✅`
-        );
-        // PIX separado logo em seguida
-        setTimeout(() => {
-            client.sendMessage(deQuem,
-                `💳 *Chave PIX:*\n\n` +
-                `📧 jmetelecomnt@gmail.com\n` +
-                `📱 +55 81 98750-0456\n\n` +
-                `👤 *Titular:* ERIVALDO CLEMENTINO DA SILVA`
-            ).catch(() => {});
-        }, 1000);
-        state.encerrarFluxo(deQuem);
-        return;
-    }
-
-    // Opção 3 — Falar com atendente
-    if (t === '3' || t.includes('atendente') || t.includes('humano') || t.includes('pessoa') ||
-        t.includes('falar') || t.includes('ligar')) {
-        await client.sendMessage(deQuem,
-            `${P}Vou chamar um atendente para te ajudar! 😊\n\nAguarda um instante.`
-        );
-        await abrirChamadoComMotivo(deQuem, null, 'Cliente solicitou atendente pelo menu');
-        state.encerrarFluxo(deQuem);
-        return;
-    }
-
-    // Não entendeu → mostra menu de novo
-    await client.sendMessage(deQuem, MENU_TEXTO);
-    state.iniciar(deQuem, MENU_ESTADO, 'aguardando_escolha', {});
-}
-
-// =====================================================
-// MENSAGENS ENVIADAS PELO ADMIN (fromMe)
-// =====================================================
-client.on('message_create', async (msg) => {
-    if (!msg.fromMe) return;
-    const para = msg.to;
-    if (!para || para.includes('@g.us') || para === 'status@broadcast') return;
-    if (ADMINISTRADORES.includes(para)) return;
-
-    // Ignorar mensagens automáticas do bot
-    const corpo = msg.body || '';
-    if (corpo.startsWith('🤖') || corpo.startsWith('💳') || corpo.startsWith('✅') || corpo === '') return;
-
-    // Admin digitou → assume conversa
-    if (!state.isAtendimentoHumano(para)) {
-        state.setAtendimentoHumano(para, true);
-        await banco.dbSalvarAtendimentoHumano(para).catch(() => {});
-        sseService.notificar('estados');
-        console.log(`👤 Admin assumiu ${para.replace('@c.us','')}`);
-    }
-    state.iniciarTimer(para, async (numero) => {
-        state.setAtendimentoHumano(numero, false);
-        state.encerrarFluxo(numero);
-        await banco.dbRemoverAtendimentoHumano(numero).catch(() => {});
-    }, 2 * 60 * 60 * 1000);
-});
-
-// =====================================================
 // =====================================================
 // MENUS
 // =====================================================
@@ -954,7 +516,8 @@ async function detectarAcaoAdmin(para, textoAdmin) {
 }
 
 // =====================================================
-// MENSAGENS ENVIADAS PELO ADMIN (fromMe)
+// MENSAGENS ENVIADAS PELO ADMIN (fromMe) — listener único
+// Quando admin digita no chat do cliente, bot assume o atendimento
 // =====================================================
 client.on('message_create', async (msg) => {
     if (!msg.fromMe) return;
@@ -965,7 +528,6 @@ client.on('message_create', async (msg) => {
     const corpo = msg.body || '';
     if (corpo.startsWith('🤖') || corpo.startsWith('💳') || corpo.startsWith('✅') || corpo === '') return;
 
-    // Assume atendimento automaticamente
     if (!state.isAtendimentoHumano(para)) {
         state.setAtendimentoHumano(para, true);
         await banco.dbSalvarAtendimentoHumano(para).catch(() => {});
@@ -973,10 +535,7 @@ client.on('message_create', async (msg) => {
         console.log(`👤 Admin assumiu ${para.replace('@c.us','')}`);
     }
 
-    // Detecta promessa/agendamento no que o admin digitou
-    if (corpo.length > 10) {
-        detectarAcaoAdmin(para, corpo).catch(() => {});
-    }
+    if (corpo.length > 10) detectarAcaoAdmin(para, corpo).catch(() => {});
 
     state.iniciarTimer(para, async (numero) => {
         state.setAtendimentoHumano(numero, false);
