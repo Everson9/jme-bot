@@ -1,45 +1,110 @@
 // services/statusService.js
+// Fonte de verdade: historico_pagamentos (subcoleção no Firebase)
+// O campo status no documento do cliente é cache — atualizado ao dar/reverter baixa
 
-function calcularStatusCliente(cliente) {
-    if (!cliente) return 'pendente';
+/**
+ * Retorna o ciclo de referência atual para um dado vencimento.
+ *
+ * Ciclos:
+ *   Data 10 → vence dia 10, tolerância até dia 15
+ *             ciclo de referência = mês atual
+ *   Data 20 → vence dia 20, tolerância até dia 25
+ *             ciclo de referência = mês atual
+ *   Data 30 → vence dia 30, tolerância até dia 4/5 do mês seguinte
+ *             se hoje é dia 1-5 → ainda no ciclo do mês ANTERIOR
+ *             se hoje é dia 6+ → ciclo do mês atual
+ *
+ * Retorna { mesRef, anoRef, chave: "MM/YYYY", docId: "MM-YYYY" }
+ */
+function getCicloAtual(diaVencimento, hoje = new Date()) {
+    const agoraBR = new Date(hoje.getTime() - 3 * 60 * 60 * 1000);
+    const diaHoje  = agoraBR.getUTCDate();
+    const mesHoje  = agoraBR.getUTCMonth() + 1;
+    const anoHoje  = agoraBR.getUTCFullYear();
 
-    // Status definidos manualmente — nunca sobrescrever
-    if (cliente.status === 'promessa') return 'promessa';
-    if (cliente.status === 'cancelado') return 'cancelado';
+    let mesRef = mesHoje;
+    let anoRef = anoHoje;
 
-    const vencimento = parseInt(cliente.dia_vencimento);
-    if (!vencimento) return 'pendente';
-
-    const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
-    const diaHoje = agoraBR.getUTCDate();
-    const mesHoje = agoraBR.getUTCMonth() + 1;
-    const anoHoje = agoraBR.getUTCFullYear();
-
-    const mesAtualKey = `${String(mesHoje).padStart(2,'0')}-${anoHoje}`;
-    const mesAnteriorDate = new Date(anoHoje, mesHoje - 2, 1);
-    const mesAnteriorKey = `${String(mesAnteriorDate.getMonth() + 1).padStart(2,'0')}-${mesAnteriorDate.getFullYear()}`;
-
-    const historico = cliente._historico || {};
-
-    // Pagou ou está isento no mês atual → pago
-    if (historico[mesAtualKey]?.status === 'pago') return 'pago';
-    if (historico[mesAtualKey]?.status === 'isento') return 'pago';
-
-    // Janela de cobrança: cliente só vira pendente 2 dias ANTES do vencimento
-    // Data 10 → pendente a partir do dia 9
-    // Data 20 → pendente a partir do dia 19
-    // Data 30 → pendente a partir do dia 29
-    if (diaHoje < vencimento - 1) {
-        // Ainda dentro do ciclo anterior
-        if (historico[mesAnteriorKey]?.status === 'pago') return 'pago';
-        if (historico[mesAnteriorKey]?.status === 'isento') return 'pago';
-        // Sem histórico mas ainda no ciclo → em_dia (benefício da dúvida)
-        return 'em_dia';
+    if (diaVencimento === 30 && diaHoje <= 5) {
+        // Ainda dentro da tolerância do mês anterior
+        mesRef = mesHoje === 1 ? 12 : mesHoje - 1;
+        anoRef = mesHoje === 1 ? anoHoje - 1 : anoHoje;
     }
 
-    // Entrou na janela de cobrança
-    if (historico[mesAtualKey]) return historico[mesAtualKey].status;
+    const mm = String(mesRef).padStart(2, '0');
+    return {
+        mesRef,
+        anoRef,
+        chave: `${mm}/${anoRef}`,   // "03/2026" — usado na exibição e como referencia no doc
+        docId: `${mm}-${anoRef}`,   // "03-2026" — ID do documento no Firestore
+    };
+}
+
+/**
+ * Calcula o status do cliente.
+ *
+ * Se _historico for passado (objeto { "MM-YYYY": { status, ... } }),
+ * usa o registro do ciclo atual para determinar o status.
+ *
+ * Se _historico for null/undefined, retorna o campo status do Firebase
+ * (usado na listagem geral para evitar leituras excessivas).
+ *
+ * Retorna: 'pago' | 'pendente' | 'em_dia' | 'promessa' | 'cancelado'
+ */
+function calcularStatusCliente(cliente, _historico = null) {
+    if (!cliente) return 'pendente';
+
+    // Status manuais — nunca sobrescrever
+    if (cliente.status === 'cancelado') return 'cancelado';
+    if (cliente.status === 'promessa')  return 'promessa';
+
+    const diaVencimento = parseInt(cliente.dia_vencimento);
+    if (!diaVencimento) return cliente.status || 'pendente';
+
+    // Sem histórico passado → usa campo status diretamente (cache)
+    if (!_historico) return cliente.status || 'pendente';
+
+    const ciclo = getCicloAtual(diaVencimento);
+
+    // Tenta localizar o registro pelo docId ("MM-YYYY") ou chave ("MM/YYYY")
+    const reg = _historico[ciclo.docId] || _historico[ciclo.chave] || null;
+
+    if (reg) {
+        if (reg.status === 'pago' || reg.status === 'isento') return 'pago';
+        return reg.status || 'pendente';
+    }
+
+    // Sem registro no ciclo atual — verifica se ainda não venceu
+    const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    const diaHoje  = agoraBR.getUTCDate();
+    const mesHoje  = agoraBR.getUTCMonth() + 1;
+
+    if (diaVencimento === 10 && diaHoje < 10) return 'em_dia';
+    if (diaVencimento === 20 && diaHoje < 20) return 'em_dia';
+    if (diaVencimento === 30) {
+        // Data 30: ainda "em dia" se não passou o dia 30 do mês atual
+        // OU se é dia 1-5 do mês seguinte (getCicloAtual já aponta pro mês anterior)
+        const { mesRef } = ciclo;
+        if (mesRef === mesHoje && diaHoje < 30) return 'em_dia';
+        if (mesRef !== mesHoje && diaHoje <= 5)  return 'em_dia'; // tolerância
+    }
+
     return 'pendente';
 }
 
-module.exports = { calcularStatusCliente };
+/**
+ * Retorna true se o cliente deve ser cobrado no ciclo atual.
+ * Usado pela cobrança automática — verifica o histórico, não o campo status.
+ *
+ * @param {Object} cliente         - Documento do cliente
+ * @param {Object|null} registro   - Registro do historico_pagamentos do ciclo atual (ou null)
+ */
+function deveSerCobrado(cliente, registro) {
+    if (cliente.status === 'cancelado') return false;
+    if (!registro) return true; // sem registro → deve cobrar
+    if (registro.status === 'pago')   return false;
+    if (registro.status === 'isento') return false;
+    return true;
+}
+
+module.exports = { calcularStatusCliente, getCicloAtual, deveSerCobrado };

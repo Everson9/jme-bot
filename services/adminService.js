@@ -1,24 +1,20 @@
-// services/adminService.js - COMPLETO E CORRIGIDO
-
-const { calcularStatusCliente } = require('./statusService');
+// services/adminService.js
+const { getCicloAtual, deveSerCobrado } = require('./statusService');
 
 // =====================================================
-// FUNÇÃO PARA PERGUNTAR AOS ADMINS (COM VOTAÇÃO)
+// PERGUNTA AOS ADMINS (VOTAÇÃO VIA WHATSAPP)
 // =====================================================
 async function perguntarAdmins(client, firebaseDb, ADMINISTRADORES, datas, tipo, total, hojeStr, listaClientes = []) {
-    console.log(`🤔 Perguntando aos admins sobre cobrança dia ${datas}...`);
-    
     const votacaoId = `votacao_${Date.now()}`;
     const TIPO_LABEL = {
-        lembrete: '📅 Lembrete (D-1)',
-        atraso: '⚠️ Atraso (D+3)',
-        atraso_final: '🔴 Atraso Final (D+5)',
-        reconquista: '💙 Reconquista (D+7)',
+        lembrete:          '📅 Lembrete (D-1)',
+        atraso:            '⚠️ Atraso (D+3)',
+        atraso_final:      '🔴 Atraso Final (D+5)',
+        reconquista:       '💙 Reconquista (D+7)',
         reconquista_final: '💔 Última Chance (D+10)',
     };
 
-    // Monta lista de nomes
-    const nomes = listaClientes.slice(0, 30).map((c, i) => `${i+1}. ${c.nome}`).join('\n');
+    const nomes = listaClientes.slice(0, 30).map((c, i) => `${i + 1}. ${c.nome}`).join('\n');
     const extra = listaClientes.length > 30 ? `\n... e mais ${listaClientes.length - 30}` : '';
 
     const mensagem =
@@ -34,272 +30,215 @@ async function perguntarAdmins(client, firebaseDb, ADMINISTRADORES, datas, tipo,
     for (const adm of ADMINISTRADORES) {
         await client.sendMessage(adm, mensagem).catch(() => {});
     }
-    
-    // Salva no Firebase para controle
+
     await firebaseDb.collection('votacoes').doc(votacaoId).set({
-        datas,
-        tipo,
-        total,
-        data: hojeStr,
-        status: 'aguardando',
-        criado_em: new Date().toISOString(),
-        resolvido: false
+        datas, tipo, total, data: hojeStr,
+        status: 'aguardando', criado_em: new Date().toISOString(), resolvido: false
     });
 
-    // Salva último votacaoId ativo para os comandos simplificados !sim e !nao
     await firebaseDb.collection('config').doc('ultima_votacao').set({
-        votacaoId,
-        criado_em: new Date().toISOString()
+        votacaoId, criado_em: new Date().toISOString()
     });
-    
-    // Aguarda resposta (promessa que será resolvida por um listener externo)
+
     return new Promise((resolve) => {
-        // Cria um listener temporário no Firebase
         const unsubscribe = firebaseDb.collection('votacoes').doc(votacaoId)
             .onSnapshot((doc) => {
                 if (!doc.exists) return;
-                
                 const data = doc.data();
                 if (data.resolvido) {
                     unsubscribe();
-                    if (data.resultado === 'aprovado') {
-                        console.log('✅ Votação aprovada');
-                        resolve(true);
-                    } else if (data.resultado === 'negado') {
-                        console.log('❌ Votação negada pelo admin');
-                        resolve(false);
-                    } else {
-                        // expirado ou outro — não bloqueia
-                        resolve(null);
-                    }
+                    if (data.resultado === 'aprovado') resolve(true);
+                    else if (data.resultado === 'negado') resolve(false);
+                    else resolve(null);
                 }
             });
-        
-        // Timeout de 5 minutos — expira silenciosamente (não salva cobranca_negada para não bloquear o dia)
+
+        // Timeout de 5 minutos — expira silenciosamente
         setTimeout(() => {
             unsubscribe();
-            console.log('⏰ Votação expirada sem resposta — será tentada novamente no próximo ciclo');
             firebaseDb.collection('votacoes').doc(votacaoId).update({
-                status: 'expirado',
-                resolvido: true,
-                resultado: 'expirado'  // diferente de 'negado' — não bloqueia o dia
+                status: 'expirado', resolvido: true, resultado: 'expirado'
             }).catch(() => {});
-            resolve(null);  // null = expirou, não negou
+            resolve(null);
         }, 5 * 60 * 1000);
     });
 }
 
 // =====================================================
-// FUNÇÃO PARA VERIFICAR COBRANÇAS AUTOMÁTICAS
+// VERIFICAÇÃO DE COBRANÇAS AUTOMÁTICAS
+// Roda a cada 2 horas — identifica quem deve ser cobrado
+// baseado no HISTÓRICO DE PAGAMENTOS, não no campo status
 // =====================================================
 async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES, situacaoRede, previsaoRetorno, redeNormal, dispararCobrancaReal) {
-    console.log('⏰ Verificando cobranças automáticas...');
-
-    const agora = new Date();
-    // Ajuste para horário de Brasília (UTC-3)
+    const agora   = new Date();
     const agoraBR = new Date(agora.getTime() - 3 * 60 * 60 * 1000);
-    const hora = agoraBR.getUTCHours();
-    const dia = agoraBR.getUTCDate();
-    const mes = agoraBR.getUTCMonth() + 1;
-    const ano = agoraBR.getUTCFullYear();
-    const diaSemana = agoraBR.getUTCDay();
-    // hojeStr no horário de Brasília
-    const hojeStr = `${ano}-${String(mes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
-    
-    // =====================================================
-    // VERIFICAÇÕES INICIAIS
-    // =====================================================
-    if (hora < 11 || hora >= 17) { 
-        console.log('⏰ Fora do horário (11h-17h)'); 
-        return; 
-    }
-    
-    if (diaSemana === 0) { 
-        console.log('📅 Domingo - sem cobranças'); 
-        return; 
-    }
-    
-    if (!redeNormal()) {
-        console.log(`📡 Rede ${situacaoRede} - bloqueado`);
-        await firebaseDb.collection('config').doc('cobranca_adiada').set({
-            valor: { 
-                dia, mes, ano, 
-                motivoBloqueio: situacaoRede, 
-                previsao: previsaoRetorno, 
-                entradas: [] 
-            }
-        });
+    const hora       = agoraBR.getUTCHours();
+    const diaSemana  = agoraBR.getUTCDay(); // 0=dom, 6=sab
+    const diaHoje    = agoraBR.getUTCDate();
+    const mesHoje    = agoraBR.getUTCMonth() + 1;
+    const anoHoje    = agoraBR.getUTCFullYear();
+    const hojeStr    = `${anoHoje}-${String(mesHoje).padStart(2,'0')}-${String(diaHoje).padStart(2,'0')}`;
+
+    // Janela de operação: 11h-17h, seg-sab
+    if (hora < 11 || hora >= 17) {
+        console.log('⏰ Cobrança: fora do horário (11h-17h)');
         return;
     }
-    
-    // Sem bloqueio por negação — admin pode negar e ser perguntado novamente no próximo ciclo
-    
+    if (diaSemana === 0) {
+        console.log('📅 Cobrança: domingo — sem cobranças');
+        return;
+    }
+    if (!redeNormal()) {
+        console.log(`📡 Cobrança: rede ${situacaoRede} — bloqueado`);
+        return;
+    }
+
     // =====================================================
-    // VERIFICAR DIAS DE VENCIMENTO
+    // CALENDÁRIO DE COBRANÇAS
+    // Para cada data de vencimento, calcula os dias de disparo:
+    //   Data 10: lembrete=9, atraso=13, atraso_final=15, reconquista=17, reconquista_final=20
+    //   Data 20: lembrete=19, atraso=23, atraso_final=25, reconquista=27, reconquista_final=30/1
+    //   Data 30: lembrete=29, atraso=3(+1m), atraso_final=5(+1m), reconquista=7(+1m), reconquista_final=10(+1m)
     // =====================================================
-    const diasVenc = [10, 20, 30];
+    const calendarioCobranças = [
+        // { dataVenc, tipo, diaDisparo, mesDisparo, anoDisparo }
+        // Data 10
+        { dataVenc: 10, tipo: 'lembrete',          diaDisparo:  9, mesDisparo: mesHoje, anoDisparo: anoHoje },
+        { dataVenc: 10, tipo: 'atraso',             diaDisparo: 13, mesDisparo: mesHoje, anoDisparo: anoHoje },
+        { dataVenc: 10, tipo: 'atraso_final',       diaDisparo: 15, mesDisparo: mesHoje, anoDisparo: anoHoje },
+        { dataVenc: 10, tipo: 'reconquista',        diaDisparo: 17, mesDisparo: mesHoje, anoDisparo: anoHoje },
+        { dataVenc: 10, tipo: 'reconquista_final',  diaDisparo: 20, mesDisparo: mesHoje, anoDisparo: anoHoje },
+        // Data 20
+        { dataVenc: 20, tipo: 'lembrete',          diaDisparo: 19, mesDisparo: mesHoje, anoDisparo: anoHoje },
+        { dataVenc: 20, tipo: 'atraso',             diaDisparo: 23, mesDisparo: mesHoje, anoDisparo: anoHoje },
+        { dataVenc: 20, tipo: 'atraso_final',       diaDisparo: 25, mesDisparo: mesHoje, anoDisparo: anoHoje },
+        { dataVenc: 20, tipo: 'reconquista',        diaDisparo: 27, mesDisparo: mesHoje, anoDisparo: anoHoje },
+        { dataVenc: 20, tipo: 'reconquista_final',  diaDisparo: 30, mesDisparo: mesHoje, anoDisparo: anoHoje },
+        // Data 30 — disparos caem no mês seguinte (exceto lembrete)
+        { dataVenc: 30, tipo: 'lembrete',          diaDisparo: 29, mesDisparo: mesHoje, anoDisparo: anoHoje },
+        { dataVenc: 30, tipo: 'atraso',             diaDisparo:  3, mesDisparo: mesHoje === 12 ? 1 : mesHoje + 1, anoDisparo: mesHoje === 12 ? anoHoje + 1 : anoHoje },
+        { dataVenc: 30, tipo: 'atraso_final',       diaDisparo:  5, mesDisparo: mesHoje === 12 ? 1 : mesHoje + 1, anoDisparo: mesHoje === 12 ? anoHoje + 1 : anoHoje },
+        { dataVenc: 30, tipo: 'reconquista',        diaDisparo:  7, mesDisparo: mesHoje === 12 ? 1 : mesHoje + 1, anoDisparo: mesHoje === 12 ? anoHoje + 1 : anoHoje },
+        { dataVenc: 30, tipo: 'reconquista_final',  diaDisparo: 10, mesDisparo: mesHoje === 12 ? 1 : mesHoje + 1, anoDisparo: mesHoje === 12 ? anoHoje + 1 : anoHoje },
+    ];
+
+    // Filtra apenas os disparos de hoje
+    const disparosHoje = calendarioCobranças.filter(c =>
+        c.diaDisparo === diaHoje &&
+        c.mesDisparo === mesHoje &&
+        c.anoDisparo === anoHoje
+    );
+
+    // Se segunda-feira, também verifica se o domingo teve disparo perdido
+    if (diaSemana === 1) {
+        const ontem = new Date(agoraBR.getTime() - 86400000);
+        const diaOntem = ontem.getUTCDate();
+        const mesOntem = ontem.getUTCMonth() + 1;
+        const anoOntem = ontem.getUTCFullYear();
+        const disparosOntem = calendarioCobranças.filter(c =>
+            c.diaDisparo === diaOntem &&
+            c.mesDisparo === mesOntem &&
+            c.anoDisparo === anoOntem
+        );
+        disparosHoje.push(...disparosOntem);
+    }
+
+    if (disparosHoje.length === 0) {
+        console.log('📭 Cobrança automática: nenhum disparo hoje');
+        return;
+    }
+
+    // Para cada disparo, verifica se já foi feito hoje e quais clientes cobrar
     const cobrancasParaExecutar = [];
 
-    // Se hoje é segunda (diaSemana=1), também verifica o domingo que passou
-    // pois cobranças de domingo são puladas e devem ser feitas na segunda
-    const diasParaVerificar = [dia];
-    if (diaSemana === 1) {
-        diasParaVerificar.push(dia - 1); // ontem = domingo
-    }
-    
-    for (const venc of diasVenc) {
-        let tipo = null;
+    for (const disparo of disparosHoje) {
+        // Verifica se já foi executado hoje
+        const jaFeitoSnap = await firebaseDb.collection('log_cobrancas')
+            .where('data_vencimento', '==', String(disparo.dataVenc))
+            .where('tipo', '==', disparo.tipo)
+            .where('data_envio', '==', hojeStr)
+            .limit(1)
+            .get();
 
-        for (const diaVerif of diasParaVerificar) {
-            // Verificar lembrete ANTES de calcular atraso de virada
-            // dia 9 → venc 10, dia 19 → venc 20, dia 29 → venc 30
-            if (diaVerif === venc - 1) {
-                tipo = 'lembrete';
-                break;
-            } else {
-                // Calcula atraso considerando virada de mês
-                let atraso;
-                if (diaVerif >= venc) {
-                    atraso = diaVerif - venc; // mesmo mês
-                } else {
-                    // Dia atual < venc → estamos no mês seguinte ao vencimento
-                    const diasNoMesAnterior = new Date(ano, mes - 1, 0).getDate();
-                    atraso = (diasNoMesAnterior - venc) + diaVerif;
-                }
-
-                if (atraso === 3)  { tipo = 'atraso'; break; }
-                else if (atraso === 5)  { tipo = 'atraso_final'; break; }
-                else if (atraso === 7)  { tipo = 'reconquista'; break; }
-                else if (atraso === 10) { tipo = 'reconquista_final'; break; }
-            }
+        if (!jaFeitoSnap.empty) {
+            console.log(`⏭️ Cobrança dia ${disparo.dataVenc} (${disparo.tipo}) já feita hoje`);
+            continue;
         }
-        
-        if (tipo) {
-            // 🔥 VERIFICAR SE JÁ FOI COBRADO HOJE
-            const jaCobradoHoje = await firebaseDb.collection('log_cobrancas')
-                .where('data_vencimento', '==', String(venc))
-                .where('tipo', '==', tipo)
-                .where('data_envio', '==', hojeStr)
+
+        // Busca clientes com esse dia de vencimento
+        const clientesSnap = await firebaseDb.collection('clientes')
+            .where('dia_vencimento', '==', disparo.dataVenc)
+            .get();
+
+        if (clientesSnap.empty) continue;
+
+        // Determina o ciclo de referência para este vencimento
+        const cicloRef = getCicloAtual(disparo.dataVenc);
+
+        // Para cada cliente, verifica o histórico do ciclo atual
+        const clientesParaCobrar = [];
+        for (const doc of clientesSnap.docs) {
+            const cliente = { id: doc.id, ...doc.data() };
+
+            // Cancelados nunca cobrar
+            if (cliente.status === 'cancelado') continue;
+
+            // Verifica se tem carnê pendente
+            const carneSnap = await firebaseDb.collection('carne_solicitacoes')
+                .where('cliente_id', '==', doc.id)
+                .where('status', 'in', ['solicitado', 'impresso'])
+                .limit(1)
                 .get();
-            
-            if (!jaCobradoHoje.empty) {
-                console.log(`⏭️ Data ${venc} (${tipo}) já processada hoje - ignorando`);
+            if (!carneSnap.empty) {
+                console.log(`   ⏭️ ${cliente.nome} — tem carnê pendente`);
                 continue;
             }
-            
-            // 🔥 BUSCA CLIENTES COM VENCIMENTO NESTE DIA (sem filtrar por status)
-            const clientesSnapshot = await firebaseDb.collection('clientes')
-                .where('dia_vencimento', '==', venc)
-                .get();
-            
-            if (clientesSnapshot.size > 0) {
-                // 🔥 FILTRA CLIENTES QUE REALMENTE PRECISAM SER COBRADOS
-                const clientesValidos = [];
-                
-                for (const doc of clientesSnapshot.docs) {
-                    const cliente = doc.data();
-                    
-                    // 🔥 VERIFICA STATUS REAL (baseado no histórico)
-                    const statusReal = calcularStatusCliente(cliente);
-                    
-                    // Só cobra se NÃO pagou este mês
-                    if (statusReal === 'pago') {
-                        console.log(`   ✅ Cliente ${cliente.nome} já pagou este mês - não cobrar`);
-                        continue;
-                    }
-                    
-                    // ⚠️ VERIFICA SE TEM CARNÊ SOLICITADO PENDENTE
-                    const carnesPendentes = await firebaseDb.collection('carne_solicitacoes')
-                        .where('cliente_id', '==', doc.id)
-                        .where('status', 'in', ['solicitado', 'impresso'])
-                        .get();
-                    
-                    if (!carnesPendentes.empty) {
-                        console.log(`   ⏭️ Cliente ${cliente.nome} tem carnê pendente - não cobrar`);
-                        continue; // Pula este cliente
-                    }
-                    
-                    // Cliente válido para cobrança
-                    clientesValidos.push(cliente);
-                }
-                
-                if (clientesValidos.length > 0) {
-                    cobrancasParaExecutar.push({ 
-                        data: String(venc), 
-                        tipo, 
-                        clientes: clientesValidos.length,
-                        total_original: clientesSnapshot.size,
-                        lista: clientesValidos  // passa os objetos para exibir nomes
-                    });
-                }
+
+            // Busca registro do histórico do ciclo atual
+            const historicoDoc = await firebaseDb.collection('clientes').doc(doc.id)
+                .collection('historico_pagamentos').doc(cicloRef.docId).get();
+            const registro = historicoDoc.exists ? historicoDoc.data() : null;
+
+            if (!deveSerCobrado(cliente, registro)) {
+                console.log(`   ✅ ${cliente.nome} — já pagou ${cicloRef.chave}`);
+                continue;
             }
+
+            clientesParaCobrar.push(cliente);
+        }
+
+        if (clientesParaCobrar.length > 0) {
+            cobrancasParaExecutar.push({
+                dataVenc: String(disparo.dataVenc),
+                tipo: disparo.tipo,
+                clientes: clientesParaCobrar,
+            });
         }
     }
-    
-    if (cobrancasParaExecutar.length === 0) { 
-        console.log('📭 Nada para hoje (já processado, sem clientes ou todos com carnê)'); 
-        return; 
+
+    if (cobrancasParaExecutar.length === 0) {
+        console.log('📭 Cobrança automática: todos já pagaram ou sem clientes elegíveis');
+        return;
     }
-    
-    // =====================================================
-    // PERGUNTA AOS ADMINS (uma mensagem com tudo)
-    // =====================================================
-    // Para cada grupo separado, manda uma mensagem/votação
-    let algumAutorizado = false;
-    for (const c of cobrancasParaExecutar) {
+
+    // Pergunta aos admins para cada grupo
+    for (const cobranca of cobrancasParaExecutar) {
         const autorizado = await perguntarAdmins(
             client, firebaseDb, ADMINISTRADORES,
-            c.data, c.tipo, c.clientes, hojeStr, c.lista || []
+            cobranca.dataVenc, cobranca.tipo, cobranca.clientes.length,
+            hojeStr, cobranca.clientes
         );
-        if (autorizado === true) algumAutorizado = true;
-        if (autorizado === false) {
-            console.log(`❌ Admin negou cobrança dia ${c.data} (${c.tipo})`);
-            continue;
-        }
-        if (autorizado === null) {
-            console.log(`⏰ Votação expirou para dia ${c.data} (${c.tipo}) — próximo ciclo`);
-            continue;
-        }
-        // Executa imediatamente após aprovação
-        console.log(`✅ Autorizado! Disparando: Data ${c.data} — ${c.tipo}`);
-        await dispararCobrancaReal(c.data, c.tipo); // wrapper já tem client+firebaseDb
-        await new Promise(r => setTimeout(r, 2000));
-    }
-    
-    if (!algumAutorizado) return;
-    // Cobranças já disparadas no loop acima
-    const autorizado = true; // dummy para não quebrar o bloco abaixo
-    
-    if (autorizado === null) {
-        console.log('⏰ Votação expirou sem resposta — tentará novamente no próximo ciclo');
-        return;
-    }
 
-    if (!autorizado) {
-        console.log('❌ Cobrança negada pelo admin');
-        await firebaseDb.collection('config').doc('cobranca_adiada').set({
-            valor: { 
-                dia, mes, ano, 
-                motivoBloqueio: 'negado_admin', 
-                entradas: cobrancasParaExecutar.map(c => ({
-                    data: c.data,
-                    tipo: c.tipo,
-                    clientes: c.clientes
-                }))
-            }
-        });
-        
-        // Não salva bloqueio — será perguntado novamente no próximo ciclo (2h)
-        return;
+        if (autorizado === true) {
+            console.log(`✅ Autorizado! Disparando dia ${cobranca.dataVenc} — ${cobranca.tipo}`);
+            await dispararCobrancaReal(cobranca.dataVenc, cobranca.tipo, cobranca.clientes);
+            await new Promise(r => setTimeout(r, 2000));
+        } else if (autorizado === false) {
+            console.log(`❌ Admin negou cobrança dia ${cobranca.dataVenc} (${cobranca.tipo})`);
+        } else {
+            console.log(`⏰ Votação expirou para dia ${cobranca.dataVenc} — tentará no próximo ciclo`);
+        }
     }
-    
-    console.log('✅ Todas as cobranças processadas!');
 }
 
-// =====================================================
-// EXPORTA AS FUNÇÕES
-// =====================================================
-module.exports = { 
-    perguntarAdmins, 
-    verificarCobrancasAutomaticas 
-};
+module.exports = { perguntarAdmins, verificarCobrancasAutomaticas };
