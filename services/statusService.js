@@ -66,7 +66,7 @@ function calcularStatusCliente(cliente, _historico = null) {
     if (!_historico) return cliente.status || 'pendente';
 
     const ciclo = getCicloAtual(diaVencimento);
-    const agoraBR = new Date(hoje.getTime() - 3 * 60 * 60 * 1000);
+    const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
     const diaHoje  = agoraBR.getUTCDate();
     const mesHoje  = agoraBR.getUTCMonth() + 1;
     const anoHoje  = agoraBR.getUTCFullYear();
