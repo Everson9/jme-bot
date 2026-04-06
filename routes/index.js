@@ -1,5 +1,6 @@
 // routes/index.js
 module.exports = function setupRoutes(app, ctx) {
+    const requireAuth = require('../middleware/auth');
     const { calcularStatusCliente, getCicloAtual } = require('../services/statusService');
     const {
         db: firebaseDb, banco, state, client, ADMINISTRADORES,
@@ -9,6 +10,12 @@ module.exports = function setupRoutes(app, ctx) {
         executarMigracao, isentarMesEntrada,
         verificarPromessasVencidas, fs, path
     } = ctx;
+
+    // ─────────────────────────────────────────────────────
+    // MIDDLEWARE DE AUTENTICAÇÃO (aplica em todas as rotas /api/*)
+    // Se ADMIN_API_KEY não estiver definida, passa sem validar (modo dev)
+    // ─────────────────────────────────────────────────────
+    app.use('/api', requireAuth);
 
     // ─────────────────────────────────────────────────────
     // HORÁRIOS
@@ -967,33 +974,49 @@ module.exports = function setupRoutes(app, ctx) {
             const basesSnap = await firebaseDb.collection('bases').get();
             const baseMap = {}; basesSnap.docs.forEach(d=>{baseMap[d.id]=d.data().nome;});
 
-            // Busca historico_pagamentos para filtrar os pagos do ciclo atual
-            const mesRefMM = String(mesHoje).padStart(2,'0');
-            const cicloAtual = `${mesRefMM}-${anoHoje}`;
-            const pagosNoCiclo = new Set();
+            const lista = [];
             await Promise.all(snap.docs.map(async doc => {
+                const c = doc.data();
+                if (c.status === 'cancelado') return;
+
+                const diaVenc = parseInt(c.dia_vencimento) || 10;
+                const cicloRef = getCicloAtual(diaVenc, agoraBR);
+
+                // Busca pagamento do ciclo correto deste cliente
+                let pago = false;
                 try {
-                    const h = await firebaseDb.collection('clientes').doc(doc.id).collection('historico_pagamentos').doc(cicloAtual).get();
-                    if (h.exists) {
-                        const hs = h.data();
-                        if (hs.status === 'pago' || hs.status === 'isento') pagosNoCiclo.add(doc.id);
-                    }
+                    const h = await firebaseDb.collection('clientes').doc(doc.id)
+                        .collection('historico_pagamentos').doc(cicloRef.docId).get();
+                    if (h.exists && (h.data().status === 'pago' || h.data().status === 'isento')) pago = true;
                 } catch(_) {}
+
+                if (pago) return;
+
+                // Calcula atraso
+                const venc = diaVenc;
+                const cicloMesRef = cicloRef.mesRef;
+                const cicloAnoRef = cicloRef.anoRef;
+                let atraso;
+                if (mesHoje === cicloMesRef && anoHoje === cicloAnoRef) {
+                    // Estamos no mês de referência do ciclo
+                    if (diaHoje >= venc) atraso = diaHoje - venc;
+                    else {
+                        const diasMesAnt = new Date(anoHoje, mesHoje - 1, 0).getDate();
+                        atraso = (diasMesAnt - venc) + diaHoje;
+                    }
+                } else if (mesHoje > cicloMesRef || (mesHoje <= cicloMesRef && anoHoje > cicloAnoRef)) {
+                    // Já passou do mês de referência
+                    const diffMes = (anoHoje - cicloAnoRef) * 12 + (mesHoje - cicloMesRef);
+                    atraso = diffMes * 30 + diaHoje;
+                } else {
+                    // Ainda estamos antes do vencimento do ciclo
+                    return;
+                }
+
+                if (atraso < dias) return;
+                lista.push({ id:doc.id, nome:c.nome, telefone:c.telefone, plano:c.plano, dia_vencimento:venc, base_nome:baseMap[String(c.base_id)]||null, dias_pendente:atraso, mes_referencia:cicloRef.chave });
             }));
 
-            const lista = [];
-            snap.docs.forEach(doc => {
-                const c=doc.data();
-                if (c.status === 'pago' || c.status === 'isento') return;
-                if (c.status === 'cancelado') return;
-                if (pagosNoCiclo.has(doc.id)) return; // pago no ciclo atual mesmo que status desatualizado
-                const venc=parseInt(c.dia_vencimento)||10;
-                let atraso;
-                if (diaHoje>=venc) atraso=diaHoje-venc;
-                else { atraso=(new Date(anoHoje,mesHoje-1,0).getDate()-venc)+diaHoje; if(atraso<0) return; }
-                if (atraso<dias) return;
-                lista.push({ id:doc.id, nome:c.nome, telefone:c.telefone, plano:c.plano, dia_vencimento:venc, base_nome:baseMap[String(c.base_id)]||null, dias_pendente:atraso, status_real: c.status, mes_referencia: cicloAtual.replace('-', '/'), });
-            });
             lista.sort((a,b)=>b.dias_pendente-a.dias_pendente);
             res.json(lista);
         } catch { res.json([]); }

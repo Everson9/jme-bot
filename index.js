@@ -49,8 +49,16 @@ console.log(`📁 Dados persistentes em: ${DATA_PATH}`);
 if (!fs.existsSync(DATA_PATH)) fs.mkdirSync(DATA_PATH, { recursive: true });
 
 const P = "🤖 *Assistente JMENET*\n\n";
-const ADMINISTRADORES = ['558184636954@c.us'].filter(Boolean);
-const FUNCIONARIOS    = ['558185937690@c.us','558198594699@c.us','558184597727@c.us','558184065116@c.us'];
+
+const toWpp = (n) => {
+    const cleaned = n.replace(/\D/g, '');
+    return (cleaned.startsWith('55') ? cleaned : '55' + cleaned) + '@c.us';
+};
+const parseNumbers = (env, fallback) =>
+    (process.env[env] || fallback).split(',').map(s => s.trim()).filter(Boolean).map(toWpp);
+
+const ADMINISTRADORES = parseNumbers('ADMIN_PHONE', '558184636954');
+const FUNCIONARIOS    = parseNumbers('FUNCIONARIO_PHONE', '558185937690,558198594699,558184597727,558184065116');
 
 let botAtivo            = true;
 let situacaoRede        = 'normal';

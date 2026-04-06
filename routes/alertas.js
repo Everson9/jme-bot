@@ -1,108 +1,71 @@
 // routes/alertas.js
 module.exports = function setupRotasAlertas(app, ctx) {
     const { db: firebaseDb } = ctx;
+    const { getCicloAtual } = require('../services/statusService');
 
-    // =====================================================
-    // ROTA DE ALERTAS PARA NOTIFICAÇÕES
-    // =====================================================
+    // ROTA DE ALERTAS PARA NOTIFICAÇÕES (SSE)
+    // A versão principal está em routes/index.js, esta serve o SSE em tempo real
     app.get('/api/dashboard/alertas', async (req, res) => {
         try {
-            const hoje = new Date();
-            // Usar horário de Brasília (UTC-3) para comparar datas corretamente
-            const hojeBR = new Date(hoje.getTime() - 3 * 60 * 60 * 1000);
+            const hojeBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
             const hojeStr = hojeBR.toISOString().split('T')[0];
             const amanha = new Date(hojeBR);
             amanha.setDate(amanha.getDate() + 1);
             const amanhaStr = amanha.toISOString().split('T')[0];
-            
-            // Função para converter data DD/MM/AAAA para YYYY-MM-DD
+
             const toDate = (d) => {
                 if (!d) return null;
-                // Formato DD/MM/AAAA (salvo pelo bot)
                 if (d.includes('/')) {
                     const partes = d.split('/');
                     if (partes.length === 3) return `${partes[2]}-${partes[1]}-${partes[0]}`;
                 }
-                // Formato YYYY-MM-DD (salvo pelo painel) — já está correto
                 if (/^\d{4}-\d{2}-\d{2}/.test(d)) return d.split('T')[0];
                 return null;
             };
-            
-            // Promessas pendentes (não notificadas)
-            const promessasSnapshot = await firebaseDb.collection('promessas')
-                .where('status', '==', 'pendente')
-                .where('notificado', '==', 0)
-                .get();
-            
-            const promessasHoje = [];
-            const promessasAmanha = [];
-            
+
+            const [promessasSnapshot, chamadosSnapshot] = await Promise.all([
+                firebaseDb.collection('promessas').where('status','==','pendente').where('notificado','==',0).get(),
+                firebaseDb.collection('chamados').where('status','==','aberto').get(),
+            ]);
+
+            const promessasHoje = [], promessasAmanha = [];
             promessasSnapshot.docs.forEach(doc => {
                 const p = doc.data();
                 const dataFormatada = toDate(p.data_promessa);
-                if (dataFormatada === hojeStr) {
-                    promessasHoje.push({
-                        nome: p.nome,
-                        numero: p.numero,
-                        data_promessa: p.data_promessa
-                    });
-                } else if (dataFormatada === amanhaStr) {
-                    promessasAmanha.push({ nome: p.nome });
-                }
+                if (dataFormatada === hojeStr) promessasHoje.push({ nome:p.nome, numero:p.numero, data_promessa:p.data_promessa });
+                else if (dataFormatada === amanhaStr) promessasAmanha.push({ nome:p.nome });
             });
-            
-            // Inadimplentes (pendente + mais de 5 dias sem atualizar)
-            const cincoDiasAtras = new Date();
-            cincoDiasAtras.setDate(cincoDiasAtras.getDate() - 5);
-            
-            const inadimplentesSnapshot = await firebaseDb.collection('clientes')
-                .where('status', '==', 'pendente')
-                .where('atualizado_em', '<=', cincoDiasAtras.toISOString())
-                .get();
-            
-            // Chamados abertos há mais de 24h
+
+            // Inadimplentes reais: calcula status por ciclo
+            const cincoDiasAtras = new Date(hojeBR.getTime() - 5 * 86400000).toISOString();
+            const clientesSnap = await firebaseDb.collection('clientes').where('atualizado_em','<=',cincoDiasAtras).get();
+            let inadimplentes = 0;
+            await Promise.all(clientesSnap.docs.map(async doc => {
+                const c = doc.data();
+                if (c.status === 'cancelado' || c.status === 'pago') return;
+                const diaVenc = parseInt(c.dia_vencimento) || 10;
+                const cicloRef = getCicloAtual(diaVenc, hojeBR);
+                const hDoc = await firebaseDb.collection('clientes').doc(doc.id)
+                    .collection('historico_pagamentos').doc(cicloRef.docId).get().catch(() => null);
+                const reg = hDoc?.exists ? hDoc.data() : null;
+                if (!reg || (reg.status !== 'pago' && reg.status !== 'isento')) inadimplentes++;
+            }));
+
             const umDiaAtras = Date.now() - 86400000;
-            const chamadosSnapshot = await firebaseDb.collection('chamados')
-                .where('status', '==', 'aberto')
-                .get();
-            
-            const chamadosAbertos = chamadosSnapshot.docs.filter(doc => {
-                const data = doc.data();
-                return data.aberto_em && data.aberto_em < umDiaAtras;
-            }).length;
-            
-            // Novos agendamentos para hoje
-            const agendamentosHojeSnapshot = await firebaseDb.collection('agendamentos')
-                .where('data', '==', hojeStr)
-                .where('status', '==', 'agendado')
-                .get();
-            
-            // Instalações agendadas para hoje
-            const instalacoesHojeSnapshot = await firebaseDb.collection('instalacoes_agendadas')
-                .where('data', '==', hojeStr)
-                .where('status', '==', 'agendado')
-                .get();
-            
+            const chamadosAbertos = chamadosSnapshot.docs.filter(d => d.data().aberto_em < umDiaAtras).length;
+            const [agSnap, instSnap] = await Promise.all([
+                firebaseDb.collection('agendamentos').where('data','==',hojeStr).where('status','==','agendado').get(),
+                firebaseDb.collection('instalacoes_agendadas').where('data','==',hojeStr).where('status','==','agendado').get(),
+            ]);
+
             res.json({
-                promessasHoje: promessasHoje.length,
-                promessasAmanha: promessasAmanha.length,
-                promessasHojeDetalhe: promessasHoje,
-                inadimplentes: inadimplentesSnapshot.size,
-                chamadosAbertos,
-                agendamentosHoje: agendamentosHojeSnapshot.size,
-                instalacoesHoje: instalacoesHojeSnapshot.size
+                promessasHoje: promessasHoje.length, promessasAmanha: promessasAmanha.length,
+                promessasHojeDetalhe: promessasHoje, inadimplentes,
+                chamadosAbertos, agendamentosHoje: agSnap.size, instalacoesHoje: instSnap.size,
             });
         } catch (error) {
             console.error('Erro ao buscar alertas:', error);
-            res.status(500).json({ 
-                promessasHoje: 0, 
-                promessasAmanha: 0, 
-                promessasHojeDetalhe: [],
-                inadimplentes: 0, 
-                chamadosAbertos: 0,
-                agendamentosHoje: 0,
-                instalacoesHoje: 0
-            });
+            res.status(500).json({ promessasHoje:0, promessasAmanha:0, promessasHojeDetalhe:[], inadimplentes:0, chamadosAbertos:0, agendamentosHoje:0, instalacoesHoje:0 });
         }
     });
 
@@ -117,16 +80,11 @@ module.exports = function setupRotasAlertas(app, ctx) {
             const ano = agoraBR.getUTCFullYear();
 
             // Calcula quais vencimentos já passaram de D+10
-            // Ex: hoje dia 22 → venc 10 tem atraso 12 (>10) → bloquear
             const paraBloquear = [];
             for (const venc of [10, 20, 30]) {
                 let atraso;
-                if (dia >= venc) {
-                    atraso = dia - venc;
-                } else {
-                    const diasMesAnt = new Date(ano, mes - 1, 0).getDate();
-                    atraso = (diasMesAnt - venc) + dia;
-                }
+                if (dia >= venc) atraso = dia - venc;
+                else atraso = new Date(ano, mes - 1, 0).getDate() - venc + dia;
                 if (atraso > 10) paraBloquear.push(venc);
             }
 
@@ -134,23 +92,16 @@ module.exports = function setupRotasAlertas(app, ctx) {
                 return res.json({ clientes: [], total: 0 });
             }
 
-            // Calcula o ciclo atual para checar pagamentos
-            const mesMM = String(mes).padStart(2,'0');
-            const cicloAtual = `${mesMM}-${ano}`;
-
-            // Busca clientes pendentes dos vencimentos que passaram D+10
+            // Busca TODOS os clientes dos vencimentos D+10 (sem filtrar por status raw)
             const todos = [];
             const docIds = [];
             const docMap = {};
 
             await Promise.all(paraBloquear.map(async venc => {
+                // Remove filtro por status — vamos checar pelo historico real
                 const [snapNum, snapStr] = await Promise.all([
-                    firebaseDb.collection('clientes')
-                        .where('dia_vencimento', '==', venc)
-                        .where('status', '==', 'pendente').get(),
-                    firebaseDb.collection('clientes')
-                        .where('dia_vencimento', '==', String(venc))
-                        .where('status', '==', 'pendente').get(),
+                    firebaseDb.collection('clientes').where('dia_vencimento','==',venc).get(),
+                    firebaseDb.collection('clientes').where('dia_vencimento','==',String(venc)).get(),
                 ]);
                 const vistos = new Set();
                 const combined = [...snapNum.docs, ...snapStr.docs].filter(d => {
@@ -158,21 +109,21 @@ module.exports = function setupRotasAlertas(app, ctx) {
                     vistos.add(d.id); return true;
                 });
                 combined.forEach(doc => {
+                    if (doc.data().status === 'cancelado') return; // cancelados nunca
                     docIds.push(doc.id);
                     docMap[doc.id] = { doc, venc };
                 });
             }));
 
-            // Filtra quem já pagou no ciclo atual
+            // Filtra quem já pagou no ciclo CORRETO de cada cliente
             const pagosNoCiclo = new Set();
             await Promise.all(docIds.map(async docId => {
+                const { venc } = docMap[docId];
+                const cicloRef = getCicloAtual(venc, agoraBR);
                 try {
                     const h = await firebaseDb.collection('clientes').doc(docId)
-                        .collection('historico_pagamentos').doc(cicloAtual).get();
-                    if (h.exists) {
-                        const hs = h.data();
-                        if (hs.status === 'pago' || hs.status === 'isento') pagosNoCiclo.add(docId);
-                    }
+                        .collection('historico_pagamentos').doc(cicloRef.docId).get();
+                    if (h.exists && (h.data().status === 'pago' || h.data().status === 'isento')) pagosNoCiclo.add(docId);
                 } catch(_) {}
             }));
 
@@ -182,15 +133,11 @@ module.exports = function setupRotasAlertas(app, ctx) {
                 const d = doc.data();
                 const diasAtraso = dia >= venc
                     ? dia - venc
-                    : (new Date(ano, mes - 1, 0).getDate() - venc) + dia;
+                    : new Date(ano, mes - 1, 0).getDate() - venc + dia;
                 todos.push({
-                    id: doc.id,
-                    nome: d.nome,
-                    telefone: d.telefone,
-                    dia_vencimento: venc,
-                    dias_atraso: diasAtraso,
-                    plano: d.plano,
-                    forma_pagamento: d.forma_pagamento
+                    id: doc.id, nome: d.nome, telefone: d.telefone,
+                    dia_vencimento: venc, dias_atraso: diasAtraso,
+                    plano: d.plano, forma_pagamento: d.forma_pagamento
                 });
             }
 
