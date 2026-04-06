@@ -73,14 +73,14 @@ async function perguntarAdmins(client, firebaseDb, ADMINISTRADORES, datas, tipo,
                 }
             });
 
-        // Timeout de 5 minutos — expira silenciosamente
+        // Timeout de 60 minutos — expira silenciosamente
         setTimeout(() => {
             unsubscribe();
             firebaseDb.collection('votacoes').doc(votacaoId).update({
                 status: 'expirado', resolvido: true, resultado: 'expirado'
             }).catch(() => {});
             resolve(null);
-        }, 5 * 60 * 1000);
+        }, 60 * 60 * 1000);
     });
 }
 

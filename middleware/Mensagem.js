@@ -32,7 +32,7 @@ function configurarMensagens(client, ctx, handlers) {
     const { state, banco, sseService, ADMINISTRADORES, FUNCIONARIOS, P,
             situacaoRede, previsaoRetorno, motivoRede, redeNormal, falarSinalAmigavel } = ctx;
     const { processarMidiaAutomatico, detectarAcaoAdmin, consultarSituacao, abrirChamadoComMotivo } = handlers;
-    const { _fluxoSuporte, _fluxoFinanceiro, _fluxoPromessa, _fluxoNovoCliente, _fluxoCancelamento } = handlers;
+    const { obterFluxo } = { obterFluxo: () => handlers }; // acesso via getter para não cache undefined
     const { dispararCobrancaReal, firebaseDb, groqChatFallback } = ctx;
 
     const fotosPendentes = new Map();
@@ -75,13 +75,13 @@ function configurarMensagens(client, ctx, handlers) {
             return;
         }
 
-        // Fluxo ativo → delega
+        // Fluxo ativo → delega (ler via getter para não cache undefined)
         const fluxos = {
-            suporte:      _fluxoSuporte,
-            financeiro:   _fluxoFinanceiro,
-            promessa:     _fluxoPromessa,
-            cancelamento: _fluxoCancelamento,
-            novoCliente:  _fluxoNovoCliente,
+            suporte:      handlers._fluxoSuporte,
+            financeiro:   handlers._fluxoFinanceiro,
+            promessa:     handlers._fluxoPromessa,
+            cancelamento: handlers._fluxoCancelamento,
+            novoCliente:  handlers._fluxoNovoCliente,
         };
         if (fluxos[fluxoAtivo]?.handle) {
             await fluxos[fluxoAtivo].handle(deQuem, msgSintetica);
@@ -91,20 +91,21 @@ function configurarMensagens(client, ctx, handlers) {
         // Sub-menu financeiro
         if (fluxoAtivo === 'menu_financeiro') {
             state.encerrarFluxo(deQuem);
+            const $fin = handlers._fluxoFinanceiro;
             if (t === '1' || t.includes('pix') || t.includes('transferência') || t.includes('transferencia')) {
-                await _fluxoFinanceiro.iniciar(deQuem, msgSintetica, 'PIX'); return;
+                await $fin.iniciar(deQuem, msgSintetica, 'PIX'); return;
             }
             if (t === '2' || t.includes('boleto')) {
-                await _fluxoFinanceiro.iniciar(deQuem, msgSintetica, 'BOLETO'); return;
+                await $fin.iniciar(deQuem, msgSintetica, 'BOLETO'); return;
             }
             if (t === '3' || t.includes('carnê') || t.includes('carne') || t.includes('físico') || t.includes('fisico')) {
-                await _fluxoFinanceiro.iniciar(deQuem, msgSintetica, 'CARNE'); return;
+                await $fin.iniciar(deQuem, msgSintetica, 'CARNE'); return;
             }
             if (t === '4' || t.includes('dinheiro') || t.includes('cobrador') || t.includes('espécie') || t.includes('especie')) {
-                await _fluxoFinanceiro.iniciar(deQuem, msgSintetica, 'DINHEIRO'); return;
+                await $fin.iniciar(deQuem, msgSintetica, 'DINHEIRO'); return;
             }
             if (t === '5' || t.includes('paguei') || t.includes('já paguei') || t.includes('feito') || t.includes('efetuei')) {
-                await _fluxoFinanceiro.iniciar(deQuem, msgSintetica, 'PAGO'); return;
+                await $fin.iniciar(deQuem, msgSintetica, 'PAGO'); return;
             }
             await client.sendMessage(deQuem, MENU_FINANCEIRO);
             state.iniciar(deQuem, 'menu_financeiro', 'aguardando_escolha', {});
@@ -128,7 +129,7 @@ function configurarMensagens(client, ctx, handlers) {
                     await abrirChamadoComMotivo(deQuem, null, `Reclamação — rede ${ctx.situacaoRede}`);
                     return;
                 }
-                await _fluxoSuporte.iniciar(deQuem, msgSintetica);
+                await handlers._fluxoSuporte.iniciar(deQuem, msgSintetica);
                 return;
             }
             if (t === '2' || t.includes('pagar') || t.includes('pagamento') || t.includes('pix') ||
@@ -138,7 +139,7 @@ function configurarMensagens(client, ctx, handlers) {
                 return;
             }
             if (t === '3' || t.includes('cancelar') || t.includes('cancelamento') || t.includes('encerrar')) {
-                await _fluxoCancelamento.iniciar(deQuem, msgSintetica);
+                await handlers._fluxoCancelamento.iniciar(deQuem, msgSintetica);
                 return;
             }
             if (t === '4' || t.includes('situacao') || t.includes('situação') || t.includes('status') || t.includes('consultar') || t.includes('verificar')) {
