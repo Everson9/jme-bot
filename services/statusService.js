@@ -26,15 +26,7 @@ function getCicloAtual(diaVencimento, hoje = new Date()) {
     let anoRef = anoHoje;
 
     if (diaVencimento === 30 && diaHoje <= 5) {
-        // Vence dia 30 com tolerância até dia 5 — se hoje é 1-5, ainda no ciclo anterior
-        mesRef = mesHoje === 1 ? 12 : mesHoje - 1;
-        anoRef = mesHoje === 1 ? anoHoje - 1 : anoHoje;
-    } else if (diaVencimento === 10 && diaHoje < 10) {
-        // Antes do vencimento 10 — ciclo do mês anterior
-        mesRef = mesHoje === 1 ? 12 : mesHoje - 1;
-        anoRef = mesHoje === 1 ? anoHoje - 1 : anoHoje;
-    } else if (diaVencimento === 20 && diaHoje < 20) {
-        // Antes do vencimento 20 — ciclo do mês anterior
+        // Ainda dentro da tolerância do mês anterior
         mesRef = mesHoje === 1 ? 12 : mesHoje - 1;
         anoRef = mesHoje === 1 ? anoHoje - 1 : anoHoje;
     }
@@ -43,98 +35,66 @@ function getCicloAtual(diaVencimento, hoje = new Date()) {
     return {
         mesRef,
         anoRef,
-        chave: `${mm}/${anoRef}`,
-        docId: `${mm}-${anoRef}`,
+        chave: `${mm}/${anoRef}`,   // "03/2026" — usado na exibição e como referencia no doc
+        docId: `${mm}-${anoRef}`,   // "03-2026" — ID do documento no Firestore
     };
 }
 
 /**
- * Calcula o status do cliente baseado no historico_pagamentos.
+ * Calcula o status do cliente.
  *
- * Estratégia: percorre os meses do mais antigo ao mais recente.
- * Se encontra pagamento → passa ao próximo mês.
- * Se encontra pendente → verifica se esse mês já venceu.
- * Se não encontra registro → verifica se o mês já venceu.
+ * Se _historico for passado (objeto { "MM-YYYY": { status, ... } }),
+ * usa o registro do ciclo atual para determinar o status.
+ *
+ * Se _historico for null/undefined, retorna o campo status do Firebase
+ * (usado na listagem geral para evitar leituras excessivas).
+ *
+ * Retorna: 'pago' | 'pendente' | 'em_dia' | 'promessa' | 'cancelado'
  */
 function calcularStatusCliente(cliente, _historico = null) {
     if (!cliente) return 'pendente';
+
+    // Status manuais — nunca sobrescrever
     if (cliente.status === 'cancelado') return 'cancelado';
     if (cliente.status === 'promessa')  return 'promessa';
 
     const diaVencimento = parseInt(cliente.dia_vencimento);
     if (!diaVencimento) return cliente.status || 'pendente';
+
+    // Sem histórico passado → usa campo status diretamente (cache)
     if (!_historico) return cliente.status || 'pendente';
 
+    const ciclo = getCicloAtual(diaVencimento);
+
+    // Tenta localizar o registro pelo docId ("MM-YYYY") ou chave ("MM/YYYY")
+    const reg = _historico[ciclo.docId] || _historico[ciclo.chave] || null;
+
+    if (reg) {
+        if (reg.status === 'pago' || reg.status === 'isento') return 'pago';
+        // Se pendente e já passou 5+ dias do vencimento → inadimplente
+        if (reg.status === 'pendente') {
+            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+            const diaHoje = agoraBR.getUTCDate();
+            if (diaHoje >= diaVencimento && (diaHoje - diaVencimento) >= 5) return 'inadimplente';
+        }
+        return reg.status || 'pendente';
+    }
+
+    // Sem registro no ciclo atual — verifica se ainda não venceu
     const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
     const diaHoje  = agoraBR.getUTCDate();
     const mesHoje  = agoraBR.getUTCMonth() + 1;
-    const anoHoje  = agoraBR.getUTCFullYear();
 
-    // Para um dado mes/ano, verifica se o vencimento já passou
-    function jaVenceu(m, y) {
-        if (y < anoHoje) return true;
-        if (y > anoHoje) return false;
-        if (m < mesHoje) return true;
-        if (m > mesHoje) return false;
-        // Mesmo mês/ano atual
-        if (diaVencimento === 30) return diaHoje > 5;
-        return diaHoje >= diaVencimento;
+    if (diaVencimento === 10 && diaHoje < 10) return 'em_dia';
+    if (diaVencimento === 20 && diaHoje < 20) return 'em_dia';
+    if (diaVencimento === 30) {
+        const { mesRef } = ciclo;
+        if (mesRef === mesHoje && diaHoje < 30) return 'em_dia';
+        if (mesRef !== mesHoje && diaHoje <= 5)  return 'em_dia';
     }
 
-    // Calcula atraso para o mes/ano m/y em relação ao mês/ano atual
-    function atrasoPara(m, y) {
-        // Quantos meses entre m/y e o mesHoje/anoHoje
-        const mesesDif = (anoHoje - y) * 12 + (mesHoje - m);
-        if (mesesDif <= 0) return 0;
-        const ultimoDia = new Date(anoHoje, mesHoje - 1, 0).getDate();
-        return (mesesDif - 1) * 30 + (ultimoDia - diaVencimento) + diaHoje;
-    }
-
-    // Encontra o mes/ano mais antigo presente no historico
-    const chaves = Object.keys(_historico).map(k => k.replace('/', '-'));
-    let menorAno = Infinity, menorMes = Infinity;
-    chaves.forEach(k => {
-        const [m, y] = k.split('-').map(Number);
-        if (y < menorAno || (y === menorAno && m < menorMes)) { menorMes = m; menorAno = y; }
-    });
-    // Se não tem chaves, começa do mes anterior
-    if (menorAno === Infinity) {
-        menorMes = mesHoje === 1 ? 12 : mesHoje - 1;
-        menorAno = mesHoje === 1 ? anoHoje - 1 : anoHoje;
-    }
-
-    // Percorre mês a mês a partir do mais antigo
-    let m = menorMes, y = menorAno;
-    for (let i = 0; i < 14; i++) {
-        const mm = String(m).padStart(2, '0');
-        const docId = `${mm}-${y}`, chave = `${mm}/${y}`;
-        const reg = _historico[docId] || _historico[chave] || null;
-
-        if (!reg) {
-            // Sem registro neste mês
-            if (jaVenceu(m, y)) {
-                if (atrasoPara(m, y) >= 5) return 'inadimplente';
-                return 'pendente';
-            }
-            return 'em_dia';
-        }
-
-        if (reg.status === 'pago' || reg.status === 'isento') {
-            // Passa ao próximo mês
-            m = m === 12 ? 1 : m + 1;
-            if (m === 1) y++;
-        } else if (reg.status === 'pendente') {
-            if (jaVenceu(m, y)) {
-                if (atrasoPara(m, y) >= 5) return 'inadimplente';
-                return 'pendente';
-            }
-            return 'pendente';
-        } else if (reg.status === 'promessa') {
-            return 'promessa';
-        } else {
-            return reg.status || 'pendente';
-        }
-    }
+    // Sem registro e já passou do vencimento com 5+ dias → inadimplente
+    if (diaHoje >= diaVencimento && (diaHoje - diaVencimento) >= 5) return 'inadimplente';
 
     return 'pendente';
 }
