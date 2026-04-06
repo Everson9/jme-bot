@@ -243,14 +243,38 @@ module.exports = function criarFluxoSuporte(ctx) {
         return `${saudacao} Anotei tudo! O técnico confirma a visita ${proximoAtendimento()}. 🔧`;
     }
 
+    // ── Helper: opções de retorno universal ──
+    async function opcoesRetorno(deQuem) {
+        return `${P}Se precisar de algo mais:\n\n0️⃣ Voltar ao início\n3️⃣ Falar com atendente`;
+    }
+
+    // ── Helper: tratar comandos de retorno universal ──
+    async function tentarRetorno(deQuem, t) {
+        if (t === '0' || t === 'menu' || t === 'voltar' || t === 'início' || t === 'inicio' || t === 'sair' || t === 'principal') {
+            state.encerrarFluxo(deQuem);
+            state.setClienteEmSuporte(deQuem, false);
+            await client.sendMessage(deQuem, `${P}Voltando ao início! 😊\n\n🤖 *Assistente JMENET*\n\nOlá! Como posso te ajudar? 😊\n\n1️⃣ Problema com a internet\n2️⃣ Pagamento / Financeiro\n3️⃣ Cancelamento\n4️⃣ Consultar minha situação\n5️⃣ Falar com atendente`);
+            state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
+            return true;
+        }
+        if (t.includes('3') && (t.includes('atendente') || t.includes('humano') || t.includes('pessoa') || t.includes('falar'))) {
+            state.encerrarFluxo(deQuem);
+            state.setClienteEmSuporte(deQuem, false);
+            await abrirChamadoComMotivo(deQuem, null, 'Suporte — pedido de atendente');
+            await client.sendMessage(deQuem, `${P}Vou chamar um atendente! Aguarda um instante. 😊`);
+            return true;
+        }
+        return false;
+    }
+
     // ── Helper: exibir status do titular + opções ──
     async function exibirStatusTitular(deQuem, clienteFull) {
         const diaVenc = parseInt(clienteFull.dia_vencimento) || 10;
         const cicloRef = getCicloAtual(diaVenc, new Date());
         const histDoc = await firebaseDb.collection('clientes').doc(clienteFull.id)
             .collection('historico_pagamentos').doc(cicloRef.docId).get().catch(() => null);
-        const histReg = histDoc?.exists ? histDoc.data() : null;
-        const statusCalc = calcularStatusCliente(clienteFull, { [cicloRef.docId]: histReg });
+        const histRegPai = histDoc?.exists ? histDoc.data() : null;
+        const statusCalc = calcularStatusCliente(clienteFull, { [cicloRef.docId]: histRegPai });
 
         const statusLabel = statusCalc === 'pago'
             ? 'Pago ✅'
@@ -271,7 +295,8 @@ module.exports = function criarFluxoSuporte(ctx) {
             `1️⃣ Solicitar visita técnica\n` +
             `2️⃣ Efetuar pagamento\n` +
             `3️⃣ Falar com atendente\n` +
-            `4️⃣ Reiniciar o roteador`
+            `4️⃣ Reiniciar o roteador\n\n` +
+            `0️⃣ Voltar ao início`
         );
 
         state.iniciar(deQuem, 'suporte', 'info_titular_aguardando_escolha', {
@@ -390,7 +415,10 @@ module.exports = function criarFluxoSuporte(ctx) {
         // =====================================================
         if (etapa === 'aguardando_escolha_notificacao') {
             const t = texto.toLowerCase();
-            
+
+            // Escapes
+            if (await tentarRetorno(deQuem, t)) return;
+
             if (t.includes('1') || t.includes('sim') || t.includes('quero') || t.includes('avise')) {
                 // 🔥 FIREBASE: Registra para notificar
                 try {
@@ -426,32 +454,35 @@ module.exports = function criarFluxoSuporte(ctx) {
         // =====================================================
         if (etapa === 'rede_voltou_aguardando') {
             const t = texto.toLowerCase();
-            
+
+            // Escapes
+            if (await tentarRetorno(deQuem, t)) return;
+
             if (t.includes('sim') || t.includes('voltou') || t.includes('ok') || t.includes('funcionou') || t.includes('obrigado')) {
-                await client.sendMessage(deQuem, 
+                await client.sendMessage(deQuem,
                     `${P}Que bom! Fico feliz que está tudo funcionando! 😊\n\n` +
                     `Precisa de mais alguma coisa?`
                 );
                 state.encerrarFluxo(deQuem);
                 return;
             }
-            
+
             if (t.includes('não') || t.includes('nao') || t.includes('ainda')) {
-                await client.sendMessage(deQuem, 
+                await client.sendMessage(deQuem,
                     `${P}Entendi, ainda está sem internet. Vamos verificar! 🔧`
                 );
-                
+
                 state.iniciar(deQuem, 'suporte', 'aguardando_reinicio', {});
                 state.setClienteEmSuporte(deQuem, true);
-                
-                await client.sendMessage(deQuem, 
-                    `${P}Antes de qualquer coisa, pode *desligar o roteador da tomada por 30 segundos* e ligar de novo? 🔌`
+
+                await client.sendMessage(deQuem,
+                    `${P}Antes de qualquer coisa, pode *desligar o roteador da tomada por 30 segundos* e ligar de novo? 🔌\n\n0️⃣ Voltar ao início | 3️⃣ Falar com atendente`
                 );
                 return;
             }
-            
-            await client.sendMessage(deQuem, 
-                `${P}A internet voltou aí? Responde com Sim ou Não 😊`
+
+            await client.sendMessage(deQuem,
+                `${P}A internet voltou aí? Responde com Sim ou Não 😊\n\n0️⃣ Voltar ao início | 3️⃣ Falar com atendente`
             );
             return;
         }
@@ -460,9 +491,12 @@ module.exports = function criarFluxoSuporte(ctx) {
         // TITULAR NÃO ENCONTRADO PELO Nº — PEDIR DADOS
         // =====================================================
         if (etapa === 'info_titular_dados') {
+            const tLow = texto.toLowerCase();
+            if (await tentarRetorno(deQuem, tLow)) return;
+
             const nomeInformado = texto.trim();
             if (!nomeInformado || nomeInformado.length < 3) {
-                await client.sendMessage(deQuem, `${P}Não entendi. Pode digitar o *nome completo do titular*? 😊`);
+                await client.sendMessage(deQuem, `${P}Não entendi. Pode digitar o *nome completo do titular*? 😊\n\n0️⃣ Voltar ao início | 3️⃣ Falar com atendente`);
                 state.iniciarTimer(deQuem);
                 return;
             }
@@ -505,6 +539,8 @@ module.exports = function criarFluxoSuporte(ctx) {
         // VÁRIOS CLIENTES COM MESMO NOME — ESCOLHER
         // =====================================================
         if (etapa === 'info_titular_dados_escolher') {
+            const tLow = texto.toLowerCase();
+            if (await tentarRetorno(deQuem, tLow)) return;
             const t = texto.trim();
             // CPF informado
             const cpfLimpo = t.replace(/\D/g, '');
@@ -538,6 +574,8 @@ module.exports = function criarFluxoSuporte(ctx) {
         // =====================================================
         if (etapa === 'info_titular_dados_sem_encontrar') {
             const t = texto.toLowerCase();
+            if (await tentarRetorno(deQuem, t)) return;
+
             if (t.includes('1') || t.includes('visita') || t.includes('técnico') || t.includes('tecnico')) {
                 state.avancar(deQuem, 'aguardando_nome');
                 await client.sendMessage(deQuem, `${P}Vamos registrar a visita então! 😊\n\nPode me dizer seu *nome completo*?`);
@@ -654,20 +692,20 @@ module.exports = function criarFluxoSuporte(ctx) {
 
             if (reiniciou) {
                 state.atualizar(deQuem, { tentativas: 0 });
-                
-                const dadosCliente = await buscarStatusCliente(deQuem);
-                const nome = dados?.dados?.nome || dados?.nomeCliente || dadosCliente?.nome || null;
-                
-                if (!nome) {
-                    state.avancar(deQuem, 'aguardando_nome', { jaReiniciou: true });
-                    await client.sendMessage(deQuem, `${P}Entendido, infelizmente não resolveu. 😕 Vamos acionar o técnico!`);
-                    await new Promise(r => setTimeout(r, 1000));
-                    await client.sendMessage(deQuem, `${P}Para eu registrar o atendimento, pode me dizer seu *nome completo*?`);
+                state.encerrarFluxo(deQuem);
+
+                // Buscar cliente e exibir dados do titular + opções
+                const numBusca = deQuem.replace('@c.us', '').replace(/^55/, '');
+                const clienteFull = await banco.buscarClientePorTelefone(numBusca);
+                if (clienteFull) {
+                    await exibirStatusTitular(deQuem, clienteFull);
                 } else {
-                    state.avancar(deQuem, 'aguardando_foto', { nome, jaReiniciou: true });
-                    await client.sendMessage(deQuem, `${P}Entendido, infelizmente não resolveu. 😕 Vamos acionar o técnico!`);
-                    await new Promise(r => setTimeout(r, 1500));
-                    await client.sendMessage(deQuem, `${P}Consegue tirar uma foto das luzes do roteador pra mim? Ajuda o técnico a já chegar preparado 📷`);
+                    state.iniciar(deQuem, 'suporte', 'info_titular_dados', {});
+                    await client.sendMessage(deQuem,
+                        `${P}Entendido, infelizmente não resolveu. 😕\n\n` +
+                        `Não encontrei seu cadastro no sistema. Pode me dizer o *nome completo do titular* da internet?\n\n` +
+                        `0️⃣ Voltar ao início | 3️⃣ Falar com atendente`
+                    );
                 }
                 state.iniciarTimer(deQuem);
                 return;
@@ -684,15 +722,36 @@ module.exports = function criarFluxoSuporte(ctx) {
                 return;
             }
             
-            await client.sendMessage(deQuem, `${P}Conseguiu desligar o roteador da tomada e ligar de novo? A internet voltou?`);
+            await client.sendMessage(deQuem,
+                `${P}Conseguiu desligar o roteador da tomada por 30 segundos e ligar de novo? A internet voltou?\n\n` +
+                `0️⃣ Voltar ao início | 3️⃣ Falar com atendente`
+            );
             state.iniciarTimer(deQuem);
             return;
         }
 
         if (etapa === 'aguardando_nome') {
             const textoNome = msg.body || '';
+
+            // Escape: voltar/atendente
+            const tNome = textoNome.toLowerCase().trim();
+            if (tNome === '0' || tNome === 'menu' || tNome === 'voltar' || tNome === 'sair') {
+                state.encerrarFluxo(deQuem);
+                state.setClienteEmSuporte(deQuem, false);
+                await client.sendMessage(deQuem, `${P}Voltando ao início! 😊\n\n🤖 *Assistente JMENET*\n\nOlá! Como posso te ajudar? 😊\n\n1️⃣ Problema com a internet\n2️⃣ Pagamento / Financeiro\n3️⃣ Cancelamento\n4️⃣ Consultar minha situação\n5️⃣ Falar com atendente`);
+                state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
+                return;
+            }
+            if (tNome === '3' || tNome.includes('atendente') || tNome.includes('humano') || tNome.includes('falar')) {
+                state.encerrarFluxo(deQuem);
+                state.setClienteEmSuporte(deQuem, false);
+                await abrirChamadoComMotivo(deQuem, null, 'Suporte — pedido de atendente');
+                await client.sendMessage(deQuem, `${P}Vou chamar um atendente! Aguarda um instante. 😊`);
+                return;
+            }
+
             if (textoNome.trim().length < 2) {
-                await client.sendMessage(deQuem, `${P}Pode me dizer seu nome completo?`);
+                await client.sendMessage(deQuem, `${P}Pode me dizer seu nome completo?\n\n0️⃣ Voltar ao início | 3️⃣ Falar com atendente`);
                 state.iniciarTimer(deQuem);
                 return;
             }
@@ -711,6 +770,9 @@ module.exports = function criarFluxoSuporte(ctx) {
         }
 
         if (etapa === 'aguardando_foto') {
+            const tLow = texto.toLowerCase();
+            if (await tentarRetorno(deQuem, tLow)) return;
+
             const semFoto = PALAVRAS_SEM_FOTO.some(p => texto.includes(p));
             const simulouFoto = texto.includes('foto') && ['enviei','mandei','segue','aqui'].some(p => texto.includes(p));
 
@@ -719,39 +781,42 @@ module.exports = function criarFluxoSuporte(ctx) {
                     _fotosPendentes.set(deQuem, msg);
                     if (temFoto) await analisarImagem(msg).catch(() => {});
                 }
-                
+
                 state.avancar(deQuem, 'aguardando_endereco', { fotoEnviada: true });
-                await client.sendMessage(deQuem, `${P}${temVideo ? 'Vídeo' : 'Foto'} recebido! 👍 Agora preciso do seu *endereço completo* (rua, número, bairro).`);
+                await client.sendMessage(deQuem, `${P}${temVideo ? 'Vídeo' : 'Foto'} recebido! 👍 Agora preciso do seu *endereço completo* (rua, número, bairro).\n\n0️⃣ Voltar ao início | 3️⃣ Falar com atendente`);
                 state.iniciarTimer(deQuem);
                 return;
             }
-            
+
             if (semFoto) {
                 state.avancar(deQuem, 'aguardando_descricao_roteador', { semFoto: true });
-                await client.sendMessage(deQuem, `${P}Sem problema! 😊 Pode me descrever as luzes do roteador? (ex: luz vermelha piscando, luz apagada, tudo verde...)`);
+                await client.sendMessage(deQuem, `${P}Sem problema! 😊 Pode me descrever as luzes do roteador? (ex: luz vermelha piscando, luz apagada, tudo verde...)\n\n0️⃣ Voltar ao início | 3️⃣ Falar com atendente`);
                 state.iniciarTimer(deQuem);
                 return;
             }
-            
+
             const tentativas = (dados.tentativas || 0) + 1;
             state.atualizar(deQuem, { tentativas });
-            
+
             if (tentativas >= 3) {
                 state.avancar(deQuem, 'aguardando_endereco');
                 await client.sendMessage(deQuem, `${P}Tudo bem, vamos continuar sem a foto! Agora preciso do seu *endereço completo* (rua, número, bairro).`);
                 state.iniciarTimer(deQuem);
                 return;
             }
-            
-            await client.sendMessage(deQuem, `${P}Consegue tirar uma foto das luzes do roteador? Se não conseguir, é só falar "não consigo" que a gente continua! 📷`);
+
+            await client.sendMessage(deQuem, `${P}Consegue tirar uma foto das luzes do roteador? Se não conseguir, é só falar "não consigo" que a gente continua! 📷\n\n0️⃣ Voltar ao início | 3️⃣ Falar com atendente`);
             state.iniciarTimer(deQuem);
             return;
         }
 
         if (etapa === 'aguardando_descricao_roteador') {
+            const tLow = texto.toLowerCase();
+            if (await tentarRetorno(deQuem, tLow)) return;
+
             const descricao = (msg.body || '').trim();
             if (descricao.length < 3) {
-                await client.sendMessage(deQuem, `${P}Pode descrever como estão as luzes do roteador? Isso ajuda o técnico a chegar preparado! 😊`);
+                await client.sendMessage(deQuem, `${P}Pode descrever como estão as luzes do roteador? Isso ajuda o técnico a chegar preparado! 😊\n\n0️⃣ Voltar ao início | 3️⃣ Falar com atendente`);
                 state.iniciarTimer(deQuem);
                 return;
             }
@@ -763,38 +828,43 @@ module.exports = function criarFluxoSuporte(ctx) {
         }
 
         if (etapa === 'aguardando_endereco') {
+            const tLow = texto.toLowerCase();
+            if (await tentarRetorno(deQuem, tLow)) return;
+
             const endereco = (msg.body || '').trim();
             const enderecoInvalido = !endereco || endereco.length < 8 ||
                 /^(aqui|casa|minha casa|recife|olinda|meu endereço|meu endereco|não sei|nao sei)$/i.test(endereco);
-            
+
             if (enderecoInvalido) {
                 const tentEnd = (dados.tentativasEndereco || 0) + 1;
                 state.atualizar(deQuem, { tentativasEndereco: tentEnd });
-                
+
                 if (tentEnd >= 2) {
                     state.avancar(deQuem, 'aguardando_agendamento_dia', { endereco: endereco || 'não informado' });
                     await client.sendMessage(deQuem, `${P}Tudo bem! Vamos agendar a visita.`);
-                    
+
                     const datas = await gerarDatasDisponiveis();
                     state.atualizar(deQuem, { datasDisponiveis: datas });
-                    await client.sendMessage(deQuem, `${P}${formatarMensagemDias(datas)}`);
+                    await client.sendMessage(deQuem, `${P}${formatarMensagemDias(datas)}\n\n0️⃣ Voltar ao início | 3️⃣ Falar com atendente`);
                 } else {
-                    await client.sendMessage(deQuem, `${P}Preciso do endereço completo para o técnico chegar certinho. 😊 Pode informar rua, número e bairro?`);
+                    await client.sendMessage(deQuem, `${P}Preciso do endereço completo para o técnico chegar certinho. 😊 Pode informar rua, número e bairro?\n\n0️⃣ Voltar ao início | 3️⃣ Falar com atendente`);
                 }
                 state.iniciarTimer(deQuem);
                 return;
             }
-            
+
             state.avancar(deQuem, 'aguardando_agendamento_dia', { endereco });
-            
+
             const datas = await gerarDatasDisponiveis();
             state.atualizar(deQuem, { datasDisponiveis: datas });
-            await client.sendMessage(deQuem, `${P}${formatarMensagemDias(datas)}`);
+            await client.sendMessage(deQuem, `${P}${formatarMensagemDias(datas)}\n\n0️⃣ Voltar ao início | 3️⃣ Falar com atendente`);
             state.iniciarTimer(deQuem);
             return;
         }
 
         if (etapa === 'aguardando_agendamento_dia') {
+            const tLow = texto.toLowerCase();
+            if (await tentarRetorno(deQuem, tLow)) return;
             const escolha = texto.trim();
             const datas = dados.datasDisponiveis || [];
             
@@ -868,6 +938,8 @@ module.exports = function criarFluxoSuporte(ctx) {
         }
 
         if (etapa === 'aguardando_agendamento_periodo') {
+            const tLow = texto.toLowerCase();
+            if (await tentarRetorno(deQuem, tLow)) return;
             const escolha = texto.trim();
             const periodos = dados.periodosDisponiveis || [];
             

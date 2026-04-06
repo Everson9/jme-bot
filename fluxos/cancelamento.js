@@ -43,6 +43,23 @@ module.exports = function criarFluxoCancelamento(ctx) {
         state.iniciarTimer(deQuem);
     }
 
+    // ── Escape: volta ao menu ou chama atendente ──
+    async function tentarRetorno(deQuem, t) {
+        if (t === '0' || t === 'menu' || t === 'voltar' || t === 'início' || t === 'inicio' || t === 'sair' || t === 'principal') {
+            state.encerrarFluxo(deQuem);
+            await client.sendMessage(deQuem, `${P}Voltando ao menu! 😊\n\n1️⃣ Problema com a internet\n2️⃣ Pagamento / Financeiro\n3️⃣ Cancelamento\n4️⃣ Consultar minha situação\n5️⃣ Falar com atendente`);
+            state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
+            return true;
+        }
+        if (t.includes('3') && (t.includes('atendente') || t.includes('humano') || t.includes('pessoa') || t.includes('falar'))) {
+            state.encerrarFluxo(deQuem);
+            await ctx.abrirChamadoComMotivo(deQuem, state.getDados(deQuem)?.nome, 'Cancelamento — pediu atendente');
+            await client.sendMessage(deQuem, `${P}Vou chamar um atendente! Aguarda um instante. 😊`);
+            return true;
+        }
+        return false;
+    }
+
     async function handle(deQuem, msg) {
         const etapa = state.getEtapa(deQuem);
         const dados = state.getDados(deQuem);
@@ -51,6 +68,9 @@ module.exports = function criarFluxoCancelamento(ctx) {
 
         state.cancelarTimer(deQuem);
         await dbIniciarAtendimento(deQuem);
+
+        // Escape em todos os estágios
+        if (await tentarRetorno(deQuem, textoL)) return;
 
         // ─── aguardando_motivo ────────────────────────────
         if (etapa === 'aguardando_motivo') {

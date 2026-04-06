@@ -185,19 +185,25 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
             continue;
         }
 
-        // Busca clientes com esse dia de vencimento
-        const clientesSnap = await firebaseDb.collection('clientes')
-            .where('dia_vencimento', '==', disparo.dataVenc)
-            .get();
+        // Busca clientes com esse dia de vencimento (número E string)
+        const [snapNum, snapStr] = await Promise.all([
+            firebaseDb.collection('clientes').where('dia_vencimento', '==', disparo.dataVenc).get(),
+            firebaseDb.collection('clientes').where('dia_vencimento', '==', String(disparo.dataVenc)).get(),
+        ]);
+        const vistos = new Set();
+        const clientesDocs = [...snapNum.docs, ...snapStr.docs].filter(d => {
+            if (vistos.has(d.id)) return false;
+            vistos.add(d.id); return true;
+        });
 
-        if (clientesSnap.empty) continue;
+        if (clientesDocs.length === 0) continue;
 
         // Determina o ciclo de referência: lembrate = próximo ciclo, demais = ciclo atual
         const cicloRef = getCicloCobranca(disparo.dataVenc, disparo.tipo, agoraBR);
 
         // Para cada cliente, verifica o histórico do ciclo
         const clientesParaCobrar = [];
-        for (const doc of clientesSnap.docs) {
+        for (const doc of clientesDocs) {
             const cliente = { id: doc.id, ...doc.data() };
 
             // Cancelados nunca cobrar

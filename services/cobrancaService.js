@@ -24,14 +24,25 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
         // Se não recebeu lista filtrada, busca e filtra aqui
         let clientes = clientesFiltrados;
         if (!clientes) {
-            const snap = await firebaseDb.collection('clientes')
-                .where('dia_vencimento', '==', parseInt(data))
-                .get();
+            const dataNum = parseInt(data);
 
-            const cicloRef = getCicloAtual(parseInt(data));
+            // Consulta ambos os formatos (número e string) — alguns clientes foram salvos como string
+            const [snapNum, snapStr] = await Promise.all([
+                firebaseDb.collection('clientes').where('dia_vencimento', '==', dataNum).get(),
+                firebaseDb.collection('clientes').where('dia_vencimento', '==', String(dataNum)).get(),
+            ]);
+
+            // Deduplicar por doc ID
+            const vistos = new Set();
+            const docs = [...snapNum.docs, ...snapStr.docs].filter(d => {
+                if (vistos.has(d.id)) return false;
+                vistos.add(d.id); return true;
+            });
+
+            const cicloRef = getCicloAtual(dataNum);
             clientes = [];
 
-            for (const doc of snap.docs) {
+            for (const doc of docs) {
                 const cliente = { id: doc.id, ...doc.data() };
                 if (cliente.status === 'cancelado') continue;
 

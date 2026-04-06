@@ -3,6 +3,13 @@ import React, { useState, useEffect } from 'react';
 
 const API = import.meta.env.VITE_API_URL || "";
 
+function authHeaders(extra = {}) {
+    const h = { 'Content-Type': 'application/json', ...extra };
+    const key = import.meta.env.VITE_ADMIN_API_KEY;
+    if (key) h['x-api-key'] = key;
+    return h;
+}
+
 export const PainelDatas = ({ clienteId, diaVencimento, plano, onStatusChange }) => {
   const [historico, setHistorico] = useState(null);
   const [baixando, setBaixando] = useState(null);
@@ -12,7 +19,9 @@ export const PainelDatas = ({ clienteId, diaVencimento, plano, onStatusChange })
   const carregarHistorico = async () => {
     try {
       setErro(null);
-      const response = await fetch(`${API}/api/clientes/${clienteId}/historico`);
+      const response = await fetch(`${API}/api/clientes/${clienteId}/historico`, {
+        headers: authHeaders()
+      });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       setHistorico(data);
@@ -67,7 +76,7 @@ export const PainelDatas = ({ clienteId, diaVencimento, plano, onStatusChange })
     try {
       const response = await fetch(`${API}/api/clientes/${clienteId}/historico/${encodeURIComponent(ref)}/pagar`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({ forma_pagamento: forma || null }),
       });
       if (!response.ok) throw new Error('Erro ao confirmar baixa');
@@ -87,7 +96,8 @@ export const PainelDatas = ({ clienteId, diaVencimento, plano, onStatusChange })
     setErro(null);
     try {
       const response = await fetch(`${API}/api/clientes/${clienteId}/historico/${encodeURIComponent(ref)}/reverter`, {
-        method: "POST"
+        method: "POST",
+        headers: authHeaders(),
       });
       if (!response.ok) throw new Error('Erro ao reverter');
       await carregarHistorico();
