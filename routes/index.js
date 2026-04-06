@@ -232,7 +232,7 @@ module.exports = function setupRoutes(app, ctx) {
             res.json(clientes);
         } catch(e) {
             console.error('Erro /api/bases/:id/clientes:', e);
-            res.status(500).json({ erro: e.message });
+            res.json([]);
         }
     });
 

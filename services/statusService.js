@@ -66,6 +66,10 @@ function calcularStatusCliente(cliente, _historico = null) {
     if (!_historico) return cliente.status || 'pendente';
 
     const ciclo = getCicloAtual(diaVencimento);
+    const agoraBR = new Date(hoje.getTime() - 3 * 60 * 60 * 1000);
+    const diaHoje  = agoraBR.getUTCDate();
+    const mesHoje  = agoraBR.getUTCMonth() + 1;
+    const anoHoje  = agoraBR.getUTCFullYear();
 
     // Tenta localizar o registro pelo docId ("MM-YYYY") ou chave ("MM/YYYY")
     const reg = _historico[ciclo.docId] || _historico[ciclo.chave] || null;
