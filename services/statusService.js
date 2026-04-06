@@ -25,8 +25,9 @@ function getCicloAtual(diaVencimento, hoje = new Date()) {
     let mesRef = mesHoje;
     let anoRef = anoHoje;
 
-    if (diaVencimento === 30 && diaHoje <= 5) {
-        // Ainda dentro da tolerância do mês anterior
+    if (diaVencimento === 30) {
+        // Vencimento dia 30: até o dia 29, o ciclo que deveria estar pago é do mês anterior.
+        // Ex: em 06/04 o ciclo de referência é 03/2026 (último vencimento foi dia 30/03).
         mesRef = mesHoje === 1 ? 12 : mesHoje - 1;
         anoRef = mesHoje === 1 ? anoHoje - 1 : anoHoje;
     }
@@ -69,22 +70,28 @@ function calcularStatusCliente(cliente, _historico = null) {
     // Tenta localizar o registro pelo docId ("MM-YYYY") ou chave ("MM/YYYY")
     const reg = _historico[ciclo.docId] || _historico[ciclo.chave] || null;
 
+    // Calcula atraso real considerando rollover de mês
+    let diasAtraso;
+    if (diaHoje >= diaVencimento) {
+        diasAtraso = diaHoje - diaVencimento;
+    } else {
+        const ultimoDia = new Date(anoHoje, mesHoje - 1, 0).getDate();
+        diasAtraso = (ultimoDia - diaVencimento) + diaHoje;
+    }
+
+    // Para dia 10/20, atraso só conta se diaHoje >= diaVencimento
+    if (diaVencimento !== 30 && diaHoje < diaVencimento) diasAtraso = 0;
+    // Para dia 30, atraso só conta se mesRef != mesHoje (ou seja, o ciclo é do mês anterior)
+    if (diaVencimento === 30 && ciclo.mesRef === mesHoje) diasAtraso = 0;
+
     if (reg) {
         if (reg.status === 'pago' || reg.status === 'isento') return 'pago';
         // Se pendente e já passou 5+ dias do vencimento → inadimplente
-        if (reg.status === 'pendente') {
-            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
-            const diaHoje = agoraBR.getUTCDate();
-            if (diaHoje >= diaVencimento && (diaHoje - diaVencimento) >= 5) return 'inadimplente';
-        }
+        if (reg.status === 'pendente' && diasAtraso >= 5) return 'inadimplente';
         return reg.status || 'pendente';
     }
 
     // Sem registro no ciclo atual — verifica se ainda não venceu
-    const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
-    const diaHoje  = agoraBR.getUTCDate();
-    const mesHoje  = agoraBR.getUTCMonth() + 1;
-
     if (diaVencimento === 10 && diaHoje < 10) return 'em_dia';
     if (diaVencimento === 20 && diaHoje < 20) return 'em_dia';
     if (diaVencimento === 30) {
@@ -94,7 +101,7 @@ function calcularStatusCliente(cliente, _historico = null) {
     }
 
     // Sem registro e já passou do vencimento com 5+ dias → inadimplente
-    if (diaHoje >= diaVencimento && (diaHoje - diaVencimento) >= 5) return 'inadimplente';
+    if (diasAtraso >= 5) return 'inadimplente';
 
     return 'pendente';
 }
