@@ -5,7 +5,6 @@ import { Card } from './Card';
 import { Spinner } from './Spinner';
 import { BadgeCliente } from './BadgeCliente';
 import { ModalEditarCliente } from './ModalEditarCliente';
-import { DarkTooltip } from './DarkTooltip';
 import { ModalNovoClienteBase } from './ModalNovoClientebase';
 import * as XLSX from "https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs";
 
@@ -311,26 +310,22 @@ if (filtro === 'pendente') {
             />
             <div style={{ display: 'flex', gap: 4, background: '#1a1d2e', padding: 4, borderRadius: 8 }}>
               {["todos", "pago", "pendente", "inadimplente", "promessa"].map(v => (
-                <DarkTooltip
+                <button
                   key={v}
-                  title={`Filtrar por ${v} (mês de referência: ${mesReferencia?.mesNome || 'carregando...'})`}
+                  onClick={() => setFiltro(v)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 6,
+                    border: 'none',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    background: filtro === v ? (v === 'inadimplente' ? '#ef4444' : '#2563eb') : 'transparent',
+                    color: filtro === v ? '#fff' : '#94a3b8'
+                  }}
                 >
-                  <button
-                    onClick={() => setFiltro(v)}
-                    style={{
-                      padding: '6px 12px',
-                      borderRadius: 6,
-                      border: 'none',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      background: filtro === v ? (v === 'inadimplente' ? '#ef4444' : '#2563eb') : 'transparent',
-                      color: filtro === v ? '#fff' : '#94a3b8'
-                    }}
-                  >
-                    {v === 'todos' ? 'Todos' : v === 'pago' ? '✅ Pagos' : v === 'pendente' ? '⏳ Pendentes' : v === 'inadimplente' ? '🔴 Inadimplentes' : '🤝 Promessas'}
-                  </button>
-                </DarkTooltip>
+                  {v === 'todos' ? 'Todos' : v === 'pago' ? '✅ Pagos' : v === 'pendente' ? '⏳ Pendentes' : v === 'inadimplente' ? '🔴 Inadimplentes' : '🤝 Promessas'}
+                </button>
               ))}
             </div>
           </div>
@@ -375,7 +370,14 @@ if (filtro === 'pendente') {
                       <td style={{ padding: '12px', fontFamily: 'monospace', fontSize: 12, color: '#94a3b8' }}>{c.telefone || "—"}</td>
                       <td style={{ padding: '12px', color: '#94a3b8' }}>{c.endereco || "—"}</td>
                       <td style={{ padding: '12px' }}>{c.plano || "—"}</td>
-                      <td style={{ padding: '12px' }}><BadgeCliente status={c.status_calculado || c.status} /></td>
+                      <td style={{ padding: '12px', whiteSpace: 'nowrap' }}>
+                        <BadgeCliente status={c.status_calculado || c.status} />
+                        {c.mes_referencia && (
+                          <span style={{ fontSize: 9, color: '#475569', marginLeft: 6 }}>
+                            {c.mes_referencia}
+                          </span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
