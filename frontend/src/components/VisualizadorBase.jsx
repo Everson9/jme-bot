@@ -93,6 +93,10 @@ if (filtro === 'pendente') {
       const status = c.status_calculado || c.status;
       return status === "pendente" || status === "em_dia";
     }).length,
+    inad: arr.filter(c => {
+      const status = c.status_calculado || c.status;
+      return status === "inadimplente";
+    }).length,
     prom: arr.filter(c => {
       const status = c.status_calculado || c.status;
       return status === "promessa";
@@ -236,6 +240,10 @@ if (filtro === 'pendente') {
           <span style={{ fontSize: 11, color: '#64748b' }}>⏳ Pendentes</span>
         </div>
         <div style={{ background: '#1a1d2e', borderRadius: 8, padding: '12px', textAlign: 'center' }}>
+          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#ef4444', display: 'block' }}>{s.inad}</span>
+          <span style={{ fontSize: 11, color: '#64748b' }}>🔴 Inadimplentes</span>
+        </div>
+        <div style={{ background: '#1a1d2e', borderRadius: 8, padding: '12px', textAlign: 'center' }}>
           <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#a78bfa', display: 'block' }}>{s.prom}</span>
           <span style={{ fontSize: 11, color: '#64748b' }}>🤝 Promessas</span>
         </div>
@@ -269,7 +277,7 @@ if (filtro === 'pendente') {
               }}
             />
             <div style={{ display: 'flex', gap: 4, background: '#1a1d2e', padding: 4, borderRadius: 8 }}>
-              {["todos", "pago", "pendente", "promessa"].map(v => (
+              {["todos", "pago", "pendente", "inadimplente", "promessa"].map(v => (
                 <button
                   key={v}
                   onClick={() => setFiltro(v)}
@@ -280,11 +288,11 @@ if (filtro === 'pendente') {
                     fontSize: 12,
                     fontWeight: 600,
                     cursor: 'pointer',
-                    background: filtro === v ? '#2563eb' : 'transparent',
+                    background: filtro === v ? (v === 'inadimplente' ? '#ef4444' : '#2563eb') : 'transparent',
                     color: filtro === v ? '#fff' : '#94a3b8'
                   }}
                 >
-                  {v === 'todos' ? 'Todos' : v === 'pago' ? '✅ Pagos' : v === 'pendente' ? '⏳ Pendentes' : '🤝 Promessas'}
+                  {v === 'todos' ? 'Todos' : v === 'pago' ? '✅ Pagos' : v === 'pendente' ? '⏳ Pendentes' : v === 'inadimplente' ? '🔴 Inadimplentes' : '🤝 Promessas'}
                 </button>
               ))}
             </div>

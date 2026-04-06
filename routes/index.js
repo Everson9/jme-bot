@@ -205,15 +205,27 @@ module.exports = function setupRoutes(app, ctx) {
                 if (tel) promMap[tel] = p;
             });
 
+            // Busca historico_pagamentos de todos os clientes (paralelizado)
+            await Promise.all(clientes.map(async c => {
+                try {
+                    const hSnap = await firebaseDb.collection('clientes')
+                        .doc(c.id).collection('historico_pagamentos').get();
+                    const hist = {};
+                    hSnap.docs.forEach(d => { hist[d.id] = d.data(); });
+                    c._historico = hist;
+                } catch(_) { c._historico = {}; }
+            }));
+
             clientes = clientes.map(c => {
                 const tel = (c.telefone||'').replace(/\D/g,'').slice(-8);
                 const prom = promMap[tel];
+                // Calcula o status real pelo historico_pagamentos
+                const statusReal = calcularStatusCliente(c, c._historico || null);
                 return {
                     ...c,
                     data_promessa: prom?.data_promessa || null,
-                    // status_calculado usa o campo status diretamente (sem histórico)
-                    // O campo status é a fonte de cache — atualizado a cada baixa/reversão
-                    status_calculado: c.status || 'pendente',
+                    status_calculado: statusReal,
+                    _historico: undefined, // não enviar no response
                 };
             });
 
@@ -849,11 +861,27 @@ module.exports = function setupRoutes(app, ctx) {
             const snap = await firebaseDb.collection('clientes').get();
             const basesSnap = await firebaseDb.collection('bases').get();
             const baseMap = {}; basesSnap.docs.forEach(d=>{baseMap[d.id]=d.data().nome;});
+
+            // Busca historico_pagamentos para filtrar os pagos do ciclo atual
+            const mesRefMM = String(mesHoje).padStart(2,'0');
+            const cicloAtual = `${mesRefMM}-${anoHoje}`;
+            const pagosNoCiclo = new Set();
+            await Promise.all(snap.docs.map(async doc => {
+                try {
+                    const h = await firebaseDb.collection('clientes').doc(doc.id).collection('historico_pagamentos').doc(cicloAtual).get();
+                    if (h.exists) {
+                        const hs = h.data();
+                        if (hs.status === 'pago' || hs.status === 'isento') pagosNoCiclo.add(doc.id);
+                    }
+                } catch(_) {}
+            }));
+
             const lista = [];
             snap.docs.forEach(doc => {
                 const c=doc.data();
                 if (c.status === 'pago' || c.status === 'isento') return;
                 if (c.status === 'cancelado') return;
+                if (pagosNoCiclo.has(doc.id)) return; // pago no ciclo atual mesmo que status desatualizado
                 const venc=parseInt(c.dia_vencimento)||10;
                 let atraso;
                 if (diaHoje>=venc) atraso=diaHoje-venc;
@@ -956,7 +984,7 @@ module.exports = function setupRoutes(app, ctx) {
     // BOAS-VINDAS (clientes recentes)
     // ─────────────────────────────────────────────────────
     app.post('/api/boas-vindas/enviar', async (req, res) => {
-        const { cliente_id, mensagem_carne } = req.body || {};
+        const { cliente_id, mensagem, solicitar_carne, obs_carne, carne_arquivo_base64, carne_arquivo_nome, carne_arquivo_tipo } = req.body || {};
         try {
             const cliDoc = await firebaseDb.collection('clientes').doc(cliente_id).get();
             if (!cliDoc.exists) return res.status(404).json({ erro: 'Cliente não encontrado' });
@@ -965,18 +993,25 @@ module.exports = function setupRoutes(app, ctx) {
             if (!telefone) return res.status(400).json({ erro: 'Cliente sem telefone' });
             const numero = (telefone.replace(/\D/g,'').startsWith('55') ? telefone.replace(/\D/g,'') : '55' + telefone.replace(/\D/g,'')) + '@c.us';
 
-            // Mensagem de boas-vindas
-            const primeiroNome = (cli.nome || 'Cliente').split(' ')[0];
-            const msgBoasVindas = `🤖 *Assistente JMENET*\n\n` +
-                `Olá, *${primeiroNome}*! 🎉 Seja bem-vindo(a) à JMENET!\n\n` +
-                `📡 Plano: ${cli.plano || 'Não informado'}\n` +
-                `📅 Vencimento: Todo dia ${cli.dia_vencimento || '10'}\n\n` +
-                `Qualquer dúvida é só chamar! 😊`;
+            // Mensagem (editável via textarea ou default)
+            const msgBoasVindas = mensagem ||
+                `🤖 *Assistente JMENET*\n\nOlá, *${(cli.nome || 'Cliente').split(' ')[0]}*! 🎉 Seja bem-vindo(a) à JMENET!\n\n📡 Plano: ${cli.plano || 'Não informado'}\n📅 Vencimento: Todo dia ${cli.dia_vencimento || '10'}\n\nQualquer dúvida é só chamar! 😊`;
 
             await client.sendMessage(numero, msgBoasVindas);
 
+            // Envia carnê anexado se houver (base64 via MessageMedia)
+            if (carne_arquivo_base64 && carne_arquivo_nome) {
+                try {
+                    const { MessageMedia } = require('whatsapp-web.js');
+                    const media = new MessageMedia(carne_arquivo_tipo || 'application/pdf', carne_arquivo_base64, carne_arquivo_nome);
+                    await client.sendMessage(numero, media);
+                } catch(fileErr) {
+                    console.error('Erro ao enviar carnê:', fileErr.message);
+                }
+            }
+
             // Solicitar carnê físico
-            if (mensagem_carne) {
+            if (solicitar_carne) {
                 const anteriories = await firebaseDb.collection('carne_solicitacoes')
                     .where('cliente_id', '==', cliente_id)
                     .where('status', '==', 'solicitado').get();
@@ -991,11 +1026,23 @@ module.exports = function setupRoutes(app, ctx) {
                     endereco: cli.endereco || null,
                     origem: 'painel',
                     status: 'solicitado',
-                    observado: mensagem_carne,
+                    observado: obs_carne || 'Solicitado via painel na boas-vindas',
                     solicitado_em: new Date().toISOString()
                 });
             }
 
+            res.json({ ok: true });
+        } catch(e) { res.status(500).json({ erro: e.message }); }
+    });
+
+    // Envia mensagem manual pra qualquer número
+    app.post('/api/boas-vindas/manual', async (req, res) => {
+        const { telefone, mensagem } = req.body || {};
+        if (!telefone) return res.status(400).json({ erro: 'Telefone é obrigatório' });
+        if (!mensagem) return res.status(400).json({ erro: 'Mensagem é obrigatória' });
+        try {
+            const numero = (telefone.replace(/\D/g,'').startsWith('55') ? telefone.replace(/\D/g,'') : '55' + telefone.replace(/\D/g,'')) + '@c.us';
+            await client.sendMessage(numero, mensagem);
             res.json({ ok: true });
         } catch(e) { res.status(500).json({ erro: e.message }); }
     });

@@ -134,10 +134,16 @@ module.exports = function setupRotasAlertas(app, ctx) {
                 return res.json({ clientes: [], total: 0 });
             }
 
+            // Calcula o ciclo atual para checar pagamentos
+            const mesMM = String(mes).padStart(2,'0');
+            const cicloAtual = `${mesMM}-${ano}`;
+
             // Busca clientes pendentes dos vencimentos que passaram D+10
             const todos = [];
+            const docIds = [];
+            const docMap = {};
+
             await Promise.all(paraBloquear.map(async venc => {
-                // Busca como número E como string — campo pode estar salvo de qualquer forma
                 const [snapNum, snapStr] = await Promise.all([
                     firebaseDb.collection('clientes')
                         .where('dia_vencimento', '==', venc)
@@ -147,26 +153,46 @@ module.exports = function setupRotasAlertas(app, ctx) {
                         .where('status', '==', 'pendente').get(),
                 ]);
                 const vistos = new Set();
-                const snap = { docs: [...snapNum.docs, ...snapStr.docs].filter(d => {
+                const combined = [...snapNum.docs, ...snapStr.docs].filter(d => {
                     if (vistos.has(d.id)) return false;
                     vistos.add(d.id); return true;
-                })};
-                snap.docs.forEach(doc => {
-                    const d = doc.data();
-                    const diasAtraso = dia >= venc
-                        ? dia - venc
-                        : (new Date(ano, mes - 1, 0).getDate() - venc) + dia;
-                    todos.push({
-                        id: doc.id,
-                        nome: d.nome,
-                        telefone: d.telefone,
-                        dia_vencimento: venc,
-                        dias_atraso: diasAtraso,
-                        plano: d.plano,
-                        forma_pagamento: d.forma_pagamento
-                    });
+                });
+                combined.forEach(doc => {
+                    docIds.push(doc.id);
+                    docMap[doc.id] = { doc, venc };
                 });
             }));
+
+            // Filtra quem já pagou no ciclo atual
+            const pagosNoCiclo = new Set();
+            await Promise.all(docIds.map(async docId => {
+                try {
+                    const h = await firebaseDb.collection('clientes').doc(docId)
+                        .collection('historico_pagamentos').doc(cicloAtual).get();
+                    if (h.exists) {
+                        const hs = h.data();
+                        if (hs.status === 'pago' || hs.status === 'isento') pagosNoCiclo.add(docId);
+                    }
+                } catch(_) {}
+            }));
+
+            for (const docId of docIds) {
+                if (pagosNoCiclo.has(docId)) continue;
+                const { doc, venc } = docMap[docId];
+                const d = doc.data();
+                const diasAtraso = dia >= venc
+                    ? dia - venc
+                    : (new Date(ano, mes - 1, 0).getDate() - venc) + dia;
+                todos.push({
+                    id: doc.id,
+                    nome: d.nome,
+                    telefone: d.telefone,
+                    dia_vencimento: venc,
+                    dias_atraso: diasAtraso,
+                    plano: d.plano,
+                    forma_pagamento: d.forma_pagamento
+                });
+            }
 
             todos.sort((a, b) => b.dias_atraso - a.dias_atraso);
             res.json({ clientes: todos, total: todos.length });
