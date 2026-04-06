@@ -59,22 +59,6 @@ function getCicloAtual(diaVencimento, hoje = new Date()) {
  *
  * Retorna: 'pago' | 'pendente' | 'em_dia' | 'promessa' | 'cancelado'
  */
-/**
- * Calcula dias de atraso considerando rollover de mês.
- * Para dia 30: se diaHoje < diaVencimento, assume que o vencimento foi no último mês.
- */
-function calcularAtraso(diaVencimento, diaHoje, mesHoje, anoHoje) {
-    let atraso;
-    if (diaHoje >= diaVencimento) {
-        atraso = diaHoje - diaVencimento;
-    } else {
-        // Rollover — o vencimento foi no mês anterior
-        const ultimoDiaMesAnterior = new Date(anoHoje, mesHoje - 1, 0).getDate();
-        atraso = (ultimoDiaMesAnterior - diaVencimento) + diaHoje;
-    }
-    return atraso < 0 ? 0 : atraso;
-}
-
 function calcularStatusCliente(cliente, _historico = null) {
     if (!cliente) return 'pendente';
 
@@ -88,32 +72,65 @@ function calcularStatusCliente(cliente, _historico = null) {
     // Sem histórico passado → usa campo status diretamente (cache)
     if (!_historico) return cliente.status || 'pendente';
 
-    const ciclo = getCicloAtual(diaVencimento);
     const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
     const diaHoje  = agoraBR.getUTCDate();
     const mesHoje  = agoraBR.getUTCMonth() + 1;
     const anoHoje  = agoraBR.getUTCFullYear();
-    const atraso   = calcularAtraso(diaVencimento, diaHoje, mesHoje, anoHoje);
 
-    // Tenta localizar o registro pelo docId ("MM-YYYY") ou chave ("MM/YYYY")
-    const reg = _historico[ciclo.docId] || _historico[ciclo.chave] || null;
-
-    if (reg) {
-        if (reg.status === 'pago' || reg.status === 'isento') return 'pago';
-        // Se pendente e já passou 5+ dias do vencimento → inadimplente
-        if (reg.status === 'pendente' && atraso >= 5) return 'inadimplente';
-        return reg.status || 'pendente';
+    // Determina qual foi o vencimento mais recente
+    // Para dia 10: antes do 10 → vencimento foi mês anterior; depois → mês atual
+    // Para dia 20: antes do 20 → vencimento foi mês anterior; depois → mês atual
+    // Para dia 30: antes do 30 → vencimento foi mês anterior
+    let mesRefVencido, anoRefVencido;
+    if (diaHoje < diaVencimento) {
+        // Ainda não venceu este mês → o vencimento é do mês anterior
+        mesRefVencido = mesHoje === 1 ? 12 : mesHoje - 1;
+        anoRefVencido = mesHoje === 1 ? anoHoje - 1 : anoHoje;
+    } else {
+        // Já passou do vencimento → vencimento deste mês
+        mesRefVencido = mesHoje;
+        anoRefVencido = anoHoje;
     }
 
-    // Sem registro no ciclo atual — verifica se ainda não venceu
-    if (diaVencimento === 10 && diaHoje < 10) return 'em_dia';
-    if (diaVencimento === 20 && diaHoje < 20) return 'em_dia';
-    if (diaVencimento === 30) {
-        if (diaHoje <= 5) return 'em_dia'; // tolerância
+    const mmV = String(mesRefVencido).padStart(2, '0');
+    const docIdVencido = `${mmV}-${anoRefVencido}`;
+    const chaveVencido = `${mmV}/${anoRefVencido}`;
+
+    // Dias de atraso
+    let diasAtraso = 0;
+    if (diaHoje >= diaVencimento) {
+        diasAtraso = diaHoje - diaVencimento;
+    } else {
+        const ultimoDiaMesAnterior = new Date(anoHoje, mesHoje - 1, 0).getDate();
+        diasAtraso = (ultimoDiaMesAnterior - diaVencimento) + diaHoje;
+    }
+    if (diasAtraso < 0) diasAtraso = 0;
+
+    // 1. Verifica o registro do vencimento mais recente
+    const regVencido = _historico[docIdVencido] || _historico[chaveVencido] || null;
+
+    if (regVencido) {
+        if (regVencido.status === 'pago' || regVencido.status === 'isento') {
+            // Pago no vencimento → verifica se JÁ TEM registro do PRÓXIMO ciclo
+            let proxMes = mesRefVencido === 12 ? 1 : mesRefVencido + 1;
+            let proxAno = mesRefVencido === 12 ? anoRefVencido + 1 : anoRefVencido;
+            const mmP = String(proxMes).padStart(2, '0');
+            const regProx = _historico[`${mmP}-${proxAno}`] || _historico[`${mmP}/${proxAno}`] || null;
+            if (regProx) {
+                if (regProx.status === 'pago' || regProx.status === 'isento') return 'pago';
+                if (regProx.status === 'pendente' && diasAtraso >= 5) return 'inadimplente';
+                return regProx.status || 'pendente';
+            }
+            // Sem registro próximo → ainda em dia (próximo vencimento não chegou)
+            return 'em_dia';
+        }
+        // Vencimento recente pendente ou promise
+        if (regVencido.status === 'pendente' && diasAtraso >= 5) return 'inadimplente';
+        return regVencido.status || 'pendente';
     }
 
-    // Vencido e sem registro
-    if (atraso >= 5) return 'inadimplente';
+    // Sem registro do vencido → inadimplente se passou 5+ dias
+    if (diasAtraso >= 5) return 'inadimplente';
 
     return 'pendente';
 }
