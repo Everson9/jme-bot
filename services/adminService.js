@@ -114,12 +114,12 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
         { dataVenc: 20, tipo: 'atraso_final',       diaDisparo: 25, mesDisparo: mesHoje, anoDisparo: anoHoje },
         { dataVenc: 20, tipo: 'reconquista',        diaDisparo: 27, mesDisparo: mesHoje, anoDisparo: anoHoje },
         { dataVenc: 20, tipo: 'reconquista_final',  diaDisparo: 30, mesDisparo: mesHoje, anoDisparo: anoHoje },
-        // Data 30 — disparos caem no mês seguinte (exceto lembrete)
-        { dataVenc: 30, tipo: 'lembrete',          diaDisparo: 29, mesDisparo: mesHoje, anoDisparo: anoHoje },
-        { dataVenc: 30, tipo: 'atraso',             diaDisparo:  3, mesDisparo: mesHoje === 12 ? 1 : mesHoje + 1, anoDisparo: mesHoje === 12 ? anoHoje + 1 : anoHoje },
-        { dataVenc: 30, tipo: 'atraso_final',       diaDisparo:  5, mesDisparo: mesHoje === 12 ? 1 : mesHoje + 1, anoDisparo: mesHoje === 12 ? anoHoje + 1 : anoHoje },
-        { dataVenc: 30, tipo: 'reconquista',        diaDisparo:  7, mesDisparo: mesHoje === 12 ? 1 : mesHoje + 1, anoDisparo: mesHoje === 12 ? anoHoje + 1 : anoHoje },
-        { dataVenc: 30, tipo: 'reconquista_final',  diaDisparo: 10, mesDisparo: mesHoje === 12 ? 1 : mesHoje + 1, anoDisparo: mesHoje === 12 ? anoHoje + 1 : anoHoje },
+        // Data 30 — lembrete ainda no mês, pós-vencimento no mês seguinte
+        { dataVenc: 30, tipo: 'lembrete',          diaDisparo: 29, mesDisparo: mesHoje,          anoDisparo: anoHoje },
+        { dataVenc: 30, tipo: 'atraso',             diaDisparo:  3, mesDisparo: mesHoje,          anoDisparo: anoHoje },
+        { dataVenc: 30, tipo: 'atraso_final',       diaDisparo:  5, mesDisparo: mesHoje,          anoDisparo: anoHoje },
+        { dataVenc: 30, tipo: 'reconquista',        diaDisparo:  7, mesDisparo: mesHoje,          anoDisparo: anoHoje },
+        { dataVenc: 30, tipo: 'reconquista_final',  diaDisparo: 10, mesDisparo: mesHoje,          anoDisparo: anoHoje },
     ];
 
     // Filtra apenas os disparos de hoje
@@ -129,18 +129,18 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
         c.anoDisparo === anoHoje
     );
 
-    // Se segunda-feira, também verifica se o domingo teve disparo perdido
+    // Se segunda-feira, também verifica disparos perdidos do fim de semana (dom + sáb)
     if (diaSemana === 1) {
-        const ontem = new Date(agoraBR.getTime() - 86400000);
-        const diaOntem = ontem.getUTCDate();
-        const mesOntem = ontem.getUTCMonth() + 1;
-        const anoOntem = ontem.getUTCFullYear();
-        const disparosOntem = calendarioCobranças.filter(c =>
-            c.diaDisparo === diaOntem &&
-            c.mesDisparo === mesOntem &&
-            c.anoDisparo === anoOntem
-        );
-        disparosHoje.push(...disparosOntem);
+        for (const diasAtras of [1, 2]) {
+            const d = new Date(agoraBR.getTime() - diasAtras * 86400000);
+            const diaD = d.getUTCDate();
+            const mesD = d.getUTCMonth() + 1;
+            const anoD = d.getUTCFullYear();
+            const perdidos = calendarioCobranças.filter(c =>
+                c.diaDisparo === diaD && c.mesDisparo === mesD && c.anoDisparo === anoD
+            );
+            disparosHoje.push(...perdidos);
+        }
     }
 
     if (disparosHoje.length === 0) {
