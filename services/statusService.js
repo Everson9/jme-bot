@@ -26,7 +26,15 @@ function getCicloAtual(diaVencimento, hoje = new Date()) {
     let anoRef = anoHoje;
 
     if (diaVencimento === 30 && diaHoje <= 5) {
-        // Ainda dentro da tolerância do mês anterior
+        // Vence dia 30 com tolerância até dia 5 — se hoje é 1-5, ainda no ciclo anterior
+        mesRef = mesHoje === 1 ? 12 : mesHoje - 1;
+        anoRef = mesHoje === 1 ? anoHoje - 1 : anoHoje;
+    } else if (diaVencimento === 10 && diaHoje < 10) {
+        // Antes do vencimento 10 — ciclo do mês anterior
+        mesRef = mesHoje === 1 ? 12 : mesHoje - 1;
+        anoRef = mesHoje === 1 ? anoHoje - 1 : anoHoje;
+    } else if (diaVencimento === 20 && diaHoje < 20) {
+        // Antes do vencimento 20 — ciclo do mês anterior
         mesRef = mesHoje === 1 ? 12 : mesHoje - 1;
         anoRef = mesHoje === 1 ? anoHoje - 1 : anoHoje;
     }
@@ -35,8 +43,8 @@ function getCicloAtual(diaVencimento, hoje = new Date()) {
     return {
         mesRef,
         anoRef,
-        chave: `${mm}/${anoRef}`,   // "03/2026" — usado na exibição e como referencia no doc
-        docId: `${mm}-${anoRef}`,   // "03-2026" — ID do documento no Firestore
+        chave: `${mm}/${anoRef}`,
+        docId: `${mm}-${anoRef}`,
     };
 }
 
@@ -51,6 +59,22 @@ function getCicloAtual(diaVencimento, hoje = new Date()) {
  *
  * Retorna: 'pago' | 'pendente' | 'em_dia' | 'promessa' | 'cancelado'
  */
+/**
+ * Calcula dias de atraso considerando rollover de mês.
+ * Para dia 30: se diaHoje < diaVencimento, assume que o vencimento foi no último mês.
+ */
+function calcularAtraso(diaVencimento, diaHoje, mesHoje, anoHoje) {
+    let atraso;
+    if (diaHoje >= diaVencimento) {
+        atraso = diaHoje - diaVencimento;
+    } else {
+        // Rollover — o vencimento foi no mês anterior
+        const ultimoDiaMesAnterior = new Date(anoHoje, mesHoje - 1, 0).getDate();
+        atraso = (ultimoDiaMesAnterior - diaVencimento) + diaHoje;
+    }
+    return atraso < 0 ? 0 : atraso;
+}
+
 function calcularStatusCliente(cliente, _historico = null) {
     if (!cliente) return 'pendente';
 
@@ -65,6 +89,11 @@ function calcularStatusCliente(cliente, _historico = null) {
     if (!_historico) return cliente.status || 'pendente';
 
     const ciclo = getCicloAtual(diaVencimento);
+    const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    const diaHoje  = agoraBR.getUTCDate();
+    const mesHoje  = agoraBR.getUTCMonth() + 1;
+    const anoHoje  = agoraBR.getUTCFullYear();
+    const atraso   = calcularAtraso(diaVencimento, diaHoje, mesHoje, anoHoje);
 
     // Tenta localizar o registro pelo docId ("MM-YYYY") ou chave ("MM/YYYY")
     const reg = _historico[ciclo.docId] || _historico[ciclo.chave] || null;
@@ -72,29 +101,19 @@ function calcularStatusCliente(cliente, _historico = null) {
     if (reg) {
         if (reg.status === 'pago' || reg.status === 'isento') return 'pago';
         // Se pendente e já passou 5+ dias do vencimento → inadimplente
-        if (reg.status === 'pendente') {
-            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
-            const diaHoje = agoraBR.getUTCDate();
-            if (diaHoje >= diaVencimento && (diaHoje - diaVencimento) >= 5) return 'inadimplente';
-        }
+        if (reg.status === 'pendente' && atraso >= 5) return 'inadimplente';
         return reg.status || 'pendente';
     }
 
     // Sem registro no ciclo atual — verifica se ainda não venceu
-    const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
-    const diaHoje  = agoraBR.getUTCDate();
-    const mesHoje  = agoraBR.getUTCMonth() + 1;
-
     if (diaVencimento === 10 && diaHoje < 10) return 'em_dia';
     if (diaVencimento === 20 && diaHoje < 20) return 'em_dia';
     if (diaVencimento === 30) {
-        const { mesRef } = ciclo;
-        if (mesRef === mesHoje && diaHoje < 30) return 'em_dia';
-        if (mesRef !== mesHoje && diaHoje <= 5)  return 'em_dia';
+        if (diaHoje <= 5) return 'em_dia'; // tolerância
     }
 
-    // Sem registro e já passou do vencimento com 5+ dias → inadimplente
-    if (diaHoje >= diaVencimento && (diaHoje - diaVencimento) >= 5) return 'inadimplente';
+    // Vencido e sem registro
+    if (atraso >= 5) return 'inadimplente';
 
     return 'pendente';
 }
