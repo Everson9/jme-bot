@@ -3,6 +3,8 @@
 // FLUXO SUPORTE TÉCNICO — VERSÃO FIREBASE
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+const { calcularStatusCliente, getCicloAtual } = require('../services/statusService');
+
 const PALAVRAS_REINICIOU = [
     'reiniciei','reiniciar','reiniciou','desliguei','desligou','desligado','desligue','desliga','desliguei',
     'liguei de novo','liguei novamente','liguei e nada','liguei e não','liguei e nao',
@@ -228,17 +230,58 @@ module.exports = function criarFluxoSuporte(ctx) {
     function msgConfirmacaoSuporte(nome, dataAgendamento = null) {
         const prNome = nome ? nome.split(' ')[0] : null;
         const saudacao = prNome ? `Perfeito, ${prNome}!` : 'Perfeito!';
-        
+
         if (dataAgendamento) {
             return `${saudacao} Agendamento confirmado para *${dataAgendamento}*. Nosso técnico estará aí nesse horário! 🔧`;
         }
-        
+
         if (atendenteDisponivel()) {
             const h = horaLocal();
             if (h < 14) return `${saudacao} Anotei tudo! Nosso técnico vai entrar em contato em breve. 🔧`;
             return `${saudacao} Anotei tudo! Como já passa das 14h, a visita será amanhã. O técnico confirma com você! 🔧`;
         }
         return `${saudacao} Anotei tudo! O técnico confirma a visita ${proximoAtendimento()}. 🔧`;
+    }
+
+    // ── Helper: exibir status do titular + opções ──
+    async function exibirStatusTitular(deQuem, clienteFull) {
+        const diaVenc = parseInt(clienteFull.dia_vencimento) || 10;
+        const cicloRef = getCicloAtual(diaVenc, new Date());
+        const histDoc = await firebaseDb.collection('clientes').doc(clienteFull.id)
+            .collection('historico_pagamentos').doc(cicloRef.docId).get().catch(() => null);
+        const histReg = histDoc?.exists ? histDoc.data() : null;
+        const statusCalc = calcularStatusCliente(clienteFull, { [cicloRef.docId]: histReg });
+
+        const statusLabel = statusCalc === 'pago'
+            ? 'Pago ✅'
+            : statusCalc === 'inadimplente'
+                ? 'Inadimplente ⚠️'
+                : 'Pendente ⏳';
+
+        const meses = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+        const nomeMes = meses[cicloRef.mesRef - 1] || `${String(cicloRef.mesRef).padStart(2,'0')}`;
+
+        await client.sendMessage(deQuem,
+            `📋 *Situação do Titular*\n\n` +
+            `👤 Titular: ${clienteFull.nome || 'Não informado'}\n` +
+            `📅 Vencimento: Dia ${diaVenc}\n` +
+            `💰 Situação: ${statusLabel}\n` +
+            `📅 Referência: ${nomeMes}/${cicloRef.anoRef}\n\n` +
+            `O que deseja fazer?\n\n` +
+            `1️⃣ Solicitar visita técnica\n` +
+            `2️⃣ Efetuar pagamento\n` +
+            `3️⃣ Falar com atendente\n` +
+            `4️⃣ Reiniciar o roteador`
+        );
+
+        state.iniciar(deQuem, 'suporte', 'info_titular_aguardando_escolha', {
+            clienteData: {
+                nome: clienteFull.nome,
+                dia_vencimento: diaVenc,
+                status_calculado: statusCalc
+            }
+        });
+        state.iniciarTimer(deQuem);
     }
 
     async function iniciar(deQuem, msg, motivo = null) {
@@ -296,8 +339,6 @@ module.exports = function criarFluxoSuporte(ctx) {
             return;
         }
 
-        state.iniciar(deQuem, 'suporte', 'aguardando_reinicio', {});
-        state.setClienteEmSuporte(deQuem, true);
         await banco.dbIniciarAtendimento(deQuem);
 
         const dadosCliente = await buscarStatusCliente(deQuem);
@@ -306,10 +347,25 @@ module.exports = function criarFluxoSuporte(ctx) {
 
         await client.sendMessage(deQuem, `${P}${sinalMsg} — isso significa que o problema é pontual aí na sua casa. 😊`);
         await new Promise(r => setTimeout(r, 1200));
-        await client.sendMessage(deQuem, `${P}${saudacao} Antes de qualquer coisa, vamos tentar uma solução rápida: pode *desligar o roteador da tomada por 30 segundos* e ligar de novo? 🔌`);
-        
-        await banco.dbSalvarHistorico(deQuem, 'assistant', 'Sinal OK. Iniciou fluxo suporte.');
+
+        // ── Buscar dados completos do titular ──
+        const numeroBusca = deQuem.replace('@c.us', '').replace(/^55/, '');
+        const clienteFull = await banco.buscarClientePorTelefone(numeroBusca);
+
+        if (clienteFull) {
+            await exibirStatusTitular(deQuem, clienteFull);
+            return;
+        }
+
+        // Cliente não encontrado na base — pede dados do titular primeiro
+        state.iniciar(deQuem, 'suporte', 'info_titular_dados', {});
+        state.setClienteEmSuporte(deQuem, true);
+        await client.sendMessage(deQuem,
+            `${P}${saudacao} Não encontrei um cadastro com este número. 😕\n\n` +
+            `Para eu verificar a situação, me informe o *nome completo do titular* da internet:`
+        );
         state.iniciarTimer(deQuem);
+        return;
     }
 
     async function handle(deQuem, msg) {
@@ -401,9 +457,181 @@ module.exports = function criarFluxoSuporte(ctx) {
         }
 
         // =====================================================
+        // TITULAR NÃO ENCONTRADO PELO Nº — PEDIR DADOS
+        // =====================================================
+        if (etapa === 'info_titular_dados') {
+            const nomeInformado = texto.trim();
+            if (!nomeInformado || nomeInformado.length < 3) {
+                await client.sendMessage(deQuem, `${P}Não entendi. Pode digitar o *nome completo do titular*? 😊`);
+                state.iniciarTimer(deQuem);
+                return;
+            }
+
+            // Busca por nome
+            const resultados = await banco.buscarClientePorNome(nomeInformado);
+            if (!resultados || resultados.length === 0) {
+                // Não achou — oferece visita técnica ou atendente direto
+                await client.sendMessage(deQuem,
+                    `📋 Ops! Não encontrei nenhum cadastro com o nome "${nomeInformado}". 😕\n\n` +
+                    `O que deseja fazer?\n\n` +
+                    `1️⃣ Solicitar visita técnica\n` +
+                    `2️⃣ Falar com atendente\n` +
+                    `3️⃣ Informar outro nome`
+                );
+                state.avancar(deQuem, 'info_titular_dados_sem_encontrar', { nomeBuscado: nomeInformado });
+                state.iniciarTimer(deQuem);
+                return;
+            }
+
+            // Se achou vários
+            if (resultados.length > 1) {
+                const lista = resultados.slice(0, 5).map((c, i) => `${i + 1}. ${c.nome} — ${c.plano || 'plano N/A'}`).join('\n');
+                await client.sendMessage(deQuem,
+                    `Encontrei vários clientes com esse nome. 😕\n\n${lista}\n\n` +
+                    `Digite o *número* do titular correto, ou me informe o *CPF* (somente números):`
+                );
+                state.avancar(deQuem, 'info_titular_dados_escolher', { resultados, nomes: resultados.map(c => c) });
+                state.iniciarTimer(deQuem);
+                return;
+            }
+
+            // Achou um — mostra status
+            const clienteFull = resultados[0];
+            await exibirStatusTitular(deQuem, clienteFull);
+            return;
+        }
+
+        // =====================================================
+        // VÁRIOS CLIENTES COM MESMO NOME — ESCOLHER
+        // =====================================================
+        if (etapa === 'info_titular_dados_escolher') {
+            const t = texto.trim();
+            // CPF informado
+            const cpfLimpo = t.replace(/\D/g, '');
+            if (cpfLimpo.length === 11) {
+                const cliente = await banco.buscarClientePorCPF(cpfLimpo);
+                if (cliente) {
+                    await exibirStatusTitular(deQuem, cliente);
+                    return;
+                }
+                await client.sendMessage(deQuem, `${P}Não encontrei CPF ${cpfLimpo}. Pode tentar outro ou digitar o *nome do titular*:`);
+                state.iniciar(deQuem, 'suporte', 'info_titular_dados', {});
+                state.iniciarTimer(deQuem);
+                return;
+            }
+
+            // Número da lista
+            const idx = parseInt(t) - 1;
+            const resultados = dados.resultados || [];
+            if (idx >= 0 && idx < resultados.length) {
+                await exibirStatusTitular(deQuem, resultados[idx]);
+                return;
+            }
+
+            await client.sendMessage(deQuem, `${P}Digite o *número* da opção correta ou o *CPF* (11 dígitos):`);
+            state.iniciarTimer(deQuem);
+            return;
+        }
+
+        // =====================================================
+        // TITULAR NÃO ENCONTRADO — OPÇÕES EXTRAS
+        // =====================================================
+        if (etapa === 'info_titular_dados_sem_encontrar') {
+            const t = texto.toLowerCase();
+            if (t.includes('1') || t.includes('visita') || t.includes('técnico') || t.includes('tecnico')) {
+                state.avancar(deQuem, 'aguardando_nome');
+                await client.sendMessage(deQuem, `${P}Vamos registrar a visita então! 😊\n\nPode me dizer seu *nome completo*?`);
+                return;
+            }
+            if (t.includes('2') || t.includes('atendente') || t.includes('humano') || t.includes('pessoa')) {
+                state.encerrarFluxo(deQuem);
+                await abrirChamadoComMotivo(deQuem, dados.nomeBuscado || null, 'Suporte — pedido de atendente (titular não encontrado)');
+                await client.sendMessage(deQuem, `${P}Vou chamar um atendente! Aguarda um instante. 😊`);
+                return;
+            }
+            if (t.includes('3') || t.includes('outro') || t.includes('nome')) {
+                state.avancar(deQuem, 'info_titular_dados');
+                await client.sendMessage(deQuem, `${P}Me diga outro *nome de titular*:`);
+                state.iniciarTimer(deQuem);
+                return;
+            }
+
+            await client.sendMessage(deQuem,
+                `Não entendi. Escolha uma opção:\n\n` +
+                `1️⃣ Solicitar visita técnica\n` +
+                `2️⃣ Falar com atendente\n` +
+                `3️⃣ Informar outro nome`
+            );
+            state.iniciarTimer(deQuem);
+            return;
+        }
+
+        // =====================================================
+        // ESCOLHA APÓS CONSULTA DO TITULAR
+        // =====================================================
+        if (etapa === 'info_titular_aguardando_escolha') {
+            const t = texto.toLowerCase();
+            const cDados = dados.clienteData || {};
+
+            if (t === '0' || t === 'menu' || t === 'voltar') {
+                state.encerrarFluxo(deQuem);
+                await client.sendMessage(deQuem, `${P}Voltando ao menu! 😊`);
+                return;
+            }
+
+            if (t.includes('1') || t.includes('visita') || t.includes('técnico') || t.includes('tecnico') || t.includes('agend')) {
+                // Visita técnica — inicia fluxo de pedido de nome/foto/endereço
+                state.avancar(deQuem, 'aguardando_nome');
+                await client.sendMessage(deQuem, `${P}Certo! Vamos registrar a visita. 😊\n\nPara eu iniciar o atendimento, pode me dizer seu *nome completo*?`);
+                return;
+            }
+
+            if (t.includes('2') || t.includes('pagar') || t.includes('pagamento') || t.includes('pix') || t.includes('boleto') || t.includes('financeiro')) {
+                // Redireciona para o financeiro
+                state.encerrarFluxo(deQuem);
+                state.iniciar(deQuem, 'financeiro', 'aguardando_escolha', { nome: cDados.nome || null });
+                await client.sendMessage(deQuem,
+                    `${P}Certo! Vou te direcionar pro financeiro. 😊\n\n` +
+                    `Como prefere pagar?\n\n` +
+                    `1️⃣ *PIX*\n` +
+                    `2️⃣ *Boleto*\n` +
+                    `3️⃣ *Dinheiro / Espécie*\n` +
+                    `4️⃣ *Carnê físico*\n` +
+                    `5️⃣ *Já efetuei o pagamento*`
+                );
+                return;
+            }
+
+            if (t.includes('3') || t.includes('atendente') || t.includes('humano') || t.includes('pessoa') || t.includes('falar')) {
+                state.encerrarFluxo(deQuem);
+                await abrirChamadoComMotivo(deQuem, cDados.nome, 'Suporte — pedido de atendente');
+                await client.sendMessage(deQuem, `${P}Vou chamar um atendente! Aguarda um instante. 😊`);
+                return;
+            }
+
+            if (t.includes('4') || t.includes('reiniciar') || t.includes('reboot') || t.includes('roteador') || t.includes('desligar')) {
+                state.avancar(deQuem, 'aguardando_reinicio', { jaViuInfoTitular: true, clienteData: cDados });
+                await client.sendMessage(deQuem, `${P}Vamos tentar reiniciar o roteador! Pode *desligar da tomada por 30 segundos* e ligar de novo? 🔌`);
+                state.iniciarTimer(deQuem);
+                return;
+            }
+
+            // Fallback — repete opções
+            await client.sendMessage(deQuem,
+                `Não entendi. Escolha uma opção:\n\n` +
+                `1️⃣ Solicitar visita técnica\n` +
+                `2️⃣ Efetuar pagamento\n` +
+                `3️⃣ Falar com atendente\n` +
+                `4️⃣ Reiniciar o roteador`
+            );
+            state.iniciarTimer(deQuem);
+            return;
+        }
+
+        // =====================================================
         // FLUXO NORMAL DE SUPORTE
         // =====================================================
-        
+
         if (etapa === 'aguardando_reinicio') {
             const naoSabe = PALAVRAS_NAO_SABE.some(p => texto.includes(p));
             const respostaNegativaSimples = /^(não|nao|nop|nope|negativo|n)\.?!?$/.test(texto.trim());

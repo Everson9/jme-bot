@@ -36,6 +36,132 @@ function configurarMensagens(client, ctx, handlers) {
     const { dispararCobrancaReal, firebaseDb, groqChatFallback } = ctx;
 
     const fotosPendentes = new Map();
+    const debounceMensagens = new Map(); // deQuem => { timer, textos: [], midias: [] }
+
+    // ── Roteamento de texto do cliente (extraído para debounce) ──
+    async function processarTexto(deQuem, texto, midias = []) {
+        const t = texto.toLowerCase();
+        const fluxoAtivo = state.getFluxo(deQuem);
+        const temFoto = midias.length > 0 && midias.some(m => m.type === 'image');
+        const msgSintetica = { body: texto, hasMedia: temFoto, type: 'chat' };
+
+        if (texto) console.log(`\n📨 ${deQuem.slice(-8)}: "${texto}"`);
+        else if (temFoto) console.log(`\n📨 ${deQuem.slice(-8)}: [foto/áudio]`);
+
+        // Se tem foto/áudio do roteador e não está em fluxo específico, armazena e segue
+        if (temFoto && !fluxoAtivo) {
+            fotosPendentes.set(deQuem, midias[midias.length - 1]);
+        }
+
+        // Voltar ao menu
+        if (fluxoAtivo && (t === '0' || t === 'menu' || t === 'voltar' || t === 'início' || t === 'inicio' || t === 'sair' || t === 'principal')) {
+            state.encerrarFluxo(deQuem);
+            await client.sendMessage(deQuem, `${P}Voltando ao menu! 😊\n\n${MENU_PRINCIPAL}`);
+            state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
+            return;
+        }
+
+        // Em fluxo ativo mas sem texto (só foto/áudio) → responde com menu
+        if (fluxoAtivo && !texto.trim()) {
+            await client.sendMessage(deQuem, `Recebi! Agora, como posso te ajudar? 😊\n\n${MENU_PRINCIPAL}`);
+            state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
+            return;
+        }
+
+        // Consulta situação
+        if (fluxoAtivo === 'consulta_situacao') {
+            state.encerrarFluxo(deQuem);
+            await consultarSituacao(deQuem, texto);
+            return;
+        }
+
+        // Fluxo ativo → delega
+        const fluxos = {
+            suporte:      _fluxoSuporte,
+            financeiro:   _fluxoFinanceiro,
+            promessa:     _fluxoPromessa,
+            cancelamento: _fluxoCancelamento,
+            novoCliente:  _fluxoNovoCliente,
+        };
+        if (fluxos[fluxoAtivo]?.handle) {
+            await fluxos[fluxoAtivo].handle(deQuem, msgSintetica);
+            return;
+        }
+
+        // Sub-menu financeiro
+        if (fluxoAtivo === 'menu_financeiro') {
+            state.encerrarFluxo(deQuem);
+            if (t === '1' || t.includes('pix') || t.includes('transferência') || t.includes('transferencia')) {
+                await _fluxoFinanceiro.iniciar(deQuem, msgSintetica, 'PIX'); return;
+            }
+            if (t === '2' || t.includes('boleto')) {
+                await _fluxoFinanceiro.iniciar(deQuem, msgSintetica, 'BOLETO'); return;
+            }
+            if (t === '3' || t.includes('carnê') || t.includes('carne') || t.includes('físico') || t.includes('fisico')) {
+                await _fluxoFinanceiro.iniciar(deQuem, msgSintetica, 'CARNE'); return;
+            }
+            if (t === '4' || t.includes('dinheiro') || t.includes('cobrador') || t.includes('espécie') || t.includes('especie')) {
+                await _fluxoFinanceiro.iniciar(deQuem, msgSintetica, 'DINHEIRO'); return;
+            }
+            if (t === '5' || t.includes('paguei') || t.includes('já paguei') || t.includes('feito') || t.includes('efetuei')) {
+                await _fluxoFinanceiro.iniciar(deQuem, msgSintetica, 'PAGO'); return;
+            }
+            await client.sendMessage(deQuem, MENU_FINANCEIRO);
+            state.iniciar(deQuem, 'menu_financeiro', 'aguardando_escolha', {});
+            return;
+        }
+
+        // Menu principal
+        if (fluxoAtivo === 'menu') {
+            state.encerrarFluxo(deQuem);
+            if (t === '1' || t.includes('internet') || t.includes('caiu') || t.includes('lento') ||
+                t.includes('sinal') || t.includes('suporte') || t.includes('técnico') || t.includes('tecnico')) {
+                if (!redeNormal()) {
+                    const infoRede = falarSinalAmigavel();
+                    const hora = new Date(Date.now() - 3 * 60 * 60 * 1000).getUTCHours();
+                    const fora = hora < 8 || hora >= 20;
+                    await client.sendMessage(deQuem,
+                        `${P}${infoRede}\n\n` + (fora
+                            ? `Sabemos do problema. Nossa equipe vai entrar em contato no início do expediente. 🙏`
+                            : `Nossa equipe já está trabalhando para resolver. 🙏`)
+                    );
+                    await abrirChamadoComMotivo(deQuem, null, `Reclamação — rede ${ctx.situacaoRede}`);
+                    return;
+                }
+                await _fluxoSuporte.iniciar(deQuem, msgSintetica);
+                return;
+            }
+            if (t === '2' || t.includes('pagar') || t.includes('pagamento') || t.includes('pix') ||
+                t.includes('boleto') || t.includes('carnê') || t.includes('carne') || t.includes('financeiro')) {
+                await client.sendMessage(deQuem, MENU_FINANCEIRO);
+                state.iniciar(deQuem, 'menu_financeiro', 'aguardando_escolha', {});
+                return;
+            }
+            if (t === '3' || t.includes('cancelar') || t.includes('cancelamento') || t.includes('encerrar')) {
+                await _fluxoCancelamento.iniciar(deQuem, msgSintetica);
+                return;
+            }
+            if (t === '4' || t.includes('situacao') || t.includes('situação') || t.includes('status') || t.includes('consultar') || t.includes('verificar')) {
+                await client.sendMessage(deQuem,
+                    `${P}Vou consultar para você! 📋\n\nMe informe seu *CPF* (somente números) ou seu *nome completo*:`
+                );
+                state.iniciar(deQuem, 'consulta_situacao', 'aguardando_dados', {});
+                return;
+            }
+            if (t === '5' || t.includes('atendente') || t.includes('humano') || t.includes('pessoa') || t.includes('falar')) {
+                await client.sendMessage(deQuem, `${P}Vou chamar um atendente! Aguarda um instante. 😊`);
+                await abrirChamadoComMotivo(deQuem, null, 'Cliente solicitou atendente');
+                return;
+            }
+            await client.sendMessage(deQuem, MENU_PRINCIPAL);
+            state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
+            return;
+        }
+
+        // Sem fluxo → mostra menu
+        await client.sendMessage(deQuem, MENU_PRINCIPAL);
+        state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
+    }
 
     // ── Admin envia mensagem no chat do cliente ──
     client.on('message_create', async (msg) => {
@@ -151,122 +277,42 @@ function configurarMensagens(client, ctx, handlers) {
         // Clientes
         if (msg.type === 'sticker') return;
 
+        // Mídia é processada IMEDIATAMENTE (comprovante PIX → baixa automática)
+        let midiaRecebida = false;
         if (msg.hasMedia && ['image','document'].includes(msg.type)) {
-            await processarMidiaAutomatico(deQuem, msg, fotosPendentes);
-            return;
+            const baixaFeita = await processarMidiaAutomatico(deQuem, msg, fotosPendentes);
+            if (baixaFeita) return; // comprovante PIX processado com sucesso
+            // Não é comprovante — armazena foto e entra no debounce
+            midiaRecebida = true;
         }
 
         if (state.isAtendimentoHumano(deQuem)) return;
 
-        const texto = msg.body?.trim() || '';
-        if (!texto) return;
+        // ── Debounce universal: acumula texto/mídia do mesmo remetente por 12s ──
+        const texto = (msg.hasMedia && ['image','document'].includes(msg.type))
+            ? (msg.body?.trim() || '')
+            : (msg.body?.trim() || '');
 
-        console.log(`\n📨 ${deQuem.slice(-8)}: "${texto}"`);
-
-        const fluxoAtivo = state.getFluxo(deQuem);
-        const t = texto.toLowerCase();
-
-        // Voltar ao menu
-        if (fluxoAtivo && (t === '0' || t === 'menu' || t === 'voltar' || t === 'início' || t === 'inicio' || t === 'sair' || t === 'principal')) {
-            state.encerrarFluxo(deQuem);
-            await client.sendMessage(deQuem, `${P}Voltando ao menu! 😊\n\n${MENU_PRINCIPAL}`);
-            state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
-            return;
+        let pendente = debounceMensagens.get(deQuem);
+        if (pendente) {
+            clearTimeout(pendente.timer);
+            pendente.textos.push(texto);
+            if (midiaRecebida) pendente.hasMidia = true;
+        } else {
+            pendente = { textos: [texto], hasMidia: midiaRecebida };
+            debounceMensagens.set(deQuem, pendente);
         }
 
-        // Consulta situação
-        if (fluxoAtivo === 'consulta_situacao') {
-            state.encerrarFluxo(deQuem);
-            await consultarSituacao(deQuem, texto);
-            return;
-        }
+        pendente.timer = setTimeout(() => {
+            debounceMensagens.delete(deQuem);
+            const textoCompleto = pendente.textos.join('\n').trim();
+            const midias = pendente.hasMidia && fotosPendentes.has(deQuem) ? [fotosPendentes.get(deQuem)] : [];
+            processarTexto(deQuem, textoCompleto, midias).catch(err => {
+                console.error('Erro ao processar mensagem debounce:', err);
+            });
+        }, 12000);
 
-        // Fluxo ativo → delega
-        const fluxos = {
-            suporte:      _fluxoSuporte,
-            financeiro:   _fluxoFinanceiro,
-            promessa:     _fluxoPromessa,
-            cancelamento: _fluxoCancelamento,
-            novoCliente:  _fluxoNovoCliente,
-        };
-        if (fluxos[fluxoAtivo]?.handle) {
-            await fluxos[fluxoAtivo].handle(deQuem, msg);
-            return;
-        }
-
-        // Sub-menu financeiro
-        if (fluxoAtivo === 'menu_financeiro') {
-            state.encerrarFluxo(deQuem);
-            if (t === '1' || t.includes('pix') || t.includes('transferência') || t.includes('transferencia')) {
-                await _fluxoFinanceiro.iniciar(deQuem, msg, 'PIX'); return;
-            }
-            if (t === '2' || t.includes('boleto')) {
-                await _fluxoFinanceiro.iniciar(deQuem, msg, 'BOLETO'); return;
-            }
-            if (t === '3' || t.includes('carnê') || t.includes('carne') || t.includes('físico') || t.includes('fisico')) {
-                await _fluxoFinanceiro.iniciar(deQuem, msg, 'CARNE'); return;
-            }
-            if (t === '4' || t.includes('dinheiro') || t.includes('cobrador') || t.includes('espécie') || t.includes('especie')) {
-                await _fluxoFinanceiro.iniciar(deQuem, msg, 'DINHEIRO'); return;
-            }
-            if (t === '5' || t.includes('paguei') || t.includes('já paguei') || t.includes('feito') || t.includes('efetuei')) {
-                await _fluxoFinanceiro.iniciar(deQuem, msg, 'PAGO'); return;
-            }
-            await client.sendMessage(deQuem, MENU_FINANCEIRO);
-            state.iniciar(deQuem, 'menu_financeiro', 'aguardando_escolha', {});
-            return;
-        }
-
-        // Menu principal
-        if (fluxoAtivo === 'menu') {
-            state.encerrarFluxo(deQuem);
-            if (t === '1' || t.includes('internet') || t.includes('caiu') || t.includes('lento') ||
-                t.includes('sinal') || t.includes('suporte') || t.includes('técnico') || t.includes('tecnico')) {
-                if (!redeNormal()) {
-                    const infoRede = falarSinalAmigavel();
-                    const hora = new Date(Date.now() - 3 * 60 * 60 * 1000).getUTCHours();
-                    const fora = hora < 8 || hora >= 20;
-                    await client.sendMessage(deQuem,
-                        `${P}${infoRede}\n\n` + (fora
-                            ? `Sabemos do problema. Nossa equipe vai entrar em contato no início do expediente. 🙏`
-                            : `Nossa equipe já está trabalhando para resolver. 🙏`)
-                    );
-                    await abrirChamadoComMotivo(deQuem, null, `Reclamação — rede ${ctx.situacaoRede}`);
-                    return;
-                }
-                await _fluxoSuporte.iniciar(deQuem, msg);
-                return;
-            }
-            if (t === '2' || t.includes('pagar') || t.includes('pagamento') || t.includes('pix') ||
-                t.includes('boleto') || t.includes('carnê') || t.includes('carne') || t.includes('financeiro')) {
-                await client.sendMessage(deQuem, MENU_FINANCEIRO);
-                state.iniciar(deQuem, 'menu_financeiro', 'aguardando_escolha', {});
-                return;
-            }
-            if (t === '3' || t.includes('cancelar') || t.includes('cancelamento') || t.includes('encerrar')) {
-                await _fluxoCancelamento.iniciar(deQuem, msg);
-                return;
-            }
-            if (t === '4' || t.includes('situacao') || t.includes('situação') || t.includes('status') || t.includes('consultar') || t.includes('verificar')) {
-                await client.sendMessage(deQuem,
-                    `${P}Vou consultar para você! 📋\n\nMe informe seu *CPF* (somente números) ou seu *nome completo*:`
-                );
-                state.iniciar(deQuem, 'consulta_situacao', 'aguardando_dados', {});
-                return;
-            }
-            if (t === '5' || t.includes('atendente') || t.includes('humano') || t.includes('pessoa') || t.includes('falar')) {
-                await client.sendMessage(deQuem, `${P}Vou chamar um atendente! Aguarda um instante. 😊`);
-                await abrirChamadoComMotivo(deQuem, null, 'Cliente solicitou atendente');
-                return;
-            }
-            await client.sendMessage(deQuem, MENU_PRINCIPAL);
-            state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
-            return;
-        }
-
-        // Sem fluxo → mostra menu
-        await client.sendMessage(deQuem, MENU_PRINCIPAL);
-        state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
+        return;
     });
 }
 

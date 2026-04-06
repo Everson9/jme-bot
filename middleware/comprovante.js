@@ -5,6 +5,7 @@
 // Processamento de mídia, baixa automática, abertura de chamado,
 // detecção de ações admin e consulta de situação do cliente.
 // =====================================================
+const { calcularStatusCliente, getCicloAtual } = require('../services/statusService');
 
 function setupComprovante(client, firebaseDb, banco, state, ADMINISTRADORES, sseService, P, criarUtils, groqChatFallback, analisarImagem) {
     const utils = criarUtils(groqChatFallback);
@@ -188,34 +189,48 @@ function setupComprovante(client, firebaseDb, banco, state, ADMINISTRADORES, sse
 
         const nome = cliente.nome || 'Cliente';
         const primeiroNome = nome.split(' ')[0];
-        const status = cliente.status || 'pendente';
-        const plano = cliente.plano || 'Não informado';
         const diaVenc = parseInt(cliente.dia_vencimento) || 10;
+        const cicloRef = getCicloAtual(diaVenc, agoraBR());
 
-        const agora = agoraBR();
-        const diaHoje = agora.getUTCDate();
-        const diasDoMesAnterior = new Date(agora.getUTCFullYear(), agora.getUTCMonth(), 0).getDate();
-        let diasAtraso = 0;
-        if (diaHoje >= diaVenc) {
-            diasAtraso = diaHoje - diaVenc;
-        } else {
-            diasAtraso = (diasDoMesAnterior - diaVenc) + diaHoje;
-            if (diasAtraso < 0) diasAtraso = 0;
-        }
+        // Busca historico do ciclo
+        const histDoc = await firebaseDb.collection('clientes').doc(cliente.id)
+            .collection('historico_pagamentos').doc(cicloRef.docId).get().catch(() => null);
+        const histReg = histDoc?.exists ? histDoc.data() : null;
+        const statusCalc = calcularStatusCliente(cliente, { [cicloRef.docId]: histReg });
 
-        const inadimplente = diasAtraso >= 5;
+        const meses = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+        const nomeMes = meses[cicloRef.mesRef - 1] || `${String(cicloRef.mesRef).padStart(2,'0')}`;
 
-        if (status === 'pago') {
+        const tolerancia = diaVenc === 10 ? 15 : diaVenc === 20 ? 25 : 5;
+        const textoTolerance = diaVenc === 30
+            ? `até dia ${tolerancia}/${cicloRef.mesRef === 12 ? '01/' + (cicloRef.anoRef + 1) : String(cicloRef.mesRef).padStart(2,'0') + '/' + cicloRef.anoRef}`
+            : `até dia ${tolerancia}/${String(cicloRef.mesRef).padStart(2,'0')}`;
+
+        if (statusCalc === 'pago') {
             await client.sendMessage(deQuem,
-                `${P}✅ *${primeiroNome}*, sua situação está em dia!\n\n📡 Plano: ${plano}\n📅 Vencimento: Todo dia ${diaVenc}\n\nSeu acesso está normal. Se estiver com problema de internet, é algo técnico.\n\nDigite *0* para voltar ao menu ou diga o que precisa! 😊`
+                `${P}✅ *${primeiroNome}*, sua situação está em dia!\n\n` +
+                `📅 Vencimento: Todo dia ${diaVenc}\n` +
+                `💰 Referência: ${nomeMes}/${cicloRef.anoRef} — *Pago*\n\n` +
+                `Seu acesso está normal. Se estiver com problema de internet, é algo técnico.\n\n` +
+                `Digite *0* para voltar ao menu ou diga o que precisa! 😊`
             );
-        } else if (inadimplente) {
+        } else if (statusCalc === 'inadimplente') {
             await client.sendMessage(deQuem,
-                `${P}⚠️ *${primeiroNome}*, encontrei aqui:\n\n📡 Plano: ${plano}\n📅 Vencimento: Todo dia ${diaVenc}\n💰 Situação: *Inadimplente* — ${diasAtraso} dias em atraso\n\nSua internet pode estar suspensa por falta de pagamento.\n\nPara reativar, digite *2* para efetuar o pagamento ou *0* para voltar ao menu.`
+                `${P}⚠️ *${primeiroNome}*, encontrei aqui:\n\n` +
+                `📅 Vencimento: Todo dia ${diaVenc}\n` +
+                `💰 Referência: ${nomeMes}/${cicloRef.anoRef} — *Inadimplente*\n` +
+                `⏰ Tolerância expirou em ${textoTolerance}\n\n` +
+                `Sua internet pode estar suspensa por falta de pagamento.\n\n` +
+                `Para reativar, digite *2* para efetuar o pagamento ou *0* para voltar ao menu.`
             );
         } else {
+            // pendente / em_dia
             await client.sendMessage(deQuem,
-                `${P}⏳ *${primeiroNome}*, encontrei aqui:\n\n📡 Plano: ${plano}\n📅 Vencimento: Todo dia ${diaVenc}\n💰 Situação: *Pendente* — pagamento ainda não localizado\n\nSeu dia de vencimento é *${diaVenc}*. Após ${diaVenc + 5} de atraso o serviço é suspenso automaticamente.\n\nDigite *2* para efetuar o pagamento ou *0* para voltar ao menu.`
+                `${P}⏳ *${primeiroNome}*, encontrei aqui:\n\n` +
+                `📅 Vencimento: Todo dia ${diaVenc}\n` +
+                `💰 Referência: ${nomeMes}/${cicloRef.anoRef} — *Pendente* (pagamento ainda não localizado)\n` +
+                `⏰ Tolerância: ${textoTolerance}\n\n` +
+                `Digite *2* para efetuar o pagamento ou *0* para voltar ao menu.`
             );
         }
     }
