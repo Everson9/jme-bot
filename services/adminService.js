@@ -2,6 +2,26 @@
 const { getCicloAtual, deveSerCobrado } = require('./statusService');
 
 // =====================================================
+// Ciclo de cobrança: para LEMBRETE, aponta pro PRÓXIMO
+// vencimento (ainda vai vencer). Para os demais tipos,
+// aponta pro ciclo atual (já venceu ou em tolerância).
+// =====================================================
+function getCicloCobranca(diaVencimento, tipo, hojeBr) {
+    if (tipo === 'lembrete') {
+        // Lembrete = antes do vencimento, checa o próximo ciclo
+        const diaHoje  = hojeBr.getUTCDate();
+        const mesHoje  = hojeBr.getUTCMonth() + 1;
+        const anoHoje  = hojeBr.getUTCFullYear();
+        const proxMes  = mesHoje === 12 ? 1 : mesHoje + 1;
+        const proxAno  = mesHoje === 12 ? anoHoje + 1 : anoHoje;
+        const mm = String(proxMes).padStart(2, '0');
+        return { mesRef: proxMes, anoRef: proxAno, chave: `${mm}/${proxAno}`, docId: `${mm}-${proxAno}` };
+    }
+    // Demais tipos: usa o ciclo normal (já vencido ou em tolerância)
+    return getCicloAtual(diaVencimento, hojeBr);
+}
+
+// =====================================================
 // PERGUNTA AOS ADMINS (VOTAÇÃO VIA WHATSAPP)
 // =====================================================
 async function perguntarAdmins(client, firebaseDb, ADMINISTRADORES, datas, tipo, total, hojeStr, listaClientes = []) {
@@ -172,10 +192,10 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
 
         if (clientesSnap.empty) continue;
 
-        // Determina o ciclo de referência para este vencimento
-        const cicloRef = getCicloAtual(disparo.dataVenc);
+        // Determina o ciclo de referência: lembrate = próximo ciclo, demais = ciclo atual
+        const cicloRef = getCicloCobranca(disparo.dataVenc, disparo.tipo, agoraBR);
 
-        // Para cada cliente, verifica o histórico do ciclo atual
+        // Para cada cliente, verifica o histórico do ciclo
         const clientesParaCobrar = [];
         for (const doc of clientesSnap.docs) {
             const cliente = { id: doc.id, ...doc.data() };
@@ -194,10 +214,10 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
                 continue;
             }
 
-            // Busca registro do histórico do ciclo atual
+            // Busca registro do histórico do ciclo de cobrança
             const historicoDoc = await firebaseDb.collection('clientes').doc(doc.id)
-                .collection('historico_pagamentos').doc(cicloRef.docId).get();
-            const registro = historicoDoc.exists ? historicoDoc.data() : null;
+                .collection('historico_pagamentos').doc(cicloRef.docId).get().catch(() => null);
+            const registro = historicoDoc?.exists ? historicoDoc.data() : null;
 
             if (!deveSerCobrado(cliente, registro)) {
                 console.log(`   ✅ ${cliente.nome} — já pagou ${cicloRef.chave}`);
