@@ -33,6 +33,7 @@ export function PageDashboard({ status, refetch }) {
   const { data: bases } = useFetch("/api/bases");
   const { data: resumoBases } = useFetch("/api/dashboard/resumo-bases");
   const { data: caixaHoje } = useFetch("/api/dashboard/caixa-hoje");
+  const { data: cicloInfo } = useFetch("/api/ciclo-info");
   const { alertasData: alertas } = useNotifications();
   
   // Status do bot vem via SSE do App.jsx (passado como prop 'status')
@@ -79,7 +80,24 @@ export function PageDashboard({ status, refetch }) {
 
   return (
     <div className="page" style={{ maxWidth: "100%", gap: 0 }}>
-      <div className="page-title" style={{ marginBottom: 20 }}>Dashboard</div>
+      <div className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        Dashboard
+        {cicloInfo && (
+          <span style={{
+            fontSize: 11,
+            padding: '3px 10px',
+            borderRadius: 6,
+            background: 'rgba(56,189,248,0.1)',
+            border: '1px solid rgba(56,189,248,0.25)',
+            color: '#94a3b8',
+            fontWeight: 500,
+            marginLeft: 8,
+            whiteSpace: 'nowrap',
+          }}>
+            📅 {cicloInfo.mesNome}
+          </span>
+        )}
+      </div>
 
       {alertas && (alertas.promessasHoje > 0 || alertas.promessasAmanha > 0 || alertas.inadimplentes > 0 || alertas.chamadosAbertos > 0) && (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>

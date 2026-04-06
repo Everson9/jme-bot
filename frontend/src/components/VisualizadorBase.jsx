@@ -5,6 +5,7 @@ import { Card } from './Card';
 import { Spinner } from './Spinner';
 import { BadgeCliente } from './BadgeCliente';
 import { ModalEditarCliente } from './ModalEditarCliente';
+import { DarkTooltip } from './DarkTooltip';
 import { ModalNovoClienteBase } from './ModalNovoClientebase';
 import * as XLSX from "https://cdn.sheetjs.com/xlsx-0.20.0/package/xlsx.mjs";
 
@@ -18,6 +19,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
   const [loading, setLoading] = useState(false);
   const [busca, setBusca] = useState("");
   const [filtro, setFiltro] = useState("todos");
+  const [mesReferencia, setMesReferencia] = useState(null);
   const [modalCliente, setModalCliente] = useState(null);
   const [modalNovoCliente, setModalNovoCliente] = useState(false);
   const [pagina, setPagina] = useState(1);
@@ -55,6 +57,14 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
     // Sem polling automático — evita leituras desnecessárias no Firebase
     // O botão ↻ permite atualizar manualmente quando precisar
   }, [carregar]);
+
+  // Busca mês de referência para exibir no painel
+  useEffect(() => {
+    fetch(API + "/api/ciclo-info", { headers: authHeaders() })
+      .then(r => r.json())
+      .then(d => setMesReferencia(d))
+      .catch(() => {});
+  }, []);
 
   // Resetar página quando filtros mudarem
   useEffect(() => {
@@ -197,6 +207,29 @@ if (filtro === 'pendente') {
         </div>
       </div>
 
+      {/* Mês de referência */}
+      {mesReferencia && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 16,
+          padding: '8px 14px',
+          borderRadius: 8,
+          background: 'rgba(56,189,248,0.08)',
+          border: '1px solid rgba(56,189,248,0.2)',
+          fontSize: 12,
+          color: '#94a3b8',
+          width: 'fit-content'
+        }}>
+          <span>📅</span>
+          <span>Status referente a: <strong style={{ color: '#e2e8f0' }}>{mesReferencia.mesNome || mesReferencia.mesReferencia}</strong></span>
+          <span style={{ fontSize: 10, color: '#475569' }}>
+            (ciclos: 10→{mesReferencia.ciclos?.[10]?.mes_ref} | 20→{mesReferencia.ciclos?.[20]?.mes_ref} | 30→{mesReferencia.ciclos?.[30]?.mes_ref})
+          </span>
+        </div>
+      )}
+
       {/* Tabs por dia de vencimento */}
       {base?.dias?.length > 0 && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
@@ -278,22 +311,26 @@ if (filtro === 'pendente') {
             />
             <div style={{ display: 'flex', gap: 4, background: '#1a1d2e', padding: 4, borderRadius: 8 }}>
               {["todos", "pago", "pendente", "inadimplente", "promessa"].map(v => (
-                <button
+                <DarkTooltip
                   key={v}
-                  onClick={() => setFiltro(v)}
-                  style={{
-                    padding: '6px 12px',
-                    borderRadius: 6,
-                    border: 'none',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    background: filtro === v ? (v === 'inadimplente' ? '#ef4444' : '#2563eb') : 'transparent',
-                    color: filtro === v ? '#fff' : '#94a3b8'
-                  }}
+                  title={`Filtrar por ${v} (mês de referência: ${mesReferencia?.mesNome || 'carregando...'})`}
                 >
-                  {v === 'todos' ? 'Todos' : v === 'pago' ? '✅ Pagos' : v === 'pendente' ? '⏳ Pendentes' : v === 'inadimplente' ? '🔴 Inadimplentes' : '🤝 Promessas'}
-                </button>
+                  <button
+                    onClick={() => setFiltro(v)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: 6,
+                      border: 'none',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      background: filtro === v ? (v === 'inadimplente' ? '#ef4444' : '#2563eb') : 'transparent',
+                      color: filtro === v ? '#fff' : '#94a3b8'
+                    }}
+                  >
+                    {v === 'todos' ? 'Todos' : v === 'pago' ? '✅ Pagos' : v === 'pendente' ? '⏳ Pendentes' : v === 'inadimplente' ? '🔴 Inadimplentes' : '🤝 Promessas'}
+                  </button>
+                </DarkTooltip>
               ))}
             </div>
           </div>

@@ -100,6 +100,27 @@ module.exports = function setupRoutes(app, ctx) {
     });
 
     // ─────────────────────────────────────────────────────
+    // INFO DO CICLO ATUAL (qual mês está sendo considerado)
+    // ─────────────────────────────────────────────────────
+    app.get('/api/ciclo-info', (req, res) => {
+        const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+        const c10 = getCicloAtual(10, agoraBR);
+        const c20 = getCicloAtual(20, agoraBR);
+        const c30 = getCicloAtual(30, agoraBR);
+        const mesNome = agoraBR.toLocaleDateString('pt-BR', { month: 'long' });
+        res.json({
+            mesReferencia: `${String(agoraBR.getUTCMonth()+1).padStart(2,'0')}/${agoraBR.getUTCFullYear()}`,
+            mesNome: mesNome.charAt(0).toUpperCase() + mesNome.slice(1),
+            ciclos: {
+                10: { mes_ref: c10.chave, tolerancia: `até 15/0${agoraBR.getUTCMonth()+1}` },
+                20: { mes_ref: c20.chave, tolerancia: `até 25/0${agoraBR.getUTCMonth()+1}` },
+                30: { mes_ref: c30.chave, tolerancia: `até 05/${String(agoraBR.getUTCMonth()+2).padStart(2,'0')}` },
+            },
+            hoje: agoraBR.toLocaleDateString('pt-BR'),
+        });
+    });
+
+    // ─────────────────────────────────────────────────────
     // BASES E CLIENTES
     // ─────────────────────────────────────────────────────
     app.get('/api/clientes/buscar', async (req, res) => {
@@ -107,7 +128,14 @@ module.exports = function setupRoutes(app, ctx) {
         if (!q || q.trim().length < 2) return res.json([]);
         try {
             const clientes = await banco.buscarClientePorNome(q.trim());
-            res.json(clientes.map(c => ({ id: c.id, nome: c.nome, telefone: c.telefone, dia_vencimento: c.dia_vencimento, status: c.status, base_nome: c.base_nome })));
+            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+            const result = clientes.map(c => {
+                const diaVenc = parseInt(c.dia_vencimento) || 10;
+                const c10 = getCicloAtual(diaVenc, agoraBR);
+                const mesRef = c10.chave;
+                return { id: c.id, nome: c.nome, telefone: c.telefone, dia_vencimento: c.dia_vencimento, status: c.status, mes_referencia: mesRef, base_nome: c.base_nome };
+            });
+            res.json(result);
         } catch { res.json([]); }
     });
 
@@ -121,13 +149,28 @@ module.exports = function setupRoutes(app, ctx) {
     app.get('/api/bases', async (req, res) => {
         try {
             const snap = await firebaseDb.collection('bases').orderBy('criado_em', 'asc').get();
+            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
             const result = await Promise.all(snap.docs.map(async baseDoc => {
                 const base = { id: baseDoc.id, ...baseDoc.data() };
                 const diasSnap = await firebaseDb.collection('bases').doc(baseDoc.id).collection('datas_base').orderBy('dia','asc').get();
                 const dias = diasSnap.docs.map(d => d.data().dia);
                 const clientesSnap = await firebaseDb.collection('clientes').where('base_id','==', parseInt(baseDoc.id)).get();
-                const pagos = clientesSnap.docs.filter(d => d.data().status === 'pago').length;
-                return { ...base, dias, total: clientesSnap.size, pagos };
+
+                // Conta pagos pelo status calculado (ciclo atual), não do campo raw
+                let pagos = 0;
+                await Promise.all(clientesSnap.docs.map(async doc => {
+                    const c = { id: doc.id, ...doc.data() };
+                    const diaVenc = parseInt(c.dia_vencimento) || 10;
+                    const cicloRef = getCicloAtual(diaVenc, agoraBR);
+                    const hDoc = await firebaseDb.collection('clientes').doc(doc.id)
+                        .collection('historico_pagamentos').doc(cicloRef.docId).get().catch(() => null);
+                    const reg = hDoc?.exists ? hDoc.data() : null;
+                    if (reg && (reg.status === 'pago' || reg.status === 'isento')) pagos++;
+                    if (c.status === 'cancelado') pagos++; // ignorado mas conta como pago p/ proporcao
+                }));
+
+                const mesRef = getCicloAtual(dias[0] || 10, agoraBR).chave;
+                return { ...base, dias, total: clientesSnap.size, pagos, mes_referencia: mesRef };
             }));
             res.json(result);
         } catch (e) { res.status(500).json({ erro: e.message }); }
@@ -221,10 +264,13 @@ module.exports = function setupRoutes(app, ctx) {
                 const prom = promMap[tel];
                 // Calcula o status real pelo historico_pagamentos
                 const statusReal = calcularStatusCliente(c, c._historico || null);
+                const diaVenc = parseInt(c.dia_vencimento) || 10;
+                const cicloRef = getCicloAtual(diaVenc, new Date(Date.now() - 3 * 60 * 60 * 1000));
                 return {
                     ...c,
                     data_promessa: prom?.data_promessa || null,
                     status_calculado: statusReal,
+                    mes_referencia: cicloRef.chave,
                     _historico: undefined, // não enviar no response
                 };
             });
@@ -607,13 +653,38 @@ module.exports = function setupRoutes(app, ctx) {
     app.get('/api/dashboard/resumo-bases', async (req, res) => {
         try {
             const basesSnap = await firebaseDb.collection('bases').get();
+            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+
+            // Pré-carrega clientes de todas as bases + historico do ciclo
+            let totalPendentes = 0, totalPromessas = 0;
             const result = await Promise.all(basesSnap.docs.map(async baseDoc => {
                 const cliSnap = await firebaseDb.collection('clientes').where('base_id','==',parseInt(baseDoc.id)).get();
-                let pagos=0, pend=0, prom=0;
-                cliSnap.docs.forEach(d => { const s=d.data().status; if(s==='pago') pagos++; else if(s==='pendente') pend++; else if(s==='promessa') prom++; });
-                return { id: baseDoc.id, nome: baseDoc.data().nome, total: cliSnap.size, pagos, pendentes: pend, promessas: prom };
+                let pagos = 0, pend = 0, prom = 0;
+
+                // Busca historico apenas para ciclo correto (não todo o historico)
+                const cicloSnap = await firebaseDb.collection('clientes').where('base_id','==',parseInt(baseDoc.id)).get();
+
+                await Promise.all(cicloSnap.docs.map(async doc => {
+                    const c = doc.data();
+                    if (c.status === 'cancelado') return;
+                    const diaVenc = parseInt(c.dia_vencimento) || 10;
+                    const cicloRef = getCicloAtual(diaVenc, agoraBR);
+                    const hDoc = await firebaseDb.collection('clientes').doc(doc.id)
+                        .collection('historico_pagamentos').doc(cicloRef.docId).get().catch(() => null);
+                    const reg = hDoc?.exists ? hDoc.data() : null;
+                    const status = reg ? (reg.status === 'pago' || reg.status === 'isento' ? 'pago' : c.status === 'promessa' ? 'promessa' : 'pendente') : 'pendente';
+
+                    if (status === 'pago' || status === 'isento') pagos++;
+                    else if (status === 'promessa') prom++;
+                    else pend++;
+                }));
+
+                totalPendentes += pend;
+                totalPromessas += prom;
+                const refCiclo = getCicloAtual(cliSnap.docs[0]?.data()?.dia_vencimento || 10, agoraBR);
+                return { id: baseDoc.id, nome: baseDoc.data().nome, total: cliSnap.size, pagos, pendentes: pend, promessas: prom, mes_referencia: refCiclo.chave };
             }));
-            res.json({ bases: result, totalPendentes: result.reduce((a,b)=>a+b.pendentes,0), totalPromessas: result.reduce((a,b)=>a+b.promessas,0) });
+            res.json({ bases: result, totalPendentes, totalPromessas });
         } catch(e) { res.json({ bases:[], totalPendentes:0, totalPromessas:0 }); }
     });
 
@@ -630,20 +701,38 @@ module.exports = function setupRoutes(app, ctx) {
         try {
             const hojeStr   = new Date().toISOString().split('T')[0];
             const amanhaStr = new Date(Date.now()+86400000).toISOString().split('T')[0];
-            const [phSnap, paSnap, inadSnap, chamSnap] = await Promise.all([
+            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+            const cincoDiasAtras = new Date(agoraBR.getTime() - 5 * 86400000).toISOString();
+
+            const [phSnap, paSnap, chamSnap] = await Promise.all([
                 firebaseDb.collection('promessas').where('status','==','pendente').where('data_promessa','==',hojeStr).get(),
                 firebaseDb.collection('promessas').where('status','==','pendente').where('data_promessa','==',amanhaStr).get(),
-                firebaseDb.collection('clientes').where('status','==','pendente').where('atualizado_em','<=',new Date(Date.now()-5*86400000).toISOString()).get(),
                 firebaseDb.collection('chamados').where('status','==','aberto').get(),
             ]);
+
+            // Inadimplentes reais: calcula status de quem tem pendencia antiga
+            const clientesPendenteSnap = await firebaseDb.collection('clientes').where('atualizado_em','<=',cincoDiasAtras).get();
+            let inadimplentes = 0;
+            await Promise.all(clientesPendenteSnap.docs.map(async doc => {
+                const c = doc.data();
+                if (c.status === 'cancelado' || c.status === 'pago') return;
+                const diaVenc = parseInt(c.dia_vencimento) || 10;
+                const cicloRef = getCicloAtual(diaVenc, agoraBR);
+                const hDoc = await firebaseDb.collection('clientes').doc(doc.id)
+                    .collection('historico_pagamentos').doc(cicloRef.docId).get().catch(() => null);
+                const reg = hDoc?.exists ? hDoc.data() : null;
+                if (!reg || (reg.status !== 'pago' && reg.status !== 'isento')) inadimplentes++;
+            }));
+
             const umDiaAtras = Date.now()-86400000;
-            res.json({ promessasHoje: phSnap.size, promessasAmanha: paSnap.size, promessasHojeDetalhe: phSnap.docs.map(d=>({nome:d.data().nome,numero:d.data().numero,data_promessa:d.data().data_promessa})), inadimplentes: inadSnap.size, chamadosAbertos: chamSnap.docs.filter(d=>d.data().aberto_em<umDiaAtras).length });
+            res.json({ promessasHoje: phSnap.size, promessasAmanha: paSnap.size, promessasHojeDetalhe: phSnap.docs.map(d=>({nome:d.data().nome,numero:d.data().numero,data_promessa:d.data().data_promessa})), inadimplentes, chamadosAbertos: chamSnap.docs.filter(d=>d.data().aberto_em<umDiaAtras).length });
         } catch { res.json({ promessasHoje:0, promessasAmanha:0, promessasHojeDetalhe:[], inadimplentes:0, chamadosAbertos:0 }); }
     });
 
     app.get('/api/dashboard/fluxo-clientes', async (req, res) => {
         const hoje = new Date(); const ma=hoje.getMonth()+1, aa=hoje.getFullYear(), ms=String(ma).padStart(2,'0');
-        const [entSnap,saiSnap,atiSnap,canSnap,novSnap,csnSnap] = await Promise.all([
+        const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+        const [entSnap,saiSnap,allCliSnap,canSnap,novSnap,csnSnap] = await Promise.all([
             firebaseDb.collection('novos_clientes').where('status','in',['confirmado','finalizado']).get(),
             firebaseDb.collection('cancelamentos').where('status','==','confirmado').get(),
             firebaseDb.collection('clientes').where('status','!=','cancelado').get(),
@@ -655,7 +744,23 @@ module.exports = function setupRoutes(app, ctx) {
         const sai = saiSnap.docs.filter(d=>{const x=d.data().confirmado_em; return x&&x.startsWith(`${aa}-${ms}`);}).length;
         const historico = [];
         for(let i=5;i>=0;i--){ const d=new Date(aa,ma-1-i,1); const m=String(d.getMonth()+1).padStart(2,'0'); const a=d.getFullYear(); const pf=`${a}-${m}`; historico.push({ label: d.toLocaleDateString('pt-BR',{month:'short',year:'2-digit'}), entradas: novSnap.docs.filter(d=>d.data().finalizado_em?.startsWith(pf)).length, saidas: csnSnap.docs.filter(d=>d.data().confirmado_em?.startsWith(pf)).length }); }
-        res.json({ mes:{entradas:ent,saidas:sai}, totalAtivos:atiSnap.size, totalCancelados:canSnap.size, historico });
+
+        // Conta ativos reais pelo ciclo atual, nao pelo campo status bruto
+        let ativosReais = 0;
+        for (const doc of allCliSnap.docs) {
+            const c = doc.data();
+            if (c.status === 'cancelado') continue;
+            const diaVenc = parseInt(c.dia_vencimento) || 10;
+            const cicloRef = getCicloAtual(diaVenc, agoraBR);
+            // Check historico rapidamente
+            const hDoc = await firebaseDb.collection('clientes').doc(doc.id)
+                .collection('historico_pagamentos').doc(cicloRef.docId).get().catch(() => null);
+            const reg = hDoc?.exists ? hDoc.data() : null;
+            // Ativo = tem pagamento do ciclo atual
+            if (reg && (reg.status === 'pago' || reg.status === 'isento')) ativosReais++;
+        }
+
+        res.json({ mes:{entradas:ent,saidas:sai}, totalAtivos:ativosReais, totalCancelados:canSnap.size, historico });
     });
 
     // ─────────────────────────────────────────────────────
@@ -887,7 +992,7 @@ module.exports = function setupRoutes(app, ctx) {
                 if (diaHoje>=venc) atraso=diaHoje-venc;
                 else { atraso=(new Date(anoHoje,mesHoje-1,0).getDate()-venc)+diaHoje; if(atraso<0) return; }
                 if (atraso<dias) return;
-                lista.push({ id:doc.id, nome:c.nome, telefone:c.telefone, plano:c.plano, dia_vencimento:venc, base_nome:baseMap[String(c.base_id)]||null, dias_pendente:atraso, status_real: c.status });
+                lista.push({ id:doc.id, nome:c.nome, telefone:c.telefone, plano:c.plano, dia_vencimento:venc, base_nome:baseMap[String(c.base_id)]||null, dias_pendente:atraso, status_real: c.status, mes_referencia: cicloAtual.replace('-', '/'), });
             });
             lista.sort((a,b)=>b.dias_pendente-a.dias_pendente);
             res.json(lista);
@@ -919,7 +1024,14 @@ module.exports = function setupRoutes(app, ctx) {
                 const c={id:doc.id,...doc.data()};
                 let base_nome=null;
                 if (c.base_id) { const b=await firebaseDb.collection('bases').doc(String(c.base_id)).get(); if(b.exists) base_nome=b.data().nome; }
-                return { status:c.status, nome:c.nome, cpf:c.cpf, telefone:c.telefone, endereco:c.endereco, numero_casa:c.numero, plano:c.plano, forma_pagamento:c.forma_pagamento, observacao:c.observacao, pppoe:c.senha, dia_vencimento:c.dia_vencimento, base:base_nome, criado_em:c.criado_em };
+                const ciclo = getCicloAtual(parseInt(c.dia_vencimento)||10);
+                let hist = {};
+                try {
+                    const hDoc = await firebaseDb.collection('clientes').doc(c.id)
+                        .collection('historico_pagamentos').doc(ciclo.docId).get().catch(()=>null);
+                    if (hDoc?.exists) hist[ciclo.docId] = hDoc.data();
+                } catch(_) {}
+                return { status:calcularStatusCliente(c, hist), mes_referencia:ciclo.chave, nome:c.nome, cpf:c.cpf, telefone:c.telefone, endereco:c.endereco, numero_casa:c.numero, plano:c.plano, forma_pagamento:c.forma_pagamento, observacao:c.observacao, pppoe:c.senha, dia_vencimento:c.dia_vencimento, base:base_nome, criado_em:c.criado_em };
             }));
             clientes.sort((a,b)=>{ if(a.base!==b.base) return (a.base||'').localeCompare(b.base||''); return (a.nome||'').localeCompare(b.nome||''); });
             res.json(clientes);
@@ -929,10 +1041,38 @@ module.exports = function setupRoutes(app, ctx) {
     app.get('/api/planilha/resumo', async (req, res) => {
         try {
             const result = {};
+            const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
             for (const dia of ['10','20','30']) {
                 const snap = await firebaseDb.collection('clientes').where('dia_vencimento','==',parseInt(dia)).get();
-                const pagos=snap.docs.filter(d=>d.data().status==='pago').length;
-                result[dia] = { pagos, pendentes:snap.size-pagos, total:snap.size, clientes:snap.docs.map(d=>{const x=d.data();return{nome:x.nome,telefone:x.telefone,status:x.status,forma_pagamento:x.forma_pagamento,baixa_sgp:x.baixa_sgp||0};}).sort((a,b)=>(a.nome||'').localeCompare(b.nome||'')) };
+                const cicloRef = getCicloAtual(parseInt(dia), agoraBR);
+
+                // Busca pagamentos do ciclo atual
+                const pagosNoCiclo = new Set();
+                await Promise.all(snap.docs.map(async doc => {
+                    const hDoc = await firebaseDb.collection('clientes').doc(doc.id)
+                        .collection('historico_pagamentos').doc(cicloRef.docId).get().catch(() => null);
+                    const reg = hDoc?.exists ? hDoc.data() : null;
+                    if (reg && (reg.status === 'pago' || reg.status === 'isento')) pagosNoCiclo.add(doc.id);
+                }));
+
+                const pagos = pagosNoCiclo.size;
+                result[dia] = {
+                    pagos,
+                    pendentes: snap.size - pagos,
+                    total: snap.size,
+                    mes_referencia: cicloRef.chave,
+                    clientes: snap.docs.map(d => {
+                        const x = d.data();
+                        const pago = pagosNoCiclo.has(d.id);
+                        return {
+                            nome: x.nome,
+                            telefone: x.telefone,
+                            status: pago ? 'pago' : x.status,
+                            forma_pagamento: x.forma_pagamento,
+                            baixa_sgp: x.baixa_sgp || 0,
+                        };
+                    }).sort((a,b) => (a.nome||'').localeCompare(b.nome||'')),
+                };
             }
             res.json(result);
         } catch(e) { res.status(500).json({ erro: e.message }); }
@@ -974,9 +1114,26 @@ module.exports = function setupRoutes(app, ctx) {
             const snap = await firebaseDb.collection('clientes').get();
             const basesSnap = await firebaseDb.collection('bases').get();
             const baseMap = {}; basesSnap.docs.forEach(d=>{baseMap[d.id]=d.data().nome;});
-            const clientes = snap.docs.map(d=>({ id:d.id,...d.data(), base_nome:baseMap[String(d.data().base_id)]||null, status_calculado:d.data().status||'pendente' }));
+            const clientes = snap.docs.map(d=>({ id:d.id,...d.data(), base_nome:baseMap[String(d.data().base_id)]||null }));
             clientes.sort((a,b)=>(b.criado_em||'').localeCompare(a.criado_em||''));
-            res.json(clientes.slice(0,limite));
+            const top = clientes.slice(0,limite);
+
+            // Calcula status real + mes_referencia para cada cliente
+            const comStatus = await Promise.all(top.map(async c => {
+                const ciclo = getCicloAtual(parseInt(c.dia_vencimento)||10);
+                let hist = {};
+                try {
+                    const hDoc = await firebaseDb.collection('clientes').doc(c.id)
+                        .collection('historico_pagamentos').doc(ciclo.docId).get().catch(()=>null);
+                    if (hDoc?.exists) hist[ciclo.docId] = hDoc.data();
+                } catch(_) {}
+                return {
+                    ...c,
+                    status_calculado: calcularStatusCliente(c, hist),
+                    mes_referencia: ciclo.chave,
+                };
+            }));
+            res.json(comStatus);
         } catch(e) { res.status(500).json({ erro: e.message }); }
     });
 
