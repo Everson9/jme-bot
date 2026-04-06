@@ -49,15 +49,12 @@ function getCicloAtual(diaVencimento, hoje = new Date()) {
 }
 
 /**
- * Calcula o status do cliente.
+ * Calcula o status do cliente baseado no historico_pagamentos.
  *
- * Se _historico for passado (objeto { "MM-YYYY": { status, ... } }),
- * usa o registro do ciclo atual para determinar o status.
- *
- * Se _historico for null/undefined, retorna o campo status do Firebase
- * (usado na listagem geral para evitar leituras excessivas).
- *
- * Retorna: 'pago' | 'pendente' | 'em_dia' | 'promessa' | 'cancelado'
+ * Estratégia: percorre os meses do mais antigo ao mais recente.
+ * Se encontra pagamento → passa ao próximo mês.
+ * Se encontra pendente → verifica se esse mês já venceu.
+ * Se não encontra registro → verifica se o mês já venceu.
  */
 function calcularStatusCliente(cliente, _historico = null) {
     if (!cliente) return 'pendente';
@@ -73,48 +70,65 @@ function calcularStatusCliente(cliente, _historico = null) {
     const mesHoje  = agoraBR.getUTCMonth() + 1;
     const anoHoje  = agoraBR.getUTCFullYear();
 
-    // Mês de referência: se ainda não venceu neste mês, usa o anterior
-    let mRef, yRef;
-    if (diaHoje < diaVencimento) {
-        mRef = mesHoje === 1 ? 12 : mesHoje - 1;
-        yRef = mesHoje === 1 ? anoHoje - 1 : anoHoje;
-    } else {
-        mRef = mesHoje;
-        yRef = anoHoje;
+    // Para um dado mes/ano, verifica se o vencimento já passou
+    function jaVenceu(m, y) {
+        if (y < anoHoje) return true;
+        if (y > anoHoje) return false;
+        if (m < mesHoje) return true;
+        if (m > mesHoje) return false;
+        // Mesmo mês/ano atual
+        if (diaVencimento === 30) return diaHoje > 5;
+        return diaHoje >= diaVencimento;
     }
 
-    // Percorre os meses a partir do mês de referência
-    let m = mRef, y = yRef;
-    for (let i = 0; i < 13; i++) {
+    // Calcula atraso para o mes/ano m/y em relação ao mês/ano atual
+    function atrasoPara(m, y) {
+        // Quantos meses entre m/y e o mesHoje/anoHoje
+        const mesesDif = (anoHoje - y) * 12 + (mesHoje - m);
+        if (mesesDif <= 0) return 0;
+        const ultimoDia = new Date(anoHoje, mesHoje - 1, 0).getDate();
+        return (mesesDif - 1) * 30 + (ultimoDia - diaVencimento) + diaHoje;
+    }
+
+    // Encontra o mes/ano mais antigo presente no historico
+    const chaves = Object.keys(_historico).map(k => k.replace('/', '-'));
+    let menorAno = Infinity, menorMes = Infinity;
+    chaves.forEach(k => {
+        const [m, y] = k.split('-').map(Number);
+        if (y < menorAno || (y === menorAno && m < menorMes)) { menorMes = m; menorAno = y; }
+    });
+    // Se não tem chaves, começa do mes anterior
+    if (menorAno === Infinity) {
+        menorMes = mesHoje === 1 ? 12 : mesHoje - 1;
+        menorAno = mesHoje === 1 ? anoHoje - 1 : anoHoje;
+    }
+
+    // Percorre mês a mês a partir do mais antigo
+    let m = menorMes, y = menorAno;
+    for (let i = 0; i < 14; i++) {
         const mm = String(m).padStart(2, '0');
-        const docId = `${mm}-${y}`;
-        const chave = `${mm}/${y}`;
+        const docId = `${mm}-${y}`, chave = `${mm}/${y}`;
         const reg = _historico[docId] || _historico[chave] || null;
 
         if (!reg) {
-            // Sem registro neste mês — calcula se já venceu
-            if (m === mesHoje && y === anoHoje) {
-                // É o mês/ano atual
-                if (diaHoje >= diaVencimento) return 'pendente';
-                return 'em_dia';
+            // Sem registro neste mês
+            if (jaVenceu(m, y)) {
+                if (atrasoPara(m, y) >= 5) return 'inadimplente';
+                return 'pendente';
             }
-            // Mês passado sem registro → inadimplente
-            return 'inadimplente';
+            return 'em_dia';
         }
 
         if (reg.status === 'pago' || reg.status === 'isento') {
-            // Passa para o próximo mês
+            // Passa ao próximo mês
             m = m === 12 ? 1 : m + 1;
             if (m === 1) y++;
         } else if (reg.status === 'pendente') {
-            // Pendente — verifica se é o mês/ano atual e se já venceu
-            if (m === mesHoje && y === anoHoje) {
-                // Vencimento atual
-                if (diaHoje >= diaVencimento && (diaHoje - diaVencimento) >= 5) return 'inadimplente';
+            if (jaVenceu(m, y)) {
+                if (atrasoPara(m, y) >= 5) return 'inadimplente';
                 return 'pendente';
             }
-            // Mês passado, pendente → inadimplente
-            return 'inadimplente';
+            return 'pendente';
         } else if (reg.status === 'promessa') {
             return 'promessa';
         } else {
