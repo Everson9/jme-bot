@@ -17,6 +17,7 @@ export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
     plano: cliente.plano || "",
     forma_pagamento: cliente.forma_pagamento || "",
     dia_vencimento: String(cliente.dia_vencimento || ""),
+    comodato: cliente.comodato === true,
     observacao: cliente.observacao || "",
     status: cliente.status || "pendente",
   });
@@ -60,7 +61,7 @@ export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
       const r = await fetch(`${API}/api/bases/${baseId}/clientes/${cliente.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...(API_KEY ? { "x-api-key": API_KEY } : {}) },
-        body: JSON.stringify({ ...form, dia_vencimento: parseInt(form.dia_vencimento) }),
+        body: JSON.stringify({ ...form, dia_vencimento: parseInt(form.dia_vencimento), comodato: Boolean(form.comodato) }),
       });
       
       if (!r.ok) {
@@ -250,6 +251,33 @@ export const ModalEditarCliente = ({ cliente, baseId, onClose, onSalvo }) => {
                   <option value="Fibra 200MB — R$60">Fibra 200MB — R$ 60</option>
                   <option value="Fibra 200MB + IPTV — R$70">Fibra 200MB + IPTV — R$ 70</option>
                 </select>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 11, color: "#64748b", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Roteador em comodato
+              </label>
+              <div style={{ display: "flex", gap: 6 }}>
+                {["comodato", "proprio"].map(opcao => (
+                  <button
+                    key={opcao}
+                    onClick={() => set("comodato", opcao === "comodato")}
+                    style={{
+                      flex: 1,
+                      padding: "9px 0",
+                      borderRadius: 8,
+                      border: "1px solid",
+                      borderColor: form.comodato === (opcao === "comodato") ? "#38bdf8" : "#1e3a5f",
+                      background: form.comodato === (opcao === "comodato") ? "rgba(56,189,248,0.12)" : "transparent",
+                      color: form.comodato === (opcao === "comodato") ? "#38bdf8" : "#64748b",
+                      fontWeight: 700,
+                      cursor: "pointer"
+                    }}
+                  >
+                    {opcao === "comodato" ? "📦 Comodato" : "🏠 Próprio"}
+                  </button>
+                ))}
               </div>
             </div>
 

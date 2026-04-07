@@ -375,7 +375,7 @@ module.exports = function setupRoutes(app, ctx) {
     // ─────────────────────────────────────────────────────
     app.post('/api/clientes', async (req, res) => {
         try {
-            const { base_id, nome, cpf, telefone, endereco, numero, senha, plano, dia_vencimento, observacao } = req.body;
+            const { base_id, nome, cpf, telefone, endereco, numero, senha, plano, dia_vencimento, observacao, comodato } = req.body;
             if (!nome)    return res.status(400).json({ erro: 'Nome é obrigatório' });
             if (!base_id) return res.status(400).json({ erro: 'base_id é obrigatório' });
             const baseIdNum = parseInt(base_id);
@@ -384,7 +384,7 @@ module.exports = function setupRoutes(app, ctx) {
                 base_id: baseIdNum, nome: nome.trim(), cpf: cpf||null, telefone: telefone||null,
                 endereco: endereco||null, numero: numero||null, senha: senha||null, plano: plano||null,
                 dia_vencimento: dia_vencimento ? parseInt(dia_vencimento) : 10,
-                observacao: observacao||null, status: 'pendente',
+                observacao: observacao||null, comodato: comodato||false, status: 'pendente',
                 criado_em: new Date().toISOString(), atualizado_em: new Date().toISOString(),
             });
             res.json({ id: ref.id, ...(await ref.get()).data() });
@@ -403,7 +403,7 @@ module.exports = function setupRoutes(app, ctx) {
         try {
             const ref = firebaseDb.collection('clientes').doc(req.params.clienteId);
             if (!(await ref.get()).exists) return res.status(404).json({ erro: 'Cliente não encontrado' });
-            const campos = ['nome','cpf','endereco','numero','telefone','senha','observacao','forma_pagamento','plano','status'];
+            const campos = ['nome','cpf','endereco','numero','telefone','senha','observacao','forma_pagamento','plano','status','comodato'];
             const update = {};
             campos.forEach(k => { if (req.body[k] !== undefined) update[k] = req.body[k]; });
             if (req.body.dia_vencimento !== undefined) update.dia_vencimento = parseInt(req.body.dia_vencimento);

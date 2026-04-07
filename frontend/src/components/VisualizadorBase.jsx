@@ -70,7 +70,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
     setPagina(1);
   }, [diaAtivo, filtro, busca]);
 
-  const clientesDia = clientes.filter(c => c.dia_vencimento === diaAtivo);
+  const clientesDia = clientes.filter(c => parseInt(c.dia_vencimento) === diaAtivo);
   const filtrados = clientesDia.filter(c => {
     if (filtro !== "todos") {
       const statusParaComparar = c.status_calculado || c.status;
@@ -233,7 +233,7 @@ if (filtro === 'pendente') {
       {base?.dias?.length > 0 && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
           {base.dias.sort((a, b) => a - b).map(d => {
-            const arr = clientes.filter(c => c.dia_vencimento === d);
+            const arr = clientes.filter(c => parseInt(c.dia_vencimento) === d);
             const pg = arr.filter(c => {
               const status = c.status_calculado || c.status;
               return status === "pago";
@@ -360,6 +360,7 @@ if (filtro === 'pendente') {
                     <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', fontSize: 11 }}>Telefone</th>
                     <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', fontSize: 11 }}>Endereço</th>
                     <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', fontSize: 11 }}>Plano</th>
+                    <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', fontSize: 11 }}>Comodato</th>
                     <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', fontSize: 11 }}>Status</th>
                    </tr>
                 </thead>
@@ -370,6 +371,7 @@ if (filtro === 'pendente') {
                       <td style={{ padding: '12px', fontFamily: 'monospace', fontSize: 12, color: '#94a3b8' }}>{c.telefone || "—"}</td>
                       <td style={{ padding: '12px', color: '#94a3b8' }}>{c.endereco || "—"}</td>
                       <td style={{ padding: '12px' }}>{c.plano || "—"}</td>
+                      <td style={{ padding: '12px' }}>{c.comodato ? '✅ Sim' : '❌ Não'}</td>
                       <td style={{ padding: '12px', whiteSpace: 'nowrap' }}>
                         <BadgeCliente status={c.status_calculado || c.status} />
                         {c.mes_referencia && (
