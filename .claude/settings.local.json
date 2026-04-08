@@ -20,7 +20,8 @@
       "Bash(node:*)",
       "Bash(for f:*)",
       "Bash(do node:*)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(ls:*)"
     ]
   }
 }
