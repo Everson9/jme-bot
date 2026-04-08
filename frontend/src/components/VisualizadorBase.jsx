@@ -19,6 +19,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
   const [busca, setBusca] = useState("");
   const [filtro, setFiltro] = useState("todos");
   const [mesReferencia, setMesReferencia] = useState(null);
+  const [modoMes, setModoMes] = useState("ciclo"); // "ciclo" | "anterior"
   const [modalCliente, setModalCliente] = useState(null);
   const [modalNovoCliente, setModalNovoCliente] = useState(false);
   const [pagina, setPagina] = useState(1);
@@ -38,18 +39,29 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
     );
   }
 
+  const mesRefAnterior = () => {
+    const agora = new Date();
+    const d = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yy = d.getFullYear();
+    return `${mm}-${yy}`;
+  };
+
   const carregar = useCallback(async (silencioso = false) => {
     if (!base?.id) return;
     if (!silencioso) setLoading(true);
     try {
-      const r = await fetch(`${API}/api/bases/${base.id}/clientes`, { headers: authHeaders() });
+      const qs = new URLSearchParams();
+      if (modoMes === "anterior") qs.set("mes_ref", mesRefAnterior());
+      const url = `${API}/api/bases/${base.id}/clientes${qs.toString() ? `?${qs.toString()}` : ""}`;
+      const r = await fetch(url, { headers: authHeaders() });
       const data = await r.json();
       setClientes(data);
     } catch (e) {
       console.error(e);
     }
     if (!silencioso) setLoading(false);
-  }, [base?.id]);
+  }, [base?.id, modoMes]);
 
   useEffect(() => {
     carregar();
@@ -208,24 +220,65 @@ if (filtro === 'pendente') {
 
       {/* Mês de referência */}
       {mesReferencia && (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          marginBottom: 16,
-          padding: '8px 14px',
-          borderRadius: 8,
-          background: 'rgba(56,189,248,0.08)',
-          border: '1px solid rgba(56,189,248,0.2)',
-          fontSize: 12,
-          color: '#94a3b8',
-          width: 'fit-content'
-        }}>
-          <span>📅</span>
-          <span>Status referente a: <strong style={{ color: '#e2e8f0' }}>{mesReferencia.mesNome || mesReferencia.mesReferencia}</strong></span>
-          <span style={{ fontSize: 10, color: '#475569' }}>
-            (ciclos: 10→{mesReferencia.ciclos?.[10]?.mes_ref} | 20→{mesReferencia.ciclos?.[20]?.mes_ref} | 30→{mesReferencia.ciclos?.[30]?.mes_ref})
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '8px 14px',
+            borderRadius: 8,
+            background: 'rgba(56,189,248,0.08)',
+            border: '1px solid rgba(56,189,248,0.2)',
+            fontSize: 12,
+            color: '#94a3b8',
+            width: 'fit-content'
+          }}>
+            <span>📅</span>
+            <span>
+              Status referente a:{" "}
+              <strong style={{ color: '#e2e8f0' }}>
+                {modoMes === "anterior" ? mesRefAnterior().replace("-", "/") : (mesReferencia.mesNome || mesReferencia.mesReferencia)}
+              </strong>
+            </span>
+            {modoMes !== "anterior" && (
+              <span style={{ fontSize: 10, color: '#475569' }}>
+                (ciclos: 10→{mesReferencia.ciclos?.[10]?.mes_ref} | 20→{mesReferencia.ciclos?.[20]?.mes_ref} | 30→{mesReferencia.ciclos?.[30]?.mes_ref})
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: 4, background: '#1a1d2e', padding: 4, borderRadius: 8 }}>
+            <button
+              onClick={() => setModoMes("ciclo")}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 6,
+                border: 'none',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+                background: modoMes === "ciclo" ? '#2563eb' : 'transparent',
+                color: modoMes === "ciclo" ? '#fff' : '#94a3b8'
+              }}
+            >
+              Ciclo atual
+            </button>
+            <button
+              onClick={() => setModoMes("anterior")}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 6,
+                border: 'none',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+                background: modoMes === "anterior" ? '#2563eb' : 'transparent',
+                color: modoMes === "anterior" ? '#fff' : '#94a3b8'
+              }}
+            >
+              Mês anterior
+            </button>
+          </div>
         </div>
       )}
 

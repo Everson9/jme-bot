@@ -16,7 +16,9 @@
 // }
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const TEMPO_EXPIRACAO_HUMANO = 30 * 60 * 1000; // 30 minutos
+// OBS: o fluxo de "admin assumiu" configura timer de 2h (middleware/Mensagem.js).
+// Mantemos a expiração alinhada para evitar o bot "voltar" no meio do atendimento humano.
+const TEMPO_EXPIRACAO_HUMANO = 2 * 60 * 60 * 1000; // 2 horas
 
 class StateManager {
     constructor(db = null) {

@@ -329,14 +329,29 @@ async function buscarClientePorNome(nome) {
     console.log(`🔍 Buscando cliente por nome: "${nome}"`);
     
     try {
-        // 🔥 Normaliza termo de busca
-        const termoBusca = nome
+        const STOP = new Set(['da','de','do','das','dos','e']);
+        const norm = (s) => (s || '')
             .toLowerCase()
             .trim()
             .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '');
-        
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        // 🔥 Normaliza termo de busca
+        const termoBusca = norm(nome);
         console.log(`   🔎 Termo normalizado: "${termoBusca}"`);
+        if (!termoBusca || termoBusca.length < 2) return [];
+
+        const tokensBusca = termoBusca
+            .split(' ')
+            .map(t => t.trim())
+            .filter(Boolean)
+            .filter(t => !STOP.has(t));
+
+        // Se o usuário digitou só "jo" etc., mantém contains simples
+        const buscaCurta = tokensBusca.length === 0 || (tokensBusca.length === 1 && tokensBusca[0].length <= 3);
         
         // Busca TODOS os clientes
         const snapshot = await db.collection('clientes').get();
@@ -349,40 +364,44 @@ async function buscarClientePorNome(nome) {
             if (!cliente.nome) return;
             
             // 🔥 Normaliza nome do cliente
-            const nomeCliente = cliente.nome
-                .toLowerCase()
-                .trim()
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '');
-            
-            // 🔥 Busca parcial (contains)
-            if (nomeCliente.includes(termoBusca)) {
-                console.log(`   ✅ Encontrado: "${cliente.nome}"`);
-                resultados.push({ id: doc.id, ...cliente });
+            const nomeClienteNorm = norm(cliente.nome);
+            if (!nomeClienteNorm) return;
+
+            // 1) Match rápido por substring
+            if (nomeClienteNorm.includes(termoBusca)) {
+                resultados.push({ id: doc.id, ...cliente, _score: 100 });
+                return;
+            }
+
+            // 2) Match por tokens (resolve casos "JOAO SILVA" vs "JOAO DA SILVA")
+            if (!buscaCurta) {
+                const tokensNome = nomeClienteNorm
+                    .split(' ')
+                    .map(t => t.trim())
+                    .filter(Boolean)
+                    .filter(t => !STOP.has(t));
+
+                // todos tokens buscados devem existir no nome (por prefixo ou contains)
+                const ok = tokensBusca.every(tb =>
+                    tokensNome.some(tn => tn === tb || tn.startsWith(tb) || tn.includes(tb))
+                );
+                if (ok) {
+                    // score: mais tokens encontrados + preferir prefixo
+                    const prefixBoost = tokensBusca.every(tb => tokensNome.some(tn => tn.startsWith(tb))) ? 15 : 0;
+                    resultados.push({ id: doc.id, ...cliente, _score: 60 + tokensBusca.length * 5 + prefixBoost });
+                }
+            } else {
+                // busca curta: permite contains do primeiro token
+                const tb = tokensBusca[0] || termoBusca;
+                if (nomeClienteNorm.includes(tb)) {
+                    resultados.push({ id: doc.id, ...cliente, _score: 40 });
+                }
             }
         });
         
         // 🔥 Ordena por relevância
-        resultados.sort((a, b) => {
-            const nomeA = a.nome.toLowerCase();
-            const nomeB = b.nome.toLowerCase();
-            const termo = termoBusca;
-            
-            // Quem começa com o termo
-            if (nomeA.startsWith(termo) && !nomeB.startsWith(termo)) return -1;
-            if (!nomeA.startsWith(termo) && nomeB.startsWith(termo)) return 1;
-            
-            // Quem tem o termo no início de qualquer palavra
-            const palavrasA = nomeA.split(' ');
-            const palavrasB = nomeB.split(' ');
-            const temPalavraA = palavrasA.some(p => p.startsWith(termo));
-            const temPalavraB = palavrasB.some(p => p.startsWith(termo));
-            
-            if (temPalavraA && !temPalavraB) return -1;
-            if (!temPalavraA && temPalavraB) return 1;
-            
-            return 0;
-        });
+        resultados.sort((a, b) => (b._score || 0) - (a._score || 0));
+        resultados.forEach(r => { try { delete r._score; } catch(_) {} });
         
         console.log(`   📊 Total encontrado: ${resultados.length}`);
         return resultados;

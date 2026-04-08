@@ -93,6 +93,71 @@ function setupComprovante(client, firebaseDb, banco, state, ADMINISTRADORES, sse
         return false;
     }
 
+    // Confirma o titular via nome digitado (fallback quando não consegue localizar pelo telefone)
+    async function confirmarNomeComprovante(deQuem, nomeDigitado) {
+        const nomeBruto = (nomeDigitado || '').trim();
+        if (nomeBruto.length < 3) {
+            await client.sendMessage(deQuem, `${P}Pode digitar *nome e sobrenome* do titular? 😊`);
+            return { ok: false, motivo: 'nome_curto' };
+        }
+
+        const resultados = await banco.buscarClientePorNome(nomeBruto);
+        if (!resultados?.length) {
+            await client.sendMessage(deQuem,
+                `${P}Não encontrei esse nome na base. 😕\n\n` +
+                `Pode tentar novamente com *nome e sobrenome* (como está no cadastro) ou me informar o *CPF* do titular?`
+            );
+            return { ok: false, motivo: 'nao_encontrado' };
+        }
+
+        if (resultados.length > 1) {
+            await client.sendMessage(deQuem,
+                `${P}Encontrei *${resultados.length}* cadastros parecidos. 😕\n\n` +
+                `Para confirmar certinho, me informe o *CPF* do titular (11 dígitos).`
+            );
+            return { ok: false, motivo: 'multiplos' };
+        }
+
+        const clienteEncontrado = resultados[0];
+        const dados = state.getDados(deQuem) || {};
+
+        await firebaseDb.collection('clientes').doc(clienteEncontrado.id).update({
+            status: 'pago',
+            atualizado_em: new Date().toISOString()
+        });
+
+        const hoje = new Date();
+        const mesRef = `${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
+        await firebaseDb.collection('clientes').doc(clienteEncontrado.id)
+            .collection('historico_pagamentos').doc(mesRef.replace('/', '-'))
+            .set({
+                referencia: mesRef,
+                status: 'pago',
+                forma_pagamento: 'Comprovante',
+                pago_em: hoje.toISOString(),
+                data_vencimento: clienteEncontrado.dia_vencimento || 10,
+                valor: dados.analise?.valor || null,
+            }, { merge: true });
+
+        await registrarPagamentoHoje(clienteEncontrado.id, clienteEncontrado, 'Comprovante', dados.analise?.valor || null);
+        await banco.dbLogComprovante(deQuem).catch(() => {});
+
+        await client.sendMessage(deQuem, `${P}Pagamento confirmado para *${clienteEncontrado.nome}*! ✅`);
+
+        await notificarAdmins(
+            `✅ *BAIXA VIA COMPROVANTE (nome confirmado)*\n\n` +
+            `👤 ${clienteEncontrado.nome}\n` +
+            `📱 ${deQuem.replace('@c.us', '')}\n` +
+            `💰 R$ ${dados.analise?.valor || 'N/A'}`
+        );
+
+        sseService.broadcast();
+        sseService.notificar('clientes');
+
+        state.encerrarFluxo(deQuem);
+        return { ok: true, cliente: clienteEncontrado };
+    }
+
     async function abrirChamadoComMotivo(deQuem, nome, motivo, extras = {}) {
         state.setAtendimentoHumano(deQuem, true);
         await banco.dbSalvarAtendimentoHumano(deQuem).catch(() => {});
@@ -156,39 +221,160 @@ function setupComprovante(client, firebaseDb, banco, state, ADMINISTRADORES, sse
     }
 
     async function consultarSituacao(deQuem, textoCliente) {
-        const t = textoCliente.trim();
-        const cpfLimpo = t.replace(/\D/g, '');
-        let cliente = null;
+        const t = (textoCliente || '').trim();
+        const etapa = state.getEtapa(deQuem) || 'aguardando_dados';
+        const dados = state.getDados(deQuem) || {};
 
-        if (cpfLimpo.length === 11) cliente = await banco.buscarClientePorCPF(cpfLimpo);
+        // Se por algum motivo a etapa não estiver setada, garante o fluxo.
+        if (state.getFluxo(deQuem) !== 'consulta_situacao') {
+            state.iniciar(deQuem, 'consulta_situacao', 'aguardando_dados', {});
+        }
 
-        if (!cliente && t.length >= 3) {
-            const resultados = await banco.buscarClientePorNome(t);
-            if (resultados && resultados.length === 1) {
-                cliente = resultados[0];
-            } else if (resultados && resultados.length > 1) {
-                await client.sendMessage(deQuem,
-                    `${P}Encontrei vários clientes com esse nome. 😕\n\nPor favor me informe o *CPF completo* (11 dígitos):`
-                );
-                state.iniciar(deQuem, 'consulta_situacao', 'aguardando_cpf', {});
+        // 1) Primeira etapa: aceita CPF ou Nome; tenta também pelo telefone do WhatsApp como fallback.
+        if (etapa === 'aguardando_dados') {
+            let cliente = null;
+            const cpfLimpo = t.replace(/\D/g, '');
+
+            if (cpfLimpo.length === 11) {
+                cliente = await banco.buscarClientePorCPF(cpfLimpo);
+                if (!cliente) {
+                    state.avancar(deQuem, 'aguardando_telefone', { tentativasTelefone: 1 });
+                    await client.sendMessage(deQuem, `${P}Não encontrei esse CPF na base. 😕\n\nPode me informar o *telefone do titular* (com DDD, só números)?`);
+                    return;
+                }
+            }
+
+            if (!cliente && t.length >= 3) {
+                const resultados = await banco.buscarClientePorNome(t);
+                if (resultados?.length === 1) {
+                    cliente = resultados[0];
+                } else if (resultados?.length > 1) {
+                    state.avancar(deQuem, 'aguardando_cpf', { nomeTentado: t, tentativasCpf: 1 });
+                    await client.sendMessage(deQuem,
+                        `${P}Encontrei *${resultados.length}* clientes com esse nome. 😕\n\nPara confirmar certinho, me informe o *CPF completo* (11 dígitos):`
+                    );
+                    return;
+                } else {
+                    // Não achou por nome -> tenta pelo telefone do WhatsApp
+                    const numTel = deQuem.replace('@c.us', '').replace(/^55/, '');
+                    cliente = await banco.buscarClientePorTelefone(numTel);
+                    if (!cliente) {
+                        state.avancar(deQuem, 'aguardando_cpf', { nomeTentado: t, tentativasCpf: 1 });
+                        await client.sendMessage(deQuem,
+                            `${P}Não encontrei esse nome no cadastro. 😕\n\n` +
+                            `Pode tentar com o *CPF do titular* (11 dígitos)?\n` +
+                            `Se preferir, você também pode informar o *telefone do titular* com DDD.`
+                        );
+                        return;
+                    }
+                }
+            }
+
+            if (!cliente) {
+                // Mensagem curta / vazia etc.
+                await client.sendMessage(deQuem, `${P}Me informe seu *CPF* (11 dígitos) ou seu *nome completo* para eu consultar. 😊`);
                 return;
             }
+
+            // Achou cliente -> encerra fluxo e responde abaixo.
+            state.encerrarFluxo(deQuem);
+            dados._cliente = cliente;
         }
 
-        if (!cliente) {
-            const numTel = deQuem.replace('@c.us', '').replace(/^55/, '');
-            cliente = await banco.buscarClientePorTelefone(numTel);
+        // 2) Etapa CPF (quando houve múltiplos ou nome não encontrado)
+        if (etapa === 'aguardando_cpf') {
+            const cpf = t.replace(/\D/g, '');
+            if (cpf.length !== 11) {
+                const tent = (dados.tentativasCpf || 1);
+                if (tent >= 2) {
+                    state.avancar(deQuem, 'aguardando_telefone', { tentativasTelefone: 1 });
+                    await client.sendMessage(deQuem, `${P}Sem problema. Pode me informar o *telefone do titular* (com DDD, só números)?`);
+                    return;
+                }
+                state.atualizar(deQuem, { tentativasCpf: tent + 1 });
+                await client.sendMessage(deQuem, `${P}CPF precisa ter *11 dígitos*. Tenta novamente só com números. 😊`);
+                return;
+            }
+
+            const cliente = await banco.buscarClientePorCPF(cpf);
+            if (!cliente) {
+                const tent = (dados.tentativasCpf || 1);
+                if (tent >= 2) {
+                    state.avancar(deQuem, 'aguardando_telefone', { tentativasTelefone: 1 });
+                    await client.sendMessage(deQuem, `${P}Não encontrei esse CPF. 😕\n\nPode me informar o *telefone do titular* (com DDD, só números)?`);
+                    return;
+                }
+                state.atualizar(deQuem, { tentativasCpf: tent + 1 });
+                await client.sendMessage(deQuem, `${P}Não encontrei esse CPF na base. Confere e tenta novamente (só números).`);
+                return;
+            }
+
+            state.encerrarFluxo(deQuem);
+            dados._cliente = cliente;
         }
 
+        // 3) Etapa telefone
+        if (etapa === 'aguardando_telefone') {
+            const telefone = t.replace(/\D/g, '');
+            if (telefone.length < 10 || telefone.length > 11) {
+                const tent = (dados.tentativasTelefone || 1);
+                if (tent >= 2) {
+                    state.encerrarFluxo(deQuem);
+                    await client.sendMessage(deQuem,
+                        `${P}Ainda não consegui te localizar na base. 😕\n\n` +
+                        `Vou chamar um atendente pra te ajudar melhor.`
+                    );
+                    await abrirChamadoComMotivo(deQuem, null, 'Consulta situação — não identificado');
+                    return;
+                }
+                state.atualizar(deQuem, { tentativasTelefone: tent + 1 });
+                await client.sendMessage(deQuem, `${P}Telefone deve ter 10 ou 11 dígitos (com DDD). Digite só números. 😊`);
+                return;
+            }
+
+            const cliente = await banco.buscarClientePorTelefone(telefone);
+            if (!cliente) {
+                const tent = (dados.tentativasTelefone || 1);
+                if (tent >= 2) {
+                    state.encerrarFluxo(deQuem);
+                    await client.sendMessage(deQuem,
+                        `${P}Não encontrei esse telefone na base. 😕\n\nVou chamar um atendente pra te ajudar.`
+                    );
+                    await abrirChamadoComMotivo(deQuem, null, 'Consulta situação — telefone não encontrado');
+                    return;
+                }
+                state.atualizar(deQuem, { tentativasTelefone: tent + 1 });
+                await client.sendMessage(deQuem, `${P}Não encontrei esse telefone. Confere e tenta novamente (com DDD, só números).`);
+                return;
+            }
+
+            state.encerrarFluxo(deQuem);
+            dados._cliente = cliente;
+        }
+
+        const cliente = dados._cliente || null;
         if (!cliente) {
-            await client.sendMessage(deQuem,
-                `${P}Não encontrei nenhum cadastro com esses dados. 😕\n\nVerifique se digitou corretamente ou fale com um atendente.\n\nDigite *0* para voltar ao menu.`
-            );
+            // Se chegou aqui sem cliente (por alguma inconsistência), reinicia.
+            state.iniciar(deQuem, 'consulta_situacao', 'aguardando_dados', {});
+            await client.sendMessage(deQuem, `${P}Me informe seu *CPF* (11 dígitos) ou seu *nome completo* para eu consultar. 😊`);
             return;
         }
 
         const nome = cliente.nome || 'Cliente';
         const primeiroNome = nome.split(' ')[0];
+
+        // Se existir promessa pendente, prioriza informar a promessa (não retornar "em dia")
+        try {
+            const promessa = await banco.buscarPromessa(nome);
+            if (promessa?.data_promessa) {
+                await client.sendMessage(deQuem,
+                    `${P}🤝 *${primeiroNome}*, encontrei uma *promessa de pagamento* para o dia *${promessa.data_promessa}*.\n\n` +
+                    `Se você já pagou, pode me enviar o comprovante aqui (foto ou PDF).`
+                );
+                return;
+            }
+        } catch (_) {}
+
         const diaVenc = parseInt(cliente.dia_vencimento) || 10;
         const cicloRef = getCicloAtual(diaVenc, agoraBR());
 
@@ -235,7 +421,7 @@ function setupComprovante(client, firebaseDb, banco, state, ADMINISTRADORES, sse
         }
     }
 
-    return { processarMidiaAutomatico, darBaixaAutomatica, abrirChamadoComMotivo, detectarAcaoAdmin, consultarSituacao };
+    return { processarMidiaAutomatico, confirmarNomeComprovante, darBaixaAutomatica, abrirChamadoComMotivo, detectarAcaoAdmin, consultarSituacao };
 }
 
 module.exports = setupComprovante;

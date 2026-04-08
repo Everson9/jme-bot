@@ -31,7 +31,7 @@ function configurarMensagens(client, ctx, handlers) {
     mensagensConfiguradas = true;
     const { state, banco, sseService, ADMINISTRADORES, FUNCIONARIOS, P,
             situacaoRede, previsaoRetorno, motivoRede, redeNormal, falarSinalAmigavel } = ctx;
-    const { processarMidiaAutomatico, detectarAcaoAdmin, consultarSituacao, abrirChamadoComMotivo } = handlers;
+    const { processarMidiaAutomatico, detectarAcaoAdmin, consultarSituacao, abrirChamadoComMotivo, confirmarNomeComprovante } = handlers;
     const { obterFluxo } = { obterFluxo: () => handlers }; // acesso via getter para não cache undefined
     const { dispararCobrancaReal, firebaseDb, groqChatFallback } = ctx;
 
@@ -61,17 +61,27 @@ function configurarMensagens(client, ctx, handlers) {
             return;
         }
 
-        // Em fluxo ativo mas sem texto (só foto/áudio) → responde com menu
+        // Em fluxo ativo mas sem texto (mídia sem legenda, pdf sem texto, etc)
+        // Não deve quebrar o fluxo nem resetar menu.
         if (fluxoAtivo && !texto.trim()) {
-            await client.sendMessage(deQuem, `Recebi! Agora, como posso te ajudar? 😊\n\n${MENU_PRINCIPAL}`);
-            state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
             return;
         }
 
         // Consulta situação
         if (fluxoAtivo === 'consulta_situacao') {
-            state.encerrarFluxo(deQuem);
             await consultarSituacao(deQuem, texto);
+            return;
+        }
+
+        // Fluxo: aguardando nome do comprovante (PDF / imagem que não deu match por telefone)
+        if (fluxoAtivo === 'aguardando_nome_comprovante') {
+            // Não encerra o fluxo aqui: a confirmação pode pedir CPF/novo nome e continuar esperando.
+            try {
+                await confirmarNomeComprovante(deQuem, texto);
+            } catch (e) {
+                console.error('Erro confirmarNomeComprovante:', e);
+                await client.sendMessage(deQuem, `${P}Tive um erro ao validar seu nome. Pode tentar novamente?`);
+            }
             return;
         }
 
