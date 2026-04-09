@@ -57,7 +57,10 @@ const toWpp = (n) => {
 const parseNumbers = (env, fallback) =>
     (process.env[env] || fallback).split(',').map(s => s.trim()).filter(Boolean).map(toWpp);
 
-const ADMINISTRADORES = parseNumbers('ADMIN_PHONE', '558184636954');
+const ADMINISTRADORES = parseNumbers('ADMIN_PHONE', '');
+console.log('🔍 ADMIN_PHONE raw:', process.env.ADMIN_PHONE);
+console.log('🔍 ADMINISTRADORES parsed:', ADMINISTRADORES);
+
 const FUNCIONARIOS    = parseNumbers('FUNCIONARIO_PHONE', '558185937690,558198594699,558184597727,558184065116');
 
 let botAtivo            = true;
