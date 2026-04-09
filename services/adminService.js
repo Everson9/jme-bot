@@ -258,6 +258,8 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
 
         if (autorizado === true) {
             console.log(`✅ Autorizado! Disparando dia ${cobranca.dataVenc} — ${cobranca.tipo}`);
+            console.log(`📋 Enviando ${cobranca.clientes.length} clientes para disparo`);
+            console.log(`📋 NOMES: ${cobranca.clientes.map(c => c.nome).join(', ')}`);
             await dispararCobrancaReal(client, firebaseDb, cobranca.dataVenc, cobranca.tipo, cobranca.clientes);
             await new Promise(r => setTimeout(r, 2000));
         } else if (autorizado === false) {
