@@ -15,6 +15,7 @@ const { getCicloAtual }         = require('./statusService');
  */
 async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clientesFiltrados = null) {
     console.log(`📬 Iniciando disparo dia ${data}, tipo: ${tipo || 'auto'}`);
+    console.log(`📬 clientesFiltrados recebido: ${clientesFiltrados ? clientesFiltrados.length : 'NENHUM'}`);
 
     try {
         const hoje    = new Date();
@@ -24,6 +25,7 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
         // Se não recebeu lista filtrada, busca e filtra aqui
         let clientes = clientesFiltrados;
         if (!clientes) {
+            console.log(`📬 Modo: BUSCANDO DO BANCO (sem lista filtrada)`);
             const dataNum = parseInt(data);
 
             // Consulta ambos os formatos (número e string) — alguns clientes foram salvos como string
@@ -39,21 +41,28 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                 vistos.add(d.id); return true;
             });
 
+            console.log(`📬 Encontrados ${docs.length} clientes com vencimento dia ${data}`);
+
             const cicloRef = getCicloAtual(dataNum);
+            console.log(`📬 Ciclo de referência: ${cicloRef.docId}`);
+            
             clientes = [];
 
             for (const doc of docs) {
                 const cliente = { id: doc.id, ...doc.data() };
-                if (cliente.status === 'cancelado') continue;
+                if (cliente.status === 'cancelado') {
+                    console.log(`   ❌ ${cliente.nome} - cancelado`);
+                    continue;
+                }
 
                 const historicoDoc = await firebaseDb.collection('clientes').doc(doc.id)
                     .collection('historico_pagamentos').doc(cicloRef.docId).get();
 
-                // CORREÇÃO: Verifica campo 'status' (string)
                 if (historicoDoc.exists) {
                     const registro = historicoDoc.data();
                     if (registro.status === 'pago' || registro.status === 'isento') {
-                        continue; // PULA cliente que já pagou
+                        console.log(`   ✅ ${cliente.nome} - já pagou ${cicloRef.docId}`);
+                        continue;
                     }
                 }
 
@@ -62,57 +71,44 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                     .where('cliente_id', '==', doc.id)
                     .where('status', 'in', ['solicitado', 'impresso'])
                     .limit(1).get();
-                if (!carneSnap.empty) continue;
+                if (!carneSnap.empty) {
+                    console.log(`   📋 ${cliente.nome} - tem carnê pendente`);
+                    continue;
+                }
 
+                console.log(`   ⏳ ${cliente.nome} - PENDENTE (será cobrado)`);
                 clientes.push(cliente);
             }
         } else {
-            // Se recebeu lista filtrada, aplica apenas verificações essenciais
-            console.log(`📋 Recebidos ${clientesFiltrados.length} clientes para filtrar`);
-            console.log(`📋 NOMES: ${clientesFiltrados.map(c => c.nome).join(', ')}`);
+            console.log(`📬 Modo: LISTA APROVADA (${clientesFiltrados.length} clientes)`);
+            console.log(`📬 NOMES NA LISTA: ${clientesFiltrados.map(c => c.nome).join(', ')}`);
             
+            // Apenas verifica telefone
             const clientesValidos = [];
             
             for (const cliente of clientesFiltrados) {
-                console.log(`   🔍 Verificando: ${cliente.nome}`);
-                
-                // Verifica se tem telefone
                 if (!cliente.telefone) {
-                    console.log(`   ⚠️ ${cliente.nome} - sem telefone`);
+                    console.log(`   ⚠️ ${cliente.nome} - SEM TELEFONE`);
                     continue;
                 }
-                console.log(`   📞 Telefone OK: ${cliente.telefone}`);
-                
-                // Verifica carnê (se tiver ID)
-                if (cliente.id) {
-                    console.log(`   🔍 Verificando carnê para ID: ${cliente.id}`);
-                    const carneSnap = await firebaseDb.collection('carne_solicitacoes')
-                        .where('cliente_id', '==', cliente.id)
-                        .where('status', 'in', ['solicitado', 'impresso'])
-                        .limit(1).get();
-                    if (!carneSnap.empty) {
-                        console.log(`   📋 ${cliente.nome} - tem carnê pendente`);
-                        continue;
-                    }
-                    console.log(`   ✅ Sem carnê pendente`);
-                }
-                
-                console.log(`   ✅ ${cliente.nome} - VÁLIDO`);
+                console.log(`   ✅ ${cliente.nome} - TELEFONE OK: ${cliente.telefone}`);
                 clientesValidos.push(cliente);
             }
             
             clientes = clientesValidos;
-            console.log(`✅ ${clientes.length} clientes válidos após filtros`);
-            console.log(`✅ NOMES VÁLIDOS: ${clientes.map(c => c.nome).join(', ')}`);
+            console.log(`📬 Após filtrar telefones: ${clientes.length} clientes válidos`);
         }
 
         if (clientes.length === 0) {
-            console.log(`📭 Nenhum cliente para cobrar (dia ${data})`);
+            console.log(`📭 NENHUM CLIENTE PARA COBRAR (dia ${data})`);
             return 0;
         }
 
-        // Verifica duplicatas no log (APENAS para modo automático)
+        console.log(`📬 INICIANDO ENVIO para ${clientes.length} clientes`);
+
+        // Verifica duplicatas no log (APENAS para modo automático sem lista)
         if (!clientesFiltrados) {
+            console.log(`📬 Verificando duplicatas no log...`);
             const jaCobradasSnap = await firebaseDb.collection('log_cobrancas')
                 .where('data_vencimento', '==', data)
                 .where('tipo', '==', tipo || 'auto')
@@ -125,13 +121,21 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                 if (num) numerosJaCobrados.add(num);
             });
 
+            console.log(`📬 ${numerosJaCobrados.size} números já cobrados hoje`);
+
             // Filtra os já cobrados
+            const antes = clientes.length;
             clientes = clientes.filter(cliente => {
                 if (!cliente.telefone) return false;
                 let tel = cliente.telefone.replace(/\D/g, '');
                 if (tel.length > 11) tel = tel.slice(-11);
-                return !numerosJaCobrados.has(tel.slice(-8));
+                const jaCobrado = numerosJaCobrados.has(tel.slice(-8));
+                if (jaCobrado) {
+                    console.log(`   🔄 ${cliente.nome} - já cobrado hoje`);
+                }
+                return !jaCobrado;
             });
+            console.log(`📬 Após filtrar duplicatas: ${clientes.length} clientes (eram ${antes})`);
         }
 
         if (clientes.length === 0) {
@@ -142,11 +146,9 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
         let enviadas = 0, falhas = 0;
 
         for (const cliente of clientes) {
-            if (!cliente.telefone) { falhas++; continue; }
+            console.log(`📤 Enviando para: ${cliente.nome} - ${cliente.telefone}`);
 
             let tel = cliente.telefone.replace(/\D/g, '');
-            if (tel.length < 10) { falhas++; continue; }
-            if (tel.length > 11)  tel = tel.slice(-11);
             if (!tel.startsWith('55')) tel = '55' + tel;
 
             const nome = cliente.nome?.split(' ')[0] || '';
@@ -159,8 +161,10 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
 
             let enviado = false;
             for (const numero of numerosParaTentar) {
+                console.log(`   📞 Tentando: ${numero}`);
                 const resultado = await enviarMensagemSegura(client, numero + '@c.us', msgTexto);
                 if (resultado.sucesso) {
+                    console.log(`   ✅ ENVIADO para ${numero}`);
                     // Envia PIX separado após 1s
                     setTimeout(() => client.sendMessage(resultado.numero, msgPix).catch(() => {}), 1000);
 
@@ -177,11 +181,14 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                     enviadas++;
                     enviado = true;
                     break;
+                } else {
+                    console.log(`   ❌ FALHA para ${numero}: ${resultado.erro || 'desconhecido'}`);
                 }
             }
 
             if (!enviado) {
                 falhas++;
+                console.log(`   ❌❌ FALHA TOTAL para ${cliente.nome}`);
                 await firebaseDb.collection('log_cobrancas').add({
                     numero: tel + '@c.us',
                     nome: cliente.nome,
@@ -196,11 +203,11 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
             if (enviado) await new Promise(r => setTimeout(r, 2000));
         }
 
-        console.log(`✅ Disparo concluído dia ${data} (${tipo}): ${enviadas} enviadas, ${falhas} falhas`);
+        console.log(`✅ DISPARO CONCLUÍDO dia ${data} (${tipo}): ${enviadas} enviadas, ${falhas} falhas`);
         return enviadas;
 
     } catch (error) {
-        console.error('❌ Erro no disparo:', error);
+        console.error('❌ ERRO NO DISPARO:', error);
         return 0;
     }
 }

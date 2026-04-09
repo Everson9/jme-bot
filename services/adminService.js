@@ -258,7 +258,7 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
 
         if (autorizado === true) {
             console.log(`✅ Autorizado! Disparando dia ${cobranca.dataVenc} — ${cobranca.tipo}`);
-            await dispararCobrancaReal(cobranca.dataVenc, cobranca.tipo, cobranca.clientes);
+            await dispararCobrancaReal(client, firebaseDb, cobranca.dataVenc, cobranca.tipo, cobranca.clientes);
             await new Promise(r => setTimeout(r, 2000));
         } else if (autorizado === false) {
             console.log(`❌ Admin negou cobrança dia ${cobranca.dataVenc} (${cobranca.tipo})`);

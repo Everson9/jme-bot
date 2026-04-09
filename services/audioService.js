@@ -30,8 +30,11 @@ async function perguntarAdmins(client, firebaseDb, ADMINISTRADORES, datas, tipo,
         `❌ Pular: *!nao*`;
 
     for (const adm of ADMINISTRADORES) {
-        await client.sendMessage(adm, mensagem).catch(() => {});
-    }
+    console.log(`📤 Tentando enviar para: ${adm}`);
+    await client.sendMessage(adm, mensagem)
+        .then(() => console.log(`✅ Enviado para: ${adm}`))
+        .catch(err => console.error(`❌ Erro ao enviar para ${adm}:`, err.message || err));
+}
     
     // Salva no Firebase para controle
     await firebaseDb.collection('votacoes').doc(votacaoId).set({
@@ -228,7 +231,7 @@ async function verificarCobrancasAutomaticas(client, firebaseDb, ADMINISTRADORES
         }
         // Executa imediatamente após aprovação
         console.log(`✅ Autorizado! Disparando: Data ${c.data} — ${c.tipo}`);
-        await dispararCobrancaReal(c.data, c.tipo); // wrapper já tem client+firebaseDb
+        await dispararCobrancaReal(client, firebaseDb, c.data, c.tipo);// wrapper já tem client+firebaseDb
         await new Promise(r => setTimeout(r, 2000));
     }
     

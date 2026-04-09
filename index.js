@@ -327,6 +327,23 @@ client.on('ready', async () => {
     botIniciadoEm = Date.now();
 
     // Restaura configs do Firebase
+
+    client.on('ready', async () => {
+    // ... código existente ...
+    
+    // 🧪 TESTE: Enviar mensagem para o segundo número
+    setTimeout(async () => {
+        try {
+            const numeroTeste = '5581986650773@c.us';
+            console.log(`🧪 Tentando enviar teste para: ${numeroTeste}`);
+            await client.sendMessage(numeroTeste, '🧪 Mensagem de teste do JME-BOT');
+            console.log(`✅ Teste enviado com sucesso!`);
+        } catch (err) {
+            console.error(`❌ Erro no teste:`, err.message);
+        }
+    }, 10000); // Espera 10 segundos após o bot ficar pronto
+});
+
     try {
         const [cfgBot, cfgRede, cfgPrevisao, cfgHorario, cfgCobranca] = await Promise.all([
             firebaseDb.collection('config').doc('bot_ativo').get(),
