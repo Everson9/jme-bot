@@ -29,10 +29,11 @@ function _ciclo10(hojeBr) {
 function _status10(hojeBr, reg) {
     const diaHoje = hojeBr.getUTCDate();
     if (reg) {
-        if (reg.status === 'pago' || reg.status === 'isento') return 'pago';
+        // CORRIGIDO: Verifica campo 'pago' (boolean) conforme schema real
+        if (reg.pago === true) return 'pago';
         // Registro pendente mas já passou da tolerância → inadimplente
         if (diaHoje > 15) return 'inadimplente';
-        return reg.status || 'pendente';
+        return 'pendente';
     }
     if (diaHoje > 15) return 'inadimplente';
     return 'em_dia';
@@ -63,9 +64,10 @@ function _ciclo20(hojeBr) {
 function _status20(hojeBr, reg) {
     const diaHoje = hojeBr.getUTCDate();
     if (reg) {
-        if (reg.status === 'pago' || reg.status === 'isento') return 'pago';
+        // CORRIGIDO: Verifica campo 'pago' (boolean)
+        if (reg.pago === true) return 'pago';
         if (diaHoje > 25) return 'inadimplente';
-        return reg.status || 'pendente';
+        return 'pendente';
     }
     if (diaHoje > 25) return 'inadimplente';
     return 'em_dia';
@@ -108,9 +110,10 @@ function _ciclo30(hojeBr) {
 function _status30(hojeBr, reg) {
     const diaHoje = hojeBr.getUTCDate();
     if (reg) {
-        if (reg.status === 'pago' || reg.status === 'isento') return 'pago';
+        // CORRIGIDO: Verifica campo 'pago' (boolean)
+        if (reg.pago === true) return 'pago';
         if (diaHoje > 5) return 'inadimplente';
-        return reg.status || 'pendente';
+        return 'pendente';
     }
     if (diaHoje > 5 && diaHoje < 30) return 'inadimplente';
     return 'em_dia';
@@ -170,8 +173,8 @@ function deveSerCobrado(cliente, registro) {
     if (cliente.status === 'cancelado') return false;
     if (cliente.status === 'promessa')  return false;
     if (!registro) return true;
-    if (registro.status === 'pago')   return false;
-    if (registro.status === 'isento') return false;
+    // CORRIGIDO: Verifica campo 'pago' (boolean)
+    if (registro.pago === true) return false;
     return true;
 }
 

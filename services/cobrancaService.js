@@ -47,10 +47,17 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                 if (cliente.status === 'cancelado') continue;
 
                 const historicoDoc = await firebaseDb.collection('clientes').doc(doc.id)
-                    .collection('historico_pagamentos').doc(cicloRef.docId).get();
-                const registro = historicoDoc.exists ? historicoDoc.data() : null;
+    .collection('historico_pagamentos').doc(cicloRef.docId).get();
 
-                if (registro && (registro.status === 'pago' || registro.status === 'isento')) continue;
+// CORREÇÃO: Se não existe documento OU não está pago, considera pendente
+if (historicoDoc.exists) {
+    const registro = historicoDoc.data();
+    // Verifica o campo correto do schema (pago: true/false)
+    if (registro.pago === true) {
+        continue; // PULA cliente que já pagou
+    }
+}
+// Se não existe documento, continua (cliente pendente)
 
                 // Verifica carnê
                 const carneSnap = await firebaseDb.collection('carne_solicitacoes')

@@ -7,17 +7,18 @@ const { getCicloAtual, deveSerCobrado } = require('./statusService');
 // aponta pro ciclo atual (já venceu ou em tolerância).
 // =====================================================
 function getCicloCobranca(diaVencimento, tipo, hojeBr) {
+    const diaHoje = hojeBr.getUTCDate();
+    
     if (tipo === 'lembrete') {
-        // Lembrete = antes do vencimento, checa o próximo ciclo
-        const diaHoje  = hojeBr.getUTCDate();
-        const mesHoje  = hojeBr.getUTCMonth() + 1;
-        const anoHoje  = hojeBr.getUTCFullYear();
-        const proxMes  = mesHoje === 12 ? 1 : mesHoje + 1;
-        const proxAno  = mesHoje === 12 ? anoHoje + 1 : anoHoje;
-        const mm = String(proxMes).padStart(2, '0');
-        return { mesRef: proxMes, anoRef: proxAno, chave: `${mm}/${proxAno}`, docId: `${mm}-${proxAno}` };
+        // Lembrete é sempre NO DIA ANTERIOR ao vencimento
+        // Portanto o ciclo de referência é o MÊS ATUAL
+        const mesRef = hojeBr.getUTCMonth() + 1;
+        const anoRef = hojeBr.getUTCFullYear();
+        const mm = String(mesRef).padStart(2, '0');
+        return { mesRef, anoRef, chave: `${mm}/${anoRef}`, docId: `${mm}-${anoRef}` };
     }
-    // Demais tipos: usa o ciclo normal (já vencido ou em tolerância)
+    
+    // Demais tipos (atraso, reconquista): usa o ciclo normal
     return getCicloAtual(diaVencimento, hojeBr);
 }
 
