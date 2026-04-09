@@ -257,68 +257,75 @@ module.exports = function setupRoutes(app, ctx) {
 
             // Se mes_ref for informado, busca SOMENTE o doc daquele mês (mais barato e permite ver mês anterior)
             // Formatos aceitos: "MM-YYYY" ou "MM/YYYY"
-            const mesRefNorm = (mes_ref || '').trim();
-            const docIdSelecionado = mesRefNorm
-                ? mesRefNorm.replace(/\//g, '-')
-                : null;
+            // Se mes_ref for informado, busca SOMENTE o doc daquele mês (mais barato e permite ver mês anterior)
+// Formatos aceitos: "MM-YYYY" ou "MM/YYYY"
+const mesRefNorm = (mes_ref || '').trim();
+const docIdSelecionado = mesRefNorm
+    ? mesRefNorm.replace(/\//g, '-')
+    : null;
 
-            if (docIdSelecionado) {
-                await Promise.all(clientes.map(async c => {
-                    try {
-                        const hDoc = await firebaseDb.collection('clientes')
-                            .doc(c.id).collection('historico_pagamentos').doc(docIdSelecionado).get();
-                        const hist = {};
-                        hist[docIdSelecionado] = hDoc.exists ? hDoc.data() : null;
-                        c._historico = hist;
-                    } catch(_) { c._historico = {}; }
-                }));
-            } else {
-                // Padrão atual: carrega histórico completo (necessário para cálculo por ciclo atual)
-                await Promise.all(clientes.map(async c => {
-                    try {
-                        const hSnap = await firebaseDb.collection('clientes')
-                            .doc(c.id).collection('historico_pagamentos').get();
-                        const hist = {};
-                        hSnap.docs.forEach(d => { hist[d.id] = d.data(); });
-                        c._historico = hist;
-                    } catch(_) { c._historico = {}; }
-                }));
-            }
+// CORREÇÃO: Se não tem mes_ref, usa o ciclo atual de cada cliente (não carrega tudo)
+if (docIdSelecionado) {
+    await Promise.all(clientes.map(async c => {
+        try {
+            const hDoc = await firebaseDb.collection('clientes')
+                .doc(c.id).collection('historico_pagamentos').doc(docIdSelecionado).get();
+            const hist = {};
+            hist[docIdSelecionado] = hDoc.exists ? hDoc.data() : null;
+            c._historico = hist;
+        } catch(_) { c._historico = {}; }
+    }));
+} else {
+    // Se não tem mes_ref, busca apenas o ciclo atual (não carrega TUDO)
+    const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    await Promise.all(clientes.map(async c => {
+        try {
+            const diaVenc = parseInt(c.dia_vencimento) || 10;
+            const cicloRef = getCicloAtual(diaVenc, agoraBR);
+            const hDoc = await firebaseDb.collection('clientes')
+                .doc(c.id).collection('historico_pagamentos').doc(cicloRef.docId).get();
+            const hist = {};
+            hist[cicloRef.docId] = hDoc.exists ? hDoc.data() : null;
+            c._historico = hist;
+        } catch(_) { c._historico = {}; }
+    }));
+}
 
-            clientes = clientes.map(c => {
-                const tel = (c.telefone||'').replace(/\D/g,'').slice(-8);
-                const prom = promMap[tel];
-                const diaVenc = parseInt(c.dia_vencimento) || 10;
-                const cicloRef = getCicloAtual(diaVenc, new Date(Date.now() - 3 * 60 * 60 * 1000));
+clientes = clientes.map(c => {
+    const tel = (c.telefone||'').replace(/\D/g,'').slice(-8);
+    const prom = promMap[tel];
+    const diaVenc = parseInt(c.dia_vencimento) || 10;
+    const cicloRef = getCicloAtual(diaVenc, new Date(Date.now() - 3 * 60 * 60 * 1000));
 
-                // Status calculado:
-                // - Se mes_ref foi fornecido: usa apenas o registro daquele mês (pago/isento => pago; senão pendente)
-                // - Caso contrário: usa cálculo de ciclo atual
-                let statusReal;
-                if (docIdSelecionado) {
-                    if (c.status === 'cancelado') statusReal = 'cancelado';
-                    else if (c.status === 'promessa') statusReal = 'promessa';
-                    else {
-                        const reg = c._historico?.[docIdSelecionado] || null;
-                        statusReal = (reg && (reg.status === 'pago' || reg.status === 'isento')) ? 'pago' : 'pendente';
-                    }
-                } else {
-                    statusReal = calcularStatusCliente(c, c._historico || null);
-                }
+    // Status calculado:
+    // - Se mes_ref foi fornecido: usa apenas o registro daquele mês
+    // - Caso contrário: usa cálculo de ciclo atual
+    let statusReal;
+    if (docIdSelecionado) {
+        if (c.status === 'cancelado') statusReal = 'cancelado';
+        else if (c.status === 'promessa') statusReal = 'promessa';
+        else {
+            const reg = c._historico?.[docIdSelecionado] || null;
+            // CORRIGIDO: Verifica campo 'pago' (boolean)
+            statusReal = (reg && (reg.status === 'pago' || reg.status === 'isento')) ? 'pago' : 'pendente';
+        }
+    } else {
+        statusReal = calcularStatusCliente(c, c._historico || null);
+    }
 
-                // Se existe promessa pendente, marca como promessa (exceto se já estiver pago no cálculo)
-                if (prom?.data_promessa && statusReal !== 'pago' && statusReal !== 'cancelado') {
-                    statusReal = 'promessa';
-                }
+    // Se existe promessa pendente, marca como promessa (exceto se já estiver pago)
+    if (prom?.data_promessa && statusReal !== 'pago' && statusReal !== 'cancelado') {
+        statusReal = 'promessa';
+    }
 
-                return {
-                    ...c,
-                    data_promessa: prom?.data_promessa || null,
-                    status_calculado: statusReal,
-                    mes_referencia: docIdSelecionado ? docIdSelecionado.replace('-', '/') : cicloRef.chave,
-                    _historico: undefined, // não enviar no response
-                };
-            });
+    return {
+        ...c,
+        data_promessa: prom?.data_promessa || null,
+        status_calculado: statusReal,
+        mes_referencia: docIdSelecionado ? docIdSelecionado.replace('-', '/') : cicloRef.chave,
+        _historico: undefined,
+    };
+});
 
             res.json(clientes);
         } catch(e) {

@@ -29,11 +29,11 @@ function _ciclo10(hojeBr) {
 function _status10(hojeBr, reg) {
     const diaHoje = hojeBr.getUTCDate();
     if (reg) {
-        // CORRIGIDO: Verifica campo 'pago' (boolean) conforme schema real
-        if (reg.pago === true) return 'pago';
+        // CORRIGIDO: Verifica campo 'status' (string)
+        if (reg.status === 'pago' || reg.status === 'isento') return 'pago';
         // Registro pendente mas já passou da tolerância → inadimplente
         if (diaHoje > 15) return 'inadimplente';
-        return 'pendente';
+        return reg.status || 'pendente';
     }
     if (diaHoje > 15) return 'inadimplente';
     return 'em_dia';
@@ -64,10 +64,10 @@ function _ciclo20(hojeBr) {
 function _status20(hojeBr, reg) {
     const diaHoje = hojeBr.getUTCDate();
     if (reg) {
-        // CORRIGIDO: Verifica campo 'pago' (boolean)
-        if (reg.pago === true) return 'pago';
+        // CORRIGIDO: Verifica campo 'status' (string)
+        if (reg.status === 'pago' || reg.status === 'isento') return 'pago';
         if (diaHoje > 25) return 'inadimplente';
-        return 'pendente';
+        return reg.status || 'pendente';
     }
     if (diaHoje > 25) return 'inadimplente';
     return 'em_dia';
@@ -77,16 +77,6 @@ function _status20(hojeBr, reg) {
 // Ciclo 30 — Vence dia 30, tolerância até dia 5 do seguinte
 // Dia 1-5   → ciclo mês anterior (último venc foi dia 30 do mês passado)
 // Dia 6-30 → ciclo mês atual (último venc foi dia 30 deste mês)
-//
-// Ex: 06/04 → ciclo é mês ANTERIOR ao de referência
-// Mas como em 06/04 o diaHoje <= 5 é false e diaHoje < 30
-// → entra no "mês atual" que é abril, e o registro é de 30/03 = 03-2026
-//
-// PAREI — lógica tava errada. Vou repensar o ciclo 30:
-// "30/03" → docId = "03-2026" (mês da referência 30/03)
-// Então em 06/04, deveria buscar "03-2026" (março = anterior)
-// Mas em 06/05 deveria buscar "04-2026" (abril = anterior)
-// Em 30/05 deveria buscar "05-2026" (maio = atual, pois é o venc atual)
 // =====================================================
 function _ciclo30(hojeBr) {
     const diaHoje  = hojeBr.getUTCDate();
@@ -110,10 +100,10 @@ function _ciclo30(hojeBr) {
 function _status30(hojeBr, reg) {
     const diaHoje = hojeBr.getUTCDate();
     if (reg) {
-        // CORRIGIDO: Verifica campo 'pago' (boolean)
-        if (reg.pago === true) return 'pago';
+        // CORRIGIDO: Verifica campo 'status' (string)
+        if (reg.status === 'pago' || reg.status === 'isento') return 'pago';
         if (diaHoje > 5) return 'inadimplente';
-        return 'pendente';
+        return reg.status || 'pendente';
     }
     if (diaHoje > 5 && diaHoje < 30) return 'inadimplente';
     return 'em_dia';
@@ -173,8 +163,8 @@ function deveSerCobrado(cliente, registro) {
     if (cliente.status === 'cancelado') return false;
     if (cliente.status === 'promessa')  return false;
     if (!registro) return true;
-    // CORRIGIDO: Verifica campo 'pago' (boolean)
-    if (registro.pago === true) return false;
+    // CORRIGIDO: Verifica campo 'status' (string)
+    if (registro.status === 'pago' || registro.status === 'isento') return false;
     return true;
 }
 

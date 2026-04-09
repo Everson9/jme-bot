@@ -49,11 +49,10 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                 const historicoDoc = await firebaseDb.collection('clientes').doc(doc.id)
     .collection('historico_pagamentos').doc(cicloRef.docId).get();
 
-// CORREÇÃO: Se não existe documento OU não está pago, considera pendente
+// CORREÇÃO: Verifica campo 'status' (string)
 if (historicoDoc.exists) {
     const registro = historicoDoc.data();
-    // Verifica o campo correto do schema (pago: true/false)
-    if (registro.pago === true) {
+    if (registro.status === 'pago' || registro.status === 'isento') {
         continue; // PULA cliente que já pagou
     }
 }
