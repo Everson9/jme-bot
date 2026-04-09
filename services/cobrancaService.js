@@ -7,28 +7,31 @@ const { getCicloAtual }         = require('./statusService');
  * Dispara cobranças para uma lista de clientes já filtrada.
  * Aceita a lista de clientes diretamente (já filtrados pelo adminService).
  *
- * @param {Object}   client      - Cliente WhatsApp
- * @param {Object}   firebaseDb  - Instância do Firestore
- * @param {string}   data        - Dia de vencimento ('10', '20', '30')
- * @param {string}   tipo        - Tipo da cobrança ('lembrete', 'atraso', etc.)
- * @param {Array}    clientesFiltrados - Clientes já verificados pelo adminService
+ * @param {Object}   client             - Cliente WhatsApp
+ * @param {Object}   firebaseDb         - Instância do Firestore
+ * @param {string}   data               - Dia de vencimento ('10', '20', '30')
+ * @param {string}   tipo               - Tipo da cobrança ('lembrete', 'atraso', etc.)
+ * @param {Array}    clientesFiltrados  - Clientes já verificados pelo adminService
  */
 async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clientesFiltrados = null) {
     console.log(`📬 Iniciando disparo dia ${data}, tipo: ${tipo || 'auto'}`);
     console.log(`📬 clientesFiltrados recebido: ${clientesFiltrados ? clientesFiltrados.length : 'NENHUM'}`);
 
     try {
-        const hoje    = new Date();
-        const hojeStr = new Date(hoje.getTime() - 3 * 60 * 60 * 1000).toISOString().split('T')[0];
+        const hoje     = new Date();
+        const hojeStr  = new Date(hoje.getTime() - 3 * 60 * 60 * 1000).toISOString().split('T')[0];
         const agoraISO = hoje.toISOString();
 
-        // Se não recebeu lista filtrada, busca e filtra aqui
         let clientes = clientesFiltrados;
+
         if (!clientes) {
+            // ─────────────────────────────────────────────────────────
+            // MODO: BUSCANDO DO BANCO (disparo manual sem lista)
+            // ─────────────────────────────────────────────────────────
             console.log(`📬 Modo: BUSCANDO DO BANCO (sem lista filtrada)`);
             const dataNum = parseInt(data);
 
-            // Consulta ambos os formatos (número e string) — alguns clientes foram salvos como string
+            // Consulta ambos os formatos (número e string)
             const [snapNum, snapStr] = await Promise.all([
                 firebaseDb.collection('clientes').where('dia_vencimento', '==', dataNum).get(),
                 firebaseDb.collection('clientes').where('dia_vencimento', '==', String(dataNum)).get(),
@@ -45,11 +48,12 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
 
             const cicloRef = getCicloAtual(dataNum);
             console.log(`📬 Ciclo de referência: ${cicloRef.docId}`);
-            
+
             clientes = [];
 
             for (const doc of docs) {
                 const cliente = { id: doc.id, ...doc.data() };
+
                 if (cliente.status === 'cancelado') {
                     console.log(`   ❌ ${cliente.nome} - cancelado`);
                     continue;
@@ -66,7 +70,7 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                     }
                 }
 
-                // Verifica carnê
+                // Verifica carnê pendente
                 const carneSnap = await firebaseDb.collection('carne_solicitacoes')
                     .where('cliente_id', '==', doc.id)
                     .where('status', 'in', ['solicitado', 'impresso'])
@@ -76,25 +80,43 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                     continue;
                 }
 
-                console.log(`   ⏳ ${cliente.nome} - PENDENTE (será cobrado)`);
-                clientes.push(cliente);
-            }
-        } else {
-            console.log(`📬 Modo: LISTA APROVADA (${clientesFiltrados.length} clientes)`);
-            console.log(`📬 NOMES NA LISTA: ${clientesFiltrados.map(c => c.nome).join(', ')}`);
-            
-            // Apenas verifica telefone
-            const clientesValidos = [];
-            
-            for (const cliente of clientesFiltrados) {
-                if (!cliente.telefone) {
+                // Normaliza telefone (array → string)
+                const tel = Array.isArray(cliente.telefones)
+                    ? cliente.telefones[0]
+                    : cliente.telefone;
+
+                if (!tel) {
                     console.log(`   ⚠️ ${cliente.nome} - SEM TELEFONE`);
                     continue;
                 }
-                console.log(`   ✅ ${cliente.nome} - TELEFONE OK: ${cliente.telefone}`);
-                clientesValidos.push(cliente);
+
+                console.log(`   ⏳ ${cliente.nome} - PENDENTE (será cobrado)`);
+                clientes.push({ ...cliente, telefone: tel });
             }
-            
+
+        } else {
+            // ─────────────────────────────────────────────────────────
+            // MODO: LISTA APROVADA (vem do adminService após votação)
+            // ─────────────────────────────────────────────────────────
+            console.log(`📬 Modo: LISTA APROVADA (${clientesFiltrados.length} clientes)`);
+            console.log(`📬 NOMES NA LISTA: ${clientesFiltrados.map(c => c.nome).join(', ')}`);
+
+            const clientesValidos = [];
+
+            for (const cliente of clientesFiltrados) {
+                // Normaliza telefone (array → string)
+                const tel = Array.isArray(cliente.telefones)
+                    ? cliente.telefones[0]
+                    : cliente.telefone;
+
+                if (!tel) {
+                    console.log(`   ⚠️ ${cliente.nome} - SEM TELEFONE`);
+                    continue;
+                }
+                console.log(`   ✅ ${cliente.nome} - TELEFONE OK: ${tel}`);
+                clientesValidos.push({ ...cliente, telefone: tel });
+            }
+
             clientes = clientesValidos;
             console.log(`📬 Após filtrar telefones: ${clientes.length} clientes válidos`);
         }
@@ -106,7 +128,7 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
 
         console.log(`📬 INICIANDO ENVIO para ${clientes.length} clientes`);
 
-        // Verifica duplicatas no log (APENAS para modo automático sem lista)
+        // Verifica duplicatas no log (APENAS para modo sem lista — busca manual)
         if (!clientesFiltrados) {
             console.log(`📬 Verificando duplicatas no log...`);
             const jaCobradasSnap = await firebaseDb.collection('log_cobrancas')
@@ -123,16 +145,13 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
 
             console.log(`📬 ${numerosJaCobrados.size} números já cobrados hoje`);
 
-            // Filtra os já cobrados
             const antes = clientes.length;
             clientes = clientes.filter(cliente => {
                 if (!cliente.telefone) return false;
                 let tel = cliente.telefone.replace(/\D/g, '');
                 if (tel.length > 11) tel = tel.slice(-11);
                 const jaCobrado = numerosJaCobrados.has(tel.slice(-8));
-                if (jaCobrado) {
-                    console.log(`   🔄 ${cliente.nome} - já cobrado hoje`);
-                }
+                if (jaCobrado) console.log(`   🔄 ${cliente.nome} - já cobrado hoje`);
                 return !jaCobrado;
             });
             console.log(`📬 Após filtrar duplicatas: ${clientes.length} clientes (eram ${antes})`);
