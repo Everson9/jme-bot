@@ -47,16 +47,15 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                 if (cliente.status === 'cancelado') continue;
 
                 const historicoDoc = await firebaseDb.collection('clientes').doc(doc.id)
-    .collection('historico_pagamentos').doc(cicloRef.docId).get();
+                    .collection('historico_pagamentos').doc(cicloRef.docId).get();
 
-// CORREÇÃO: Verifica campo 'status' (string)
-if (historicoDoc.exists) {
-    const registro = historicoDoc.data();
-    if (registro.status === 'pago' || registro.status === 'isento') {
-        continue; // PULA cliente que já pagou
-    }
-}
-// Se não existe documento, continua (cliente pendente)
+                // CORREÇÃO: Verifica campo 'status' (string)
+                if (historicoDoc.exists) {
+                    const registro = historicoDoc.data();
+                    if (registro.status === 'pago' || registro.status === 'isento') {
+                        continue; // PULA cliente que já pagou
+                    }
+                }
 
                 // Verifica carnê
                 const carneSnap = await firebaseDb.collection('carne_solicitacoes')
@@ -67,6 +66,35 @@ if (historicoDoc.exists) {
 
                 clientes.push(cliente);
             }
+        } else {
+            // Se recebeu lista filtrada, aplica apenas verificações essenciais
+            console.log(`📋 Recebidos ${clientesFiltrados.length} clientes para filtrar`);
+            const clientesValidos = [];
+            
+            for (const cliente of clientesFiltrados) {
+                // Verifica se tem telefone
+                if (!cliente.telefone) {
+                    console.log(`   ⚠️ ${cliente.nome} - sem telefone`);
+                    continue;
+                }
+                
+                // Verifica carnê (se tiver ID)
+                if (cliente.id) {
+                    const carneSnap = await firebaseDb.collection('carne_solicitacoes')
+                        .where('cliente_id', '==', cliente.id)
+                        .where('status', 'in', ['solicitado', 'impresso'])
+                        .limit(1).get();
+                    if (!carneSnap.empty) {
+                        console.log(`   📋 ${cliente.nome} - tem carnê pendente`);
+                        continue;
+                    }
+                }
+                
+                clientesValidos.push(cliente);
+            }
+            
+            clientes = clientesValidos;
+            console.log(`✅ ${clientes.length} clientes válidos após filtros`);
         }
 
         if (clientes.length === 0) {
@@ -74,18 +102,33 @@ if (historicoDoc.exists) {
             return 0;
         }
 
-        // Verifica duplicatas no log
-        const jaCobradasSnap = await firebaseDb.collection('log_cobrancas')
-            .where('data_vencimento', '==', data)
-            .where('tipo', '==', tipo || 'auto')
-            .where('data_envio', '==', hojeStr)
-            .get();
+        // Verifica duplicatas no log (APENAS para modo automático)
+        if (!clientesFiltrados) {
+            const jaCobradasSnap = await firebaseDb.collection('log_cobrancas')
+                .where('data_vencimento', '==', data)
+                .where('tipo', '==', tipo || 'auto')
+                .where('data_envio', '==', hojeStr)
+                .get();
 
-        const numerosJaCobrados = new Set();
-        jaCobradasSnap.docs.forEach(doc => {
-            const num = (doc.data().numero || '').replace('@c.us', '').replace(/\D/g, '').slice(-8);
-            if (num) numerosJaCobrados.add(num);
-        });
+            const numerosJaCobrados = new Set();
+            jaCobradasSnap.docs.forEach(doc => {
+                const num = (doc.data().numero || '').replace('@c.us', '').replace(/\D/g, '').slice(-8);
+                if (num) numerosJaCobrados.add(num);
+            });
+
+            // Filtra os já cobrados
+            clientes = clientes.filter(cliente => {
+                if (!cliente.telefone) return false;
+                let tel = cliente.telefone.replace(/\D/g, '');
+                if (tel.length > 11) tel = tel.slice(-11);
+                return !numerosJaCobrados.has(tel.slice(-8));
+            });
+        }
+
+        if (clientes.length === 0) {
+            console.log(`📭 Todos já foram cobrados hoje (dia ${data})`);
+            return 0;
+        }
 
         let enviadas = 0, falhas = 0;
 
@@ -95,7 +138,6 @@ if (historicoDoc.exists) {
             let tel = cliente.telefone.replace(/\D/g, '');
             if (tel.length < 10) { falhas++; continue; }
             if (tel.length > 11)  tel = tel.slice(-11);
-            if (numerosJaCobrados.has(tel.slice(-8))) { continue; }
             if (!tel.startsWith('55')) tel = '55' + tel;
 
             const nome = cliente.nome?.split(' ')[0] || '';
@@ -119,7 +161,7 @@ if (historicoDoc.exists) {
                         data_vencimento: data,
                         data_envio: hojeStr,
                         tipo: tipo || 'auto',
-                        origem: 'auto',
+                        origem: clientesFiltrados ? 'auto' : 'manual',
                         enviado_em: agoraISO,
                         status: 'enviado'
                     });
@@ -137,7 +179,7 @@ if (historicoDoc.exists) {
                     data_vencimento: data,
                     data_envio: hojeStr,
                     tipo: tipo || 'auto',
-                    origem: 'auto',
+                    origem: clientesFiltrados ? 'auto' : 'manual',
                     status: 'falha'
                 });
             }
