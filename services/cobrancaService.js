@@ -12,8 +12,9 @@ const { getCicloAtual }         = require('./statusService');
  * @param {string}   data               - Dia de vencimento ('10', '20', '30')
  * @param {string}   tipo               - Tipo da cobrança ('lembrete', 'atraso', etc.)
  * @param {Array}    clientesFiltrados  - Clientes já verificados pelo adminService
+ * @param {Array}    ADMINISTRADORES    - Lista de admins para receber relatório
  */
-async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clientesFiltrados = null) {
+async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clientesFiltrados = null, ADMINISTRADORES = []) {
     console.log(`📬 Iniciando disparo dia ${data}, tipo: ${tipo || 'auto'}`);
     console.log(`📬 clientesFiltrados recebido: ${clientesFiltrados ? clientesFiltrados.length : 'NENHUM'}`);
 
@@ -31,13 +32,11 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
             console.log(`📬 Modo: BUSCANDO DO BANCO (sem lista filtrada)`);
             const dataNum = parseInt(data);
 
-            // Consulta ambos os formatos (número e string)
             const [snapNum, snapStr] = await Promise.all([
                 firebaseDb.collection('clientes').where('dia_vencimento', '==', dataNum).get(),
                 firebaseDb.collection('clientes').where('dia_vencimento', '==', String(dataNum)).get(),
             ]);
 
-            // Deduplicar por doc ID
             const vistos = new Set();
             const docs = [...snapNum.docs, ...snapStr.docs].filter(d => {
                 if (vistos.has(d.id)) return false;
@@ -70,7 +69,6 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                     }
                 }
 
-                // Verifica carnê pendente
                 const carneSnap = await firebaseDb.collection('carne_solicitacoes')
                     .where('cliente_id', '==', doc.id)
                     .where('status', 'in', ['solicitado', 'impresso'])
@@ -80,7 +78,6 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                     continue;
                 }
 
-                // Normaliza telefone (array → string)
                 const tel = Array.isArray(cliente.telefones)
                     ? cliente.telefones[0]
                     : cliente.telefone;
@@ -104,7 +101,6 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
             const clientesValidos = [];
 
             for (const cliente of clientesFiltrados) {
-                // Normaliza telefone (array → string)
                 const tel = Array.isArray(cliente.telefones)
                     ? cliente.telefones[0]
                     : cliente.telefone;
@@ -163,6 +159,7 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
         }
 
         let enviadas = 0, falhas = 0;
+        const clientesFalha = [];
 
         for (const cliente of clientes) {
             console.log(`📤 Enviando para: ${cliente.nome} - ${cliente.telefone}`);
@@ -183,8 +180,8 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                 console.log(`   📞 Tentando: ${numero}`);
                 const resultado = await enviarMensagemSegura(client, numero + '@c.us', msgTexto);
                 if (resultado.sucesso) {
+                    cliente._enviado = true;
                     console.log(`   ✅ ENVIADO para ${numero}`);
-                    // Envia PIX separado após 1s
                     setTimeout(() => client.sendMessage(resultado.numero, msgPix).catch(() => {}), 1000);
 
                     await firebaseDb.collection('log_cobrancas').add({
@@ -207,6 +204,7 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
 
             if (!enviado) {
                 falhas++;
+                clientesFalha.push(cliente);
                 console.log(`   ❌❌ FALHA TOTAL para ${cliente.nome}`);
                 await firebaseDb.collection('log_cobrancas').add({
                     numero: tel + '@c.us',
@@ -223,6 +221,37 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
         }
 
         console.log(`✅ DISPARO CONCLUÍDO dia ${data} (${tipo}): ${enviadas} enviadas, ${falhas} falhas`);
+
+        // ── Relatório final para admins ──
+        if (ADMINISTRADORES.length > 0) {
+            const TIPO_LABEL = {
+                lembrete:          '📅 Lembrete (D-1)',
+                atraso:            '⚠️ Atraso (D+3)',
+                atraso_final:      '🔴 Atraso Final (D+5)',
+                reconquista:       '💙 Reconquista (D+7)',
+                reconquista_final: '💔 Última Chance (D+10)',
+            };
+
+            const falhasTexto = clientesFalha.length > 0
+                ? `\n\n⚠️ *Não entregues (${clientesFalha.length}):*\n` +
+                  clientesFalha.map((c, i) => `${i + 1}. ${c.nome} — ${c.telefone}`).join('\n')
+                : '';
+
+            const relatorio =
+                `📊 *COBRANÇA CONCLUÍDA*\n` +
+                `━━━━━━━━━━━━━━━━━━\n` +
+                `📅 Dia ${data} — ${TIPO_LABEL[tipo] || tipo || 'auto'}\n` +
+                `✅ Enviadas: ${enviadas}\n` +
+                `❌ Falhas: ${falhas}\n` +
+                `👥 Total: ${clientes.length}` +
+                falhasTexto +
+                (falhas === 0 ? `\n\n🎉 Todos cobrados com sucesso!` : '');
+
+            for (const adm of ADMINISTRADORES) {
+                await client.sendMessage(adm, relatorio).catch(() => {});
+            }
+        }
+
         return enviadas;
 
     } catch (error) {

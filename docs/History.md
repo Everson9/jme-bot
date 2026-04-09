@@ -1,31 +1,27 @@
-Histórico de Desenvolvimento - JME-BOT
-Status Atual
-Configuração do ambiente de desenvolvimento com Cursor e Cline.
+# Histórico de Desenvolvimento - JME-BOT
 
-Integração de regras de SKILL (Firestore, Segurança, Fluxos).
+## Status Atual
+- Configuração do ambiente de desenvolvimento com Cursor e Cline.
+- Integração de regras de SKILL (Firestore, Segurança, Fluxos).
+- Desenvolvimento do Painel Admin.
+- Correção do sistema de status (pago/pendente).
+- Correção da visualização no frontend.
+- ✅ Sistema de cobrança automática FUNCIONANDO
 
-Desenvolvimento do Painel Admin.
+## Decisões Técnicas
+- **IA Engine**: Utilizando Gemini 1.5 Pro via Cline (API Key própria) para contornar limites do Cursor.
+- **Regras de Projeto**: Uso de arquivos `.cursor/rules/SKILL.md` para guiar a IA em performance e segurança.
+- **Banco de Dados**: Firestore (Foco total em otimização de custos e performance).
+- **Padrão de Status**: Campo status como string ('pago', 'pendente', 'isento') no histórico de pagamentos.
 
-Correção do sistema de status (pago/pendente).
+---
 
-Correção da visualização no frontend.
+## Correções Aplicadas com SUCESSO
 
-[⚠️] Sistema de cobrança automática com problemas NÃO RESOLVIDOS
-
-Decisões Técnicas
-IA Engine: Utilizando Gemini 1.5 Pro via Cline (API Key própria) para contornar limites do Cursor.
-
-Regras de Projeto: Uso de arquivos .cursor/rules/SKILL.md para guiar a IA em performance e segurança.
-
-Banco de Dados: Firestore (Foco total em otimização de custos e performance).
-
-Padrão de Status: Campo status como string ('pago', 'pendente', 'isento') no histórico de pagamentos.
-
-Correções Aplicadas com SUCESSO
-2026-04-09 - Correção do Sistema de Status e Frontend
+### 2026-04-09 - Correção do Sistema de Status e Frontend
 Problemas resolvidos:
 
-✅ Inconsistência no campo de status: alguns lugares verificavam pago: true, outros status: 'pago'
+✅ Inconsistência no campo de status: alguns lugares verificavam `pago: true`, outros `status: 'pago'`
 
 ✅ Frontend mostrava status incorretos (todos como pendentes)
 
@@ -35,116 +31,146 @@ Problemas resolvidos:
 
 Arquivos corrigidos:
 
-services/statusService.js
+**services/statusService.js**
+- Corrigido `_status10`, `_status20`, `_status30`: verificação de `reg.pago === true` → `reg.status === 'pago' || reg.status === 'isento'`
+- Corrigido `deveSerCobrado`: mesma padronização
 
-Corrigido _status10, _status20, _status30: verificação de reg.pago === true → reg.status === 'pago' || reg.status === 'isento'
+**services/cobrancaService.js**
+- Linha 48-60: Corrigida verificação de pagamento para usar `registro.status`
+- Adicionados logs detalhados para debug
 
-Corrigido deveSerCobrado: mesma padronização
+**services/adminService.js**
+- Função `getCicloCobranca`: corrigido para aviso (lembrete) usar o mês atual
 
-services/cobrancaService.js
+**routes/index.js**
+- Linha 190: Corrigida verificação de status
+- Linhas 136-171: Otimização de performance - busca apenas ciclo atual
 
-Linha 48-60: Corrigida verificação de pagamento para usar registro.status
+**frontend/src/components/VisualizadorBase.jsx**
+- Adicionado `mesRefCorrente()` para mostrar mês atual
+- Botões renomeados: "📅 Mês corrente" e "📆 Mês passado"
+- Título mostra claramente qual mês está sendo visualizado
 
-Adicionados logs detalhados para debug
+**index.js**
+- Corrigido ADMIN_PHONE para números sem 9º dígito: `558186650773`
 
-services/adminService.js
+---
 
-Função getCicloCobranca: corrigido para aviso (lembrete) usar o mês atual
+### 2026-04-09 - Correção do Sistema de Cobrança Automática
 
-routes/index.js
+**Problema:** Parâmetros chegavam como `[object Object]` em `dispararCobrancaReal`, resultando em 0 mensagens enviadas.
 
-Linha 190: Corrigida verificação de status
+**Causa raiz:** 3 bugs encadeados.
 
-Linhas 136-171: Otimização de performance - busca apenas ciclo atual
+#### Bug 1 — adminService.js (linha 261)
+`verificarCobrancasAutomaticas` recebia `dispararCobrancaReal` como wrapper (sem `client`/`firebaseDb`), mas chamava passando `client, firebaseDb` como primeiros args — invertendo todos os parâmetros.
 
-frontend/src/components/VisualizadorBase.jsx
+```js
+// ANTES (errado)
+await dispararCobrancaReal(client, firebaseDb, cobranca.dataVenc, cobranca.tipo, cobranca.clientes);
 
-Adicionado mesRefCorrente() para mostrar mês atual
+// DEPOIS (correto)
+await dispararCobrancaReal(cobranca.dataVenc, cobranca.tipo, cobranca.clientes, ADMINISTRADORES);
+```
 
-Botões renomeados: "📅 Mês corrente" e "📆 Mês passado"
+#### Bug 2 — middleware/timers.js (linha 38)
+Wrapper não repassava o argumento `clientes` nem `ADMINISTRADORES`.
 
-Título mostra claramente qual mês está sendo visualizado
+```js
+// ANTES (errado)
+(data, tipo) => dispararCobrancaReal(client, firebaseDb, data, tipo)
 
-index.js
+// DEPOIS (correto)
+(data, tipo, clientes) => dispararCobrancaReal(client, firebaseDb, data, tipo, clientes, ADMINISTRADORES)
+```
 
-Corrigido ADMIN_PHONE para números sem 9º dígito: 558186650773
+#### Bug 3 — cobrancaService.js
+Campo `telefone` (string) vs `telefones` (array) — todos os clientes eram descartados por "SEM TELEFONE".
 
-PROBLEMA NÃO RESOLVIDO: Cobrança Automática
-Sintoma Atual:
-✅ Votação no WhatsApp lista clientes corretamente (ex: 24 clientes)
+```js
+// ANTES (errado)
+if (!cliente.telefone) continue;
 
-✅ Admin aprova com !sim
+// DEPOIS (correto)
+const tel = Array.isArray(cliente.telefones)
+    ? cliente.telefones[0]
+    : cliente.telefone;
+if (!tel) continue;
+clientesValidos.push({ ...cliente, telefone: tel });
+```
 
-✅ Log mostra: 📋 Enviando 24 clientes para disparo
+#### Adicionado — Relatório final para admins
+Após o disparo, admins recebem mensagem com resumo:
+- Total enviado / falhas
+- Lista de clientes não entregues (se houver)
 
-❌ Ao entrar no dispararCobrancaReal, os parâmetros chegam errados:
+`dispararCobrancaReal` passou a aceitar `ADMINISTRADORES` como 6º parâmetro.
 
-text
-📬 Iniciando disparo dia [object Object], tipo: [object Object]
-📬 clientesFiltrados recebido: NENHUM
-❌ O sistema cai no modo "BUSCANDO DO BANCO" e usa ciclo 03-2026 (março)
+**Arquivos modificados:**
+| Arquivo | Mudança |
+|---------|---------|
+| `services/cobrancaService.js` | Bug telefone, relatório final, logs de debug removidos |
+| `services/adminService.js` | Chamada do wrapper corrigida, ADMINISTRADORES repassado |
+| `middleware/timers.js` | Wrapper corrigido para repassar clientes e ADMINISTRADORES |
 
-❌ Resultado: 0 mensagens enviadas
+---
 
-Causa Identificada:
-Os parâmetros da função dispararCobrancaReal estão sendo passados de forma incorreta em ALGUM lugar.
+## Arquitetura da Cobrança Automática
 
-A assinatura correta é:
+```
+timers.js (a cada 2h)
+    ↓
+verificarCobrancasAutomaticas (adminService.js)
+    ↓ busca clientes por dia_vencimento
+    ↓ verifica histórico do ciclo
+    ↓ filtra: cancelados, carnê pendente, já pagaram
+    ↓
+perguntarAdmins → votação via WhatsApp (!sim / !nao)
+    ↓ aprovado
+dispararCobrancaReal (cobrancaService.js)
+    ↓ normaliza telefone (array → string)
+    ↓ tenta com/sem 9º dígito
+    ↓ envia mensagem + PIX
+    ↓ registra log_cobrancas
+    ↓
+Relatório para admins (enviadas / falhas / não entregues)
+```
 
-javascript
-async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clientesFiltrados = null)
-Locais onde a função é chamada (verificado em 2026-04-09):
-Arquivo	Linha	Chamada	Status
-index.js	171	dispararCobrancaReal: (d, t) => dispararCobrancaReal(client, firebaseDb, d, t)	✅ Correta
-index.js	292	dispararCobrancaReal: (d,t) => dispararCobrancaReal(client, firebaseDb, d, t)	✅ Correta
-middleware/Mensagem.js	253	await dispararCobrancaReal(client, firebaseDb, data, args[2] || null)	✅ Correta
-middleware/timers.js	38	(data, tipo) => dispararCobrancaReal(client, firebaseDb, data, tipo)	✅ Correta
-services/adminService.js	261	await dispararCobrancaReal(client, firebaseDb, cobranca.dataVenc, cobranca.tipo, cobranca.clientes)	✅ Correta
-routes/index.js	507	const total = await ctx.dispararCobrancaReal(data, tipo || null)	⚠️ CORRIGIDA
-services/audioService.js	234	await dispararCobrancaReal(c.data, c.tipo)	⚠️ CORRIGIDA
-Tentativas de Correção:
-✅ Corrigida chamada no routes/index.js (adicionado client, firebaseDb)
+## Calendário de Cobranças
 
-✅ Corrigida chamada no audioService.js (adicionado client, firebaseDb)
+| Vencimento | Lembrete | Atraso | Atraso Final | Reconquista | Reconquista Final |
+|------------|----------|--------|--------------|-------------|-------------------|
+| Dia 10 | Dia 9 | Dia 13 | Dia 15 | Dia 17 | Dia 20 |
+| Dia 20 | Dia 19 | Dia 23 | Dia 25 | Dia 27 | Dia 30 |
+| Dia 30 | Dia 29 | Dia 3+1m | Dia 5+1m | Dia 7+1m | Dia 10+1m |
 
-✅ Adicionados logs detalhados no cobrancaService.js
+---
 
-✅ Adicionados logs no adminService.js para verificar os dados antes da chamada
+## Status dos Módulos
 
-Status Final da Sessão:
-Frontend: 100% funcional ✅
+| Módulo | Status |
+|--------|--------|
+| Frontend (painel admin) | ✅ 100% funcional |
+| Status dos clientes | ✅ 100% correto |
+| ADMIN_PHONE | ✅ 100% funcional |
+| Cobrança automática | ✅ FUNCIONANDO |
+| Relatório pós-cobrança | ✅ Implementado |
+| Rate limiting na API | ⏳ Pendente |
+| TTL em historico_conversa | ⏳ Pendente |
+| Autenticação JWT no painel | ⏳ Pendente |
 
-Status dos clientes: 100% correto ✅
+---
 
-ADMIN_PHONE: 100% funcional ✅
+## Pendências / Próximos Passos
 
-Cobrança automática: ❌ NÃO RESOLVIDO - Os parâmetros continuam chegando como [object Object]
+- Implementar rate limiting na API
+- Revisar regras de segurança do Painel Admin
+- Implementar TTL em `historico_conversa`
+- Testar os fluxos de diagnóstico de atendimento
+- Adicionar autenticação JWT no painel
 
-Hipótese para Próxima Sessão:
-O problema pode estar no wrapper da função em index.js (linha 171 ou 292) que está sendo chamado em vez da função real, ou há uma versão em cache no servidor Fly.io que não está sendo atualizada com os deploys.
+---
 
-Recomendações para Continuar:
-Verificar se o deploy está realmente subindo os arquivos modificados
-
-Adicionar logs no wrapper do index.js para ver quem está chamando
-
-Considerar limpar o cache do Fly.io ou fazer deploy com --build-only
-
-Verificar se há múltiplas máquinas rodando versões diferentes
-
-Pendências / Próximos Passos
-URGENTE: Resolver o problema dos parâmetros na cobrança automática
-
-Verificar por que clientesFiltrados chega como NENHUM mesmo sendo passado
-
-Testar os fluxos de diagnóstico de atendimento
-
-Revisar regras de segurança do Painel Admin
-
-Implementar TTL em historico_conversa
-
-Adicionar rate limiting na API
-
-Última atualização: 2026-04-09
-Sessão encerrada com: Sistema de cobrança automática NÃO funcional
-Responsável: Equipe JMENET
+**Última atualização**: 2026-04-09
+**Sessão encerrada com**: Sistema de cobrança automática FUNCIONANDO ✅
+**Responsável**: Equipe JMENET

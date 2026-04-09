@@ -54,6 +54,46 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
     return `${mm}-${yy}`;
   };
 
+  // Função para calcular status histórico (como estava no último dia do mês)
+  const calcularStatusHistorico = (cliente, mesRef) => {
+    if (cliente.status === 'cancelado') return 'cancelado';
+    if (cliente.status === 'promessa') return 'promessa';
+    
+    const [mes, ano] = mesRef.split('-').map(Number);
+    const ultimoDia = new Date(ano, mes, 0).getDate();
+    
+    const diaVenc = parseInt(cliente.dia_vencimento) || 10;
+    const reg = cliente._historico?.[mesRef] || null;
+    
+    // Se já estava pago na época
+    if (reg && (reg.status === 'pago' || reg.status === 'isento')) {
+      return 'pago';
+    }
+    
+    // Calcula se estava inadimplente na época
+    const vencEfetivo = Math.min(diaVenc, ultimoDia);
+    
+    // Verifica se já tinha passado da tolerância no último dia do mês
+    let diasTolerancia;
+    if (diaVenc === 10) diasTolerancia = 15;
+    else if (diaVenc === 20) diasTolerancia = 25;
+    else diasTolerancia = 5;
+    
+    // Para data 30, a tolerância é no mês seguinte
+    if (diaVenc === 30) {
+      // No mês de referência (ex: março), ainda não passou da tolerância
+      // A tolerância só vence dia 5 do mês seguinte
+      return 'pendente';
+    }
+    
+    // Para data 10 e 20: se o último dia do mês já passou da tolerância
+    if (ultimoDia > diasTolerancia) {
+      return 'inadimplente';
+    }
+    
+    return 'pendente';
+  };
+
   const carregar = useCallback(async (silencioso = false) => {
     if (!base?.id) return;
     if (!silencioso) setLoading(true);
@@ -76,11 +116,8 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
 
   useEffect(() => {
     carregar();
-    // Sem polling automático — evita leituras desnecessárias no Firebase
-    // O botão ↻ permite atualizar manualmente quando precisar
   }, [carregar]);
 
-  // Busca mês de referência para exibir no painel
   useEffect(() => {
     fetch(API + "/api/ciclo-info", { headers: authHeaders() })
       .then(r => r.json())
@@ -88,7 +125,6 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
       .catch(() => {});
   }, []);
 
-  // Resetar página quando filtros mudarem
   useEffect(() => {
     setPagina(1);
   }, [diaAtivo, filtro, busca]);
@@ -145,7 +181,6 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
 
   const onSalvo = (clienteAtualizado) => {
     if (clienteAtualizado.status === 'cancelado') {
-      // Remove da lista imediatamente
       setClientes(prev => prev.filter(c => c.id !== clienteAtualizado.id));
       setModalCliente(null);
     } else {
@@ -195,6 +230,48 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
     });
     alert(`✅ ${filtrados.length} nome(s) copiado(s)!`);
   };
+
+  // Processa os clientes para calcular o status correto baseado no modo
+  const clientesProcessados = clientes.map(c => {
+    const mesRef = modoMes === "corrente" ? mesRefCorrente() : mesRefAnterior();
+    
+    let statusCalculado;
+    if (modoMes === "passado") {
+      // No modo passado, usa o cálculo histórico
+      statusCalculado = calcularStatusHistorico(c, mesRef);
+    } else {
+      // No modo corrente, usa o status que veio da API
+      statusCalculado = c.status_calculado || c.status;
+    }
+    
+    return {
+      ...c,
+      status_calculado: statusCalculado,
+      mes_referencia: mesRef.replace('-', '/')
+    };
+  });
+
+  // Atualiza os arrays filtrados com os status processados
+  const clientesDiaProcessados = clientesProcessados.filter(c => parseInt(c.dia_vencimento) === diaAtivo);
+  const filtradosProcessados = clientesDiaProcessados.filter(c => {
+    if (filtro !== "todos") {
+      const statusParaComparar = c.status_calculado;
+      if (filtro === 'pendente') {
+        if (statusParaComparar !== 'pendente' && statusParaComparar !== 'em_dia') return false;
+      } else {
+        if (statusParaComparar !== filtro) return false;
+      }
+    }
+    const b = busca.toLowerCase();
+    return !b || 
+      (c.nome || "").toLowerCase().includes(b) || 
+      (c.telefone || "").includes(b) || 
+      (c.cpf || "").includes(b) || 
+      (c.endereco || "").toLowerCase().includes(b);
+  });
+
+  const clientesPaginaProcessados = filtradosProcessados.slice(inicio, fim);
+  const sProcessado = stats(clientesDiaProcessados);
 
   return (
     <div className="page">
@@ -251,6 +328,11 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
                 ? mesRefCorrente().replace("-", "/") 
                 : mesRefAnterior().replace("-", "/")}
             </strong>
+            {modoMes === "passado" && (
+              <span style={{ fontSize: 10, color: '#475569', marginLeft: 8 }}>
+                (status da época)
+              </span>
+            )}
           </span>
         </div>
 
@@ -292,11 +374,8 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
       {base?.dias?.length > 0 && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
           {base.dias.sort((a, b) => a - b).map(d => {
-            const arr = clientes.filter(c => parseInt(c.dia_vencimento) === d);
-            const pg = arr.filter(c => {
-              const status = c.status_calculado || c.status;
-              return status === "pago";
-            }).length;
+            const arr = clientesProcessados.filter(c => parseInt(c.dia_vencimento) === d);
+            const pg = arr.filter(c => c.status_calculado === "pago").length;
             return (
               <button
                 key={d}
@@ -323,32 +402,32 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
       {/* KPIs do dia */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 20 }}>
         <div style={{ background: '#1a1d2e', borderRadius: 8, padding: '12px', textAlign: 'center' }}>
-          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#22c55e', display: 'block' }}>{s.pagos}</span>
+          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#22c55e', display: 'block' }}>{sProcessado.pagos}</span>
           <span style={{ fontSize: 11, color: '#64748b' }}>✅ Pagos</span>
         </div>
         <div style={{ background: '#1a1d2e', borderRadius: 8, padding: '12px', textAlign: 'center' }}>
-          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#f59e0b', display: 'block' }}>{s.pend}</span>
+          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#f59e0b', display: 'block' }}>{sProcessado.pend}</span>
           <span style={{ fontSize: 11, color: '#64748b' }}>⏳ Pendentes</span>
         </div>
         <div style={{ background: '#1a1d2e', borderRadius: 8, padding: '12px', textAlign: 'center' }}>
-          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#ef4444', display: 'block' }}>{s.inad}</span>
+          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#ef4444', display: 'block' }}>{sProcessado.inad}</span>
           <span style={{ fontSize: 11, color: '#64748b' }}>🔴 Inadimplentes</span>
         </div>
         <div style={{ background: '#1a1d2e', borderRadius: 8, padding: '12px', textAlign: 'center' }}>
-          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#a78bfa', display: 'block' }}>{s.prom}</span>
+          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#a78bfa', display: 'block' }}>{sProcessado.prom}</span>
           <span style={{ fontSize: 11, color: '#64748b' }}>🤝 Promessas</span>
         </div>
         <div style={{ background: '#1a1d2e', borderRadius: 8, padding: '12px', textAlign: 'center' }}>
-          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#e2e8f0', display: 'block' }}>{s.total}</span>
+          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#e2e8f0', display: 'block' }}>{sProcessado.total}</span>
           <span style={{ fontSize: 11, color: '#64748b' }}>Total dia {diaAtivo}</span>
         </div>
         <div style={{ background: '#1a1d2e', borderRadius: 8, padding: '12px', textAlign: 'center' }}>
-          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: s.pct >= 80 ? '#22c55e' : s.pct >= 50 ? '#f59e0b' : '#ef4444', display: 'block' }}>{s.pct}%</span>
+          <span style={{ fontSize: '1.5rem', fontWeight: 800, color: sProcessado.pct >= 80 ? '#22c55e' : sProcessado.pct >= 50 ? '#f59e0b' : '#ef4444', display: 'block' }}>{sProcessado.pct}%</span>
           <span style={{ fontSize: 11, color: '#64748b' }}>Recebido</span>
         </div>
       </div>
 
-      {/* Resto do componente */}
+      {/* Tabela de clientes */}
       <Card style={{ background: '#0f1117', borderRadius: 12, overflow: 'hidden' }}>
         <div style={{ padding: '16px', borderBottom: '1px solid #2d3148' }}>
           <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -390,10 +469,10 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
             <span style={{ fontSize: 13, color: '#94a3b8' }}>
-              {filtrados.length === 0 ? '0 clientes' : `${inicio + 1}-${Math.min(fim, filtrados.length)} de ${filtrados.length}`}
+              {filtradosProcessados.length === 0 ? '0 clientes' : `${inicio + 1}-${Math.min(fim, filtradosProcessados.length)} de ${filtradosProcessados.length}`}
             </span>
             <div style={{ display: 'flex', gap: 8 }}>
-              {filtrados.length > 0 && (
+              {filtradosProcessados.length > 0 && (
                 <button onClick={copiarNomes} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid rgba(148,163,184,0.25)", background: "rgba(148,163,184,0.08)", color: "#94a3b8", fontSize: 12, cursor: "pointer" }}>
                   📋 Copiar nomes
                 </button>
@@ -407,7 +486,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
 
         {loading ? (
           <Spinner />
-        ) : filtrados.length === 0 ? (
+        ) : filtradosProcessados.length === 0 ? (
           <div style={{ padding: '3rem', textAlign: 'center', color: '#64748b' }}>Nenhum cliente</div>
         ) : (
           <>
@@ -424,7 +503,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
                    </tr>
                 </thead>
                 <tbody>
-                  {clientesPagina.map(c => (
+                  {clientesPaginaProcessados.map(c => (
                     <tr key={c.id} onClick={() => setModalCliente(c)} style={{ cursor: "pointer", borderBottom: '1px solid #1a1d2e' }}>
                       <td style={{ padding: '12px', fontWeight: 600 }}>{c.nome}</td>
                       <td style={{ padding: '12px', fontFamily: 'monospace', fontSize: 12, color: '#94a3b8' }}>{c.telefone || "—"}</td>
@@ -432,7 +511,7 @@ export const VisualizadorBase = ({ base, onVoltar }) => {
                       <td style={{ padding: '12px' }}>{c.plano || "—"}</td>
                       <td style={{ padding: '12px' }}>{c.comodato ? '✅ Sim' : '❌ Não'}</td>
                       <td style={{ padding: '12px', whiteSpace: 'nowrap' }}>
-                        <BadgeCliente status={c.status_calculado || c.status} />
+                        <BadgeCliente status={c.status_calculado} />
                         {c.mes_referencia && (
                           <span style={{ fontSize: 9, color: '#475569', marginLeft: 6 }}>
                             {c.mes_referencia}
