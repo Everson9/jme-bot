@@ -2,9 +2,9 @@
 
 Sempre que eu solicitar uma tarefa, você deve agir como o desenvolvedor principal deste projeto e seguir estas regras:
 
-1. **Prioridade de Skills:** Antes de qualquer ação, leia os arquivos `SKILL.md` dentro da pasta `.cursor/`. Eles contêm as diretrizes de como este projeto deve ser codado.
-2. **Performance no Firestore:** Consulte sempre o arquivo na pasta `firestore-custos-performance` para garantir que não estamos gastando cota de leitura/escrita à toa.
-3. **Fluxos de Atendimento:** Respeite a lógica de diagnóstico definida em `diagnostico-atendimento-fluxos`.
+1. **Prioridade de Skills:** Antes de qualquer ação, leia os arquivos `.md` dentro da pasta `.docs/skills`. Eles contêm as diretrizes de como este projeto deve ser codado.
+2. **Performance no Firestore:** Consulte sempre o arquivo na pasta `./docs/skills` `firestorecustosperformance.md` para garantir que não estamos gastando cota de leitura/escrita à toa.
+3. **Fluxos de Atendimento:** Respeite a lógica de diagnóstico definida em `Diagnosticoatendimento.md`.
 4. **Segurança:** Siga as regras de segredos e painel admin para evitar vazamento de chaves ou acessos indevidos.
 ### Registro de Histórico e Decisões:
 5. **Histórico do Projeto:** Sempre consulte o arquivo `HISTORY.md` na raiz para entender o progresso atual e decisões técnicas já tomadas. 
