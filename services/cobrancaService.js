@@ -69,17 +69,23 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
         } else {
             // Se recebeu lista filtrada, aplica apenas verificações essenciais
             console.log(`📋 Recebidos ${clientesFiltrados.length} clientes para filtrar`);
+            console.log(`📋 NOMES: ${clientesFiltrados.map(c => c.nome).join(', ')}`);
+            
             const clientesValidos = [];
             
             for (const cliente of clientesFiltrados) {
+                console.log(`   🔍 Verificando: ${cliente.nome}`);
+                
                 // Verifica se tem telefone
                 if (!cliente.telefone) {
                     console.log(`   ⚠️ ${cliente.nome} - sem telefone`);
                     continue;
                 }
+                console.log(`   📞 Telefone OK: ${cliente.telefone}`);
                 
                 // Verifica carnê (se tiver ID)
                 if (cliente.id) {
+                    console.log(`   🔍 Verificando carnê para ID: ${cliente.id}`);
                     const carneSnap = await firebaseDb.collection('carne_solicitacoes')
                         .where('cliente_id', '==', cliente.id)
                         .where('status', 'in', ['solicitado', 'impresso'])
@@ -88,13 +94,16 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                         console.log(`   📋 ${cliente.nome} - tem carnê pendente`);
                         continue;
                     }
+                    console.log(`   ✅ Sem carnê pendente`);
                 }
                 
+                console.log(`   ✅ ${cliente.nome} - VÁLIDO`);
                 clientesValidos.push(cliente);
             }
             
             clientes = clientesValidos;
             console.log(`✅ ${clientes.length} clientes válidos após filtros`);
+            console.log(`✅ NOMES VÁLIDOS: ${clientes.map(c => c.nome).join(', ')}`);
         }
 
         if (clientes.length === 0) {
