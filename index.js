@@ -61,18 +61,18 @@ const ADMINISTRADORES = parseNumbers('ADMIN_PHONE', '');
 console.log('🔍 ADMIN_PHONE raw:', process.env.ADMIN_PHONE);
 console.log('🔍 ADMINISTRADORES parsed:', ADMINISTRADORES);
 
-const FUNCIONARIOS    = parseNumbers('FUNCIONARIO_PHONE', '558185937690,558198594699,558184597727,558184065116');
+const FUNCIONARIOS = parseNumbers('FUNCIONARIO_PHONE', '558185937690,558198594699,558184597727,558184065116');
 
-let botAtivo            = true;
-let situacaoRede        = 'normal';
-let previsaoRetorno     = 'sem previsão';
-let motivoRede          = '';
+let botAtivo             = true;
+let situacaoRede         = 'normal';
+let previsaoRetorno      = 'sem previsão';
+let motivoRede           = '';
 let horarioFuncionamento = { inicio: 8, fim: 20, ativo: true };
-let horarioCobranca     = { inicio: 8, fim: 17 };
-let botIniciadoEm       = null;
-let ultimoQR            = null;
+let horarioCobranca      = { inicio: 8, fim: 17 };
+let botIniciadoEm        = null;
+let ultimoQR             = null;
 
-const state   = new StateManager(null);
+const state = new StateManager(null);
 let _fluxoSuporte, _fluxoFinanceiro, _fluxoPromessa, _fluxoNovoCliente, _fluxoCancelamento;
 
 // =====================================================
@@ -118,15 +118,14 @@ const client = new Client({
     authStrategy: new LocalAuth({ dataPath: path.join(DATA_PATH, '.wwebjs_auth') }),
     puppeteer: {
         headless: true,
-        protocolTimeout: 120000, // ← 2 minutos (padrão é 30s, pouco pra servers lentos)
+        protocolTimeout: 120000,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',  // ← evita crash por falta de memória compartilhada
+            '--disable-dev-shm-usage',
             '--disable-gpu',
             '--no-first-run',
             '--no-zygote',
-            '--single-process',         // ← reduz uso de memória
         ]
     }
 });
@@ -180,7 +179,7 @@ const ctxRotas = {
     get previsaoRetorno() { return previsaoRetorno; }, set previsaoRetorno(v) { previsaoRetorno = v; },
     get motivoRede() { return motivoRede; }, set motivoRede(v) { motivoRede = v; },
     horarioFuncionamento, horarioCobranca,
-    dispararCobrancaReal: (d, t) => dispararCobrancaReal(client, firebaseDb, d, t),
+    dispararCobrancaReal: (d, t) => dispararCobrancaReal(client, firebaseDb, d, t, null, ADMINISTRADORES),
     verificarCobrancasAutomaticas, sseService,
     obterAgendaDia: (d, m, a) => agendamentosDb.obterAgendaDia?.(d, m, a) ?? [],
     executarMigracao: () => ({}),
@@ -234,7 +233,7 @@ const comprovante = setupComprovante(
 // =====================================================
 // INICIALIZAÇÃO DOS FLUXOS
 // =====================================================
-let handlersProntos = false;  // evita iniciar fluxos antes dos handlers
+let handlersProntos = false;
 
 function inicializarFluxos() {
     handlersProntos = true;
@@ -293,28 +292,28 @@ function inicializarFluxos() {
 // =====================================================
 // HANDLERS DE MENSAGEM
 // =====================================================
- configurarMensagens(client, {
+configurarMensagens(client, {
     state, banco, sseService, ADMINISTRADORES, FUNCIONARIOS, P,
-    get situacaoRede()   { return situacaoRede; },
+    get situacaoRede()    { return situacaoRede; },
     get previsaoRetorno() { return previsaoRetorno; },
-    get motivoRede()     { return motivoRede; },
-    get botIniciadoEm()  { return botIniciadoEm; },
-    get botAtivo()       { return botAtivo; },
+    get motivoRede()      { return motivoRede; },
+    get botIniciadoEm()   { return botIniciadoEm; },
+    get botAtivo()        { return botAtivo; },
     firebaseDb,
-    dispararCobrancaReal: (d,t) => dispararCobrancaReal(client, firebaseDb, d, t),
+    dispararCobrancaReal: (d, t) => dispararCobrancaReal(client, firebaseDb, d, t, null, ADMINISTRADORES),
     groqChatFallback,
-    redeNormal:   () => redeNormal(situacaoRede),
+    redeNormal:         () => redeNormal(situacaoRede),
     falarSinalAmigavel: () => falarSinalAmigavel(situacaoRede, previsaoRetorno, motivoRede),
 }, {
     processarMidiaAutomatico: comprovante.processarMidiaAutomatico,
-    detectarAcaoAdmin:       comprovante.detectarAcaoAdmin,
-    consultarSituacao:       comprovante.consultarSituacao,
-    abrirChamadoComMotivo:   comprovante.abrirChamadoComMotivo,
-    get _fluxoSuporte()     { return _fluxoSuporte; },
-    get _fluxoFinanceiro()  { return _fluxoFinanceiro; },
-    get _fluxoPromessa()    { return _fluxoPromessa; },
-    get _fluxoNovoCliente() { return _fluxoNovoCliente; },
-    get _fluxoCancelamento(){ return _fluxoCancelamento; },
+    detectarAcaoAdmin:        comprovante.detectarAcaoAdmin,
+    consultarSituacao:        comprovante.consultarSituacao,
+    abrirChamadoComMotivo:    comprovante.abrirChamadoComMotivo,
+    get _fluxoSuporte()      { return _fluxoSuporte; },
+    get _fluxoFinanceiro()   { return _fluxoFinanceiro; },
+    get _fluxoPromessa()     { return _fluxoPromessa; },
+    get _fluxoNovoCliente()  { return _fluxoNovoCliente; },
+    get _fluxoCancelamento() { return _fluxoCancelamento; },
 });
 
 // =====================================================
@@ -323,7 +322,7 @@ function inicializarFluxos() {
 function inicializarTimers() {
     iniciarTimers(client, firebaseDb, ADMINISTRADORES, {
         dispararCobrancaReal, verificarCobrancasAutomaticas,
-        get situacaoRede() { return situacaoRede; },
+        get situacaoRede()    { return situacaoRede; },
         get previsaoRetorno() { return previsaoRetorno; },
         redeNormal: () => redeNormal(situacaoRede),
         state, banco, sseService,
@@ -338,24 +337,6 @@ client.on('ready', async () => {
     inicializarTimers();
     botIniciadoEm = Date.now();
 
-    // Restaura configs do Firebase
-
-    client.on('ready', async () => {
-    // ... código existente ...
-    
-    // 🧪 TESTE: Enviar mensagem para o segundo número
-    setTimeout(async () => {
-        try {
-            const numeroTeste = '5581986650773@c.us';
-            console.log(`🧪 Tentando enviar teste para: ${numeroTeste}`);
-            await client.sendMessage(numeroTeste, '🧪 Mensagem de teste do JME-BOT');
-            console.log(`✅ Teste enviado com sucesso!`);
-        } catch (err) {
-            console.error(`❌ Erro no teste:`, err.message);
-        }
-    }, 10000); // Espera 10 segundos após o bot ficar pronto
-});
-
     try {
         const [cfgBot, cfgRede, cfgPrevisao, cfgHorario, cfgCobranca] = await Promise.all([
             firebaseDb.collection('config').doc('bot_ativo').get(),
@@ -364,11 +345,11 @@ client.on('ready', async () => {
             firebaseDb.collection('config').doc('horario_atendente').get(),
             firebaseDb.collection('config').doc('horario_cobranca').get(),
         ]);
-        if (cfgBot.exists)      botAtivo            = cfgBot.data().valor ?? true;
-        if (cfgRede.exists)     situacaoRede        = cfgRede.data().valor ?? 'normal';
-        if (cfgPrevisao.exists) previsaoRetorno     = cfgPrevisao.data().valor ?? 'sem previsão';
+        if (cfgBot.exists)      botAtivo        = cfgBot.data().valor ?? true;
+        if (cfgRede.exists)     situacaoRede    = cfgRede.data().valor ?? 'normal';
+        if (cfgPrevisao.exists) previsaoRetorno = cfgPrevisao.data().valor ?? 'sem previsão';
         const cfgMotivo = await firebaseDb.collection('config').doc('motivo_rede').get();
-        if (cfgMotivo.exists)   motivoRede          = cfgMotivo.data().valor ?? '';
+        if (cfgMotivo.exists)   motivoRede      = cfgMotivo.data().valor ?? '';
         if (cfgHorario.exists)  Object.assign(horarioFuncionamento, cfgHorario.data());
         if (cfgCobranca.exists) Object.assign(horarioCobranca, cfgCobranca.data());
         console.log(`⚙️  Config restaurada: bot=${botAtivo ? 'ON' : 'OFF'} | rede=${situacaoRede}`);
@@ -392,7 +373,21 @@ client.on('ready', async () => {
     console.log(`🔥 Banco de dados: Firebase Firestore`);
 });
 
-client.initialize();
+// =====================================================
+// INICIALIZAÇÃO DO WHATSAPP (com retry automático)
+// =====================================================
+async function inicializarWhatsApp(tentativa = 1) {
+    try {
+        await client.initialize();
+    } catch (err) {
+        console.error(`❌ Erro ao inicializar WhatsApp (tentativa ${tentativa}):`, err.message);
+        const delay = Math.min(tentativa * 30000, 300000); // 30s, 60s, 90s... máx 5min
+        console.log(`🔄 Tentando novamente em ${delay / 1000}s...`);
+        setTimeout(() => inicializarWhatsApp(tentativa + 1), delay);
+    }
+}
+
+inicializarWhatsApp();
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`🌐 Painel rodando em http://localhost:${PORT}`));
