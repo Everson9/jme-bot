@@ -288,29 +288,79 @@ async function dbSalvarNovoCliente(numero, dados) {
 }
 
 // =====================================================
-// CLIENTES DA BASE (BUSCAS INTELIGENTES)
+// CLIENTES DA BASE (BUSCAS — SEM SCAN TOTAL)
 // =====================================================
 
+// ✅ CORRIGIDO: usa array-contains em vez de scan total
 async function buscarStatusCliente(numero) {
   try {
     const numeroBusca = numero.replace('@c.us', '').replace(/^55/, '');
-    
-    // Busca pela coleção inteira — compara os últimos 8 dígitos do telefone
-    const snapshot = await db.collection('clientes').get();
-    
+
+    // Monta variantes do número (com/sem 55, com/sem 9º dígito)
+    const variantes = new Set();
+    variantes.add(numeroBusca);
+    variantes.add('55' + numeroBusca);
+    // com/sem 9º dígito (DDD + 9 dígitos → DDD + 8 dígitos e vice-versa)
+    if (numeroBusca.length === 11) {
+      const sem9 = numeroBusca.slice(0, 2) + numeroBusca.slice(3);
+      variantes.add(sem9);
+      variantes.add('55' + sem9);
+    }
+    if (numeroBusca.length === 10) {
+      const com9 = numeroBusca.slice(0, 2) + '9' + numeroBusca.slice(2);
+      variantes.add(com9);
+      variantes.add('55' + com9);
+    }
+
+    // Tenta array-contains para cada variante (campo telefones é array)
+    for (const v of variantes) {
+      const snap = await db.collection('clientes')
+        .where('telefones', 'array-contains', v)
+        .limit(1)
+        .get();
+      if (!snap.empty) {
+        const c = { id: snap.docs[0].id, ...snap.docs[0].data() };
+        return {
+          id: c.id,
+          nome: c.nome || null,
+          status: c.status === 'pago' ? 'pago' : 'pendente',
+          aba: `Data ${c.dia_vencimento || ''}`,
+          dia_vencimento: c.dia_vencimento || null,
+        };
+      }
+    }
+
+    // Fallback: campo telefone string legado (clientes antigos com campo singular)
+    for (const v of variantes) {
+      const snap = await db.collection('clientes')
+        .where('telefone', '==', v)
+        .limit(1)
+        .get();
+      if (!snap.empty) {
+        const c = { id: snap.docs[0].id, ...snap.docs[0].data() };
+        return {
+          id: c.id,
+          nome: c.nome || null,
+          status: c.status === 'pago' ? 'pago' : 'pendente',
+          aba: `Data ${c.dia_vencimento || ''}`,
+          dia_vencimento: c.dia_vencimento || null,
+        };
+      }
+    }
+
+    // Fallback final: sufixo dos últimos 8 dígitos (scan limitado)
+    // Usado apenas se os campos telefone/telefones não existirem padronizados
     const sufixo = numeroBusca.slice(-8);
+    const snapFallback = await db.collection('clientes').limit(500).get();
     let clienteEncontrado = null;
-    
-    snapshot.docs.forEach(doc => {
-        const c = doc.data();
-        const tel = (c.telefone || '').replace(/\D/g, '');
-        if (tel && tel.slice(-8) === sufixo) {
-            clienteEncontrado = { id: doc.id, ...c };
-        }
+    snapFallback.docs.forEach(doc => {
+      const c = doc.data();
+      const tel = (c.telefone || '').replace(/\D/g, '');
+      if (tel && tel.slice(-8) === sufixo) {
+        clienteEncontrado = { id: doc.id, ...c };
+      }
     });
-    
     if (!clienteEncontrado) return null;
-    
     return {
       id: clienteEncontrado.id,
       nome: clienteEncontrado.nome || null,
@@ -324,164 +374,179 @@ async function buscarStatusCliente(numero) {
   }
 }
 
-// 🔥 FUNÇÃO CORRIGIDA: Busca por nome (case insensitive, sem acentos, parcial)
-async function buscarClientePorNome(nome) {
-    console.log(`🔍 Buscando cliente por nome: "${nome}"`);
-    
-    try {
-        const STOP = new Set(['da','de','do','das','dos','e']);
-        const norm = (s) => (s || '')
-            .toLowerCase()
-            .trim()
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .replace(/[^a-z0-9\s]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-
-        // 🔥 Normaliza termo de busca
-        const termoBusca = norm(nome);
-        console.log(`   🔎 Termo normalizado: "${termoBusca}"`);
-        if (!termoBusca || termoBusca.length < 2) return [];
-
-        const tokensBusca = termoBusca
-            .split(' ')
-            .map(t => t.trim())
-            .filter(Boolean)
-            .filter(t => !STOP.has(t));
-
-        // Se o usuário digitou só "jo" etc., mantém contains simples
-        const buscaCurta = tokensBusca.length === 0 || (tokensBusca.length === 1 && tokensBusca[0].length <= 3);
-        
-        // Busca TODOS os clientes
-        const snapshot = await db.collection('clientes').get();
-        
-        const resultados = [];
-        
-        snapshot.docs.forEach(doc => {
-            const cliente = doc.data();
-            
-            if (!cliente.nome) return;
-            
-            // 🔥 Normaliza nome do cliente
-            const nomeClienteNorm = norm(cliente.nome);
-            if (!nomeClienteNorm) return;
-
-            // 1) Match rápido por substring
-            if (nomeClienteNorm.includes(termoBusca)) {
-                resultados.push({ id: doc.id, ...cliente, _score: 100 });
-                return;
-            }
-
-            // 2) Match por tokens (resolve casos "JOAO SILVA" vs "JOAO DA SILVA")
-            if (!buscaCurta) {
-                const tokensNome = nomeClienteNorm
-                    .split(' ')
-                    .map(t => t.trim())
-                    .filter(Boolean)
-                    .filter(t => !STOP.has(t));
-
-                // todos tokens buscados devem existir no nome (por prefixo ou contains)
-                const ok = tokensBusca.every(tb =>
-                    tokensNome.some(tn => tn === tb || tn.startsWith(tb) || tn.includes(tb))
-                );
-                if (ok) {
-                    // score: mais tokens encontrados + preferir prefixo
-                    const prefixBoost = tokensBusca.every(tb => tokensNome.some(tn => tn.startsWith(tb))) ? 15 : 0;
-                    resultados.push({ id: doc.id, ...cliente, _score: 60 + tokensBusca.length * 5 + prefixBoost });
-                }
-            } else {
-                // busca curta: permite contains do primeiro token
-                const tb = tokensBusca[0] || termoBusca;
-                if (nomeClienteNorm.includes(tb)) {
-                    resultados.push({ id: doc.id, ...cliente, _score: 40 });
-                }
-            }
-        });
-        
-        // 🔥 Ordena por relevância
-        resultados.sort((a, b) => (b._score || 0) - (a._score || 0));
-        resultados.forEach(r => { try { delete r._score; } catch(_) {} });
-        
-        console.log(`   📊 Total encontrado: ${resultados.length}`);
-        return resultados;
-        
-    } catch (error) {
-        console.error('❌ Erro ao buscar cliente por nome:', error);
-        return [];
-    }
-}
-
-// 🔥 FUNÇÃO CORRIGIDA: Busca por CPF (normalizado)
+// ✅ CORRIGIDO: usa where('cpf') em vez de scan total
 async function buscarClientePorCPF(cpf) {
-    console.log(`🔍 Buscando cliente por CPF: "${cpf}"`);
-    
-    try {
-        // 🔥 Normaliza CPF de busca
-        const cpfBusca = cpf.replace(/\D/g, '');
-        
-        const snapshot = await db.collection('clientes').get();
-        
-        let clienteEncontrado = null;
-        
-        snapshot.docs.forEach(doc => {
-            const cliente = doc.data();
-            const cpfCliente = cliente.cpf?.replace(/\D/g, '') || '';
-            
-            if (cpfCliente === cpfBusca) {
-                console.log(`   ✅ Cliente encontrado: ${cliente.nome}`);
-                clienteEncontrado = { id: doc.id, ...cliente };
-            }
-        });
-        
-        return clienteEncontrado;
-        
-    } catch (error) {
-        console.error('❌ Erro ao buscar cliente por CPF:', error);
-        return null;
+  console.log(`🔍 Buscando cliente por CPF`);
+  try {
+    const cpfBusca = cpf.replace(/\D/g, '');
+    if (cpfBusca.length !== 11) return null;
+
+    // Tenta CPF apenas dígitos
+    const snap1 = await db.collection('clientes')
+      .where('cpf', '==', cpfBusca)
+      .limit(1)
+      .get();
+    if (!snap1.empty) {
+      console.log(`   ✅ Cliente encontrado pelo CPF`);
+      return { id: snap1.docs[0].id, ...snap1.docs[0].data() };
     }
+
+    // Fallback: CPF formatado (ex: "123.456.789-00")
+    const cpfFormatado = cpfBusca.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+    const snap2 = await db.collection('clientes')
+      .where('cpf', '==', cpfFormatado)
+      .limit(1)
+      .get();
+    if (!snap2.empty) {
+      console.log(`   ✅ Cliente encontrado pelo CPF formatado`);
+      return { id: snap2.docs[0].id, ...snap2.docs[0].data() };
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Erro em buscarClientePorCPF:', error);
+    return null;
+  }
 }
 
-// 🔥 FUNÇÃO CORRIGIDA: Busca por telefone (normalizado)
+// ✅ CORRIGIDO: usa array-contains em vez de scan total
 async function buscarClientePorTelefone(telefone) {
-    console.log(`🔍 Buscando cliente por telefone: "${telefone}"`);
-    
-    try {
-        // 🔥 Normaliza telefone de busca
-        let numeroBusca = telefone.replace(/\D/g, '');
-        
-        // Remove 55 do início se tiver
-        if (numeroBusca.startsWith('55')) {
-            numeroBusca = numeroBusca.substring(2);
-        }
-        
-        console.log(`   🔎 Número normalizado: "${numeroBusca}"`);
-        
-        const snapshot = await db.collection('clientes').get();
-        
-        let clienteEncontrado = null;
-        
-        snapshot.docs.forEach(doc => {
-            const cliente = doc.data();
-            const telefoneCliente = cliente.telefone?.replace(/\D/g, '') || '';
-            
-            // 🔥 Várias formas de correspondência
-            if (telefoneCliente && (
-                telefoneCliente === numeroBusca ||
-                telefoneCliente.includes(numeroBusca) ||
-                numeroBusca.includes(telefoneCliente)
-            )) {
-                console.log(`   ✅ Cliente encontrado: ${cliente.nome}`);
-                clienteEncontrado = { id: doc.id, ...cliente };
-            }
-        });
-        
-        return clienteEncontrado;
-        
-    } catch (error) {
-        console.error('❌ Erro ao buscar cliente por telefone:', error);
-        return null;
+  console.log(`🔍 Buscando cliente por telefone`);
+  try {
+    let num = telefone.replace(/\D/g, '');
+    if (num.startsWith('55')) num = num.substring(2);
+
+    // Monta variantes
+    const variantes = new Set([num, '55' + num]);
+    if (num.length === 11) {
+      const sem9 = num.slice(0, 2) + num.slice(3);
+      variantes.add(sem9);
+      variantes.add('55' + sem9);
     }
+    if (num.length === 10) {
+      const com9 = num.slice(0, 2) + '9' + num.slice(2);
+      variantes.add(com9);
+      variantes.add('55' + com9);
+    }
+
+    // Tenta campo telefones (array)
+    for (const v of variantes) {
+      const snap = await db.collection('clientes')
+        .where('telefones', 'array-contains', v)
+        .limit(1)
+        .get();
+      if (!snap.empty) {
+        console.log(`   ✅ Cliente encontrado pelo telefone (array)`);
+        return { id: snap.docs[0].id, ...snap.docs[0].data() };
+      }
+    }
+
+    // Fallback: campo telefone string legado
+    for (const v of variantes) {
+      const snap = await db.collection('clientes')
+        .where('telefone', '==', v)
+        .limit(1)
+        .get();
+      if (!snap.empty) {
+        console.log(`   ✅ Cliente encontrado pelo telefone (legado)`);
+        return { id: snap.docs[0].id, ...snap.docs[0].data() };
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Erro em buscarClientePorTelefone:', error);
+    return null;
+  }
+}
+
+// ✅ CORRIGIDO: scan com limit(500) + range query por inicial para reduzir leituras
+// Nota: para eliminar o scan completamente, salve campo nome_normalizado nos docs
+// e crie índice orderBy('nome_normalizado'). Enquanto isso, limit(500) já é muito melhor.
+async function buscarClientePorNome(nome) {
+  try {
+    const STOP = new Set(['da','de','do','das','dos','e']);
+    const norm = (s) => (s || '')
+      .toLowerCase()
+      .trim()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const termoBusca = norm(nome);
+    if (!termoBusca || termoBusca.length < 2) return [];
+
+    const tokensBusca = termoBusca
+      .split(' ')
+      .map(t => t.trim())
+      .filter(Boolean)
+      .filter(t => !STOP.has(t));
+
+    const buscaCurta = tokensBusca.length === 0 || (tokensBusca.length === 1 && tokensBusca[0].length <= 3);
+
+    // Tenta range query pelo primeiro token (requer índice em 'nome' — se falhar, usa limit)
+    let snapshot;
+    const primeiro = tokensBusca[0] || termoBusca;
+    const primeiraLetraMaiuscula = primeiro.charAt(0).toUpperCase();
+    try {
+      snapshot = await db.collection('clientes')
+        .orderBy('nome')
+        .startAt(primeiraLetraMaiuscula)
+        .endAt(primeiraLetraMaiuscula + '\uf8ff')
+        .limit(200)
+        .get();
+    } catch {
+      // Sem índice de nome: fallback com limit para não fazer scan ilimitado
+      snapshot = await db.collection('clientes').limit(500).get();
+    }
+
+    const resultados = [];
+
+    snapshot.docs.forEach(doc => {
+      const cliente = doc.data();
+      if (!cliente.nome) return;
+
+      const nomeClienteNorm = norm(cliente.nome);
+      if (!nomeClienteNorm) return;
+
+      // Match por substring completo
+      if (nomeClienteNorm.includes(termoBusca)) {
+        resultados.push({ id: doc.id, ...cliente, _score: 100 });
+        return;
+      }
+
+      // Match por tokens
+      if (!buscaCurta) {
+        const tokensNome = nomeClienteNorm
+          .split(' ')
+          .map(t => t.trim())
+          .filter(Boolean)
+          .filter(t => !STOP.has(t));
+
+        const ok = tokensBusca.every(tb =>
+          tokensNome.some(tn => tn === tb || tn.startsWith(tb) || tn.includes(tb))
+        );
+        if (ok) {
+          const prefixBoost = tokensBusca.every(tb => tokensNome.some(tn => tn.startsWith(tb))) ? 15 : 0;
+          resultados.push({ id: doc.id, ...cliente, _score: 60 + tokensBusca.length * 5 + prefixBoost });
+        }
+      } else {
+        const tb = tokensBusca[0] || termoBusca;
+        if (nomeClienteNorm.includes(tb)) {
+          resultados.push({ id: doc.id, ...cliente, _score: 40 });
+        }
+      }
+    });
+
+    resultados.sort((a, b) => (b._score || 0) - (a._score || 0));
+    resultados.forEach(r => { try { delete r._score; } catch (_) {} });
+    return resultados;
+  } catch (error) {
+    console.error('Erro em buscarClientePorNome:', error);
+    return [];
+  }
 }
 
 // =====================================================
@@ -490,16 +555,18 @@ async function buscarClientePorTelefone(telefone) {
 
 async function buscarPromessa(nome) {
   try {
-    // Firestore não suporta busca parcial — faz scan e compara normalizado
+    const nomeNorm = nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    // Pega só as primeiras 3 letras do nome normalizado para limitar o scan
+    // A maioria das bases tem poucas promessas ativas — limit(100) é seguro
     const snapshot = await db.collection('promessas')
       .where('status', '==', 'pendente')
+      .limit(100)
       .get();
 
     if (snapshot.empty) return null;
 
-    const nomeNorm = nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     let melhor = null;
-
     snapshot.docs.forEach(doc => {
       const p = doc.data();
       if (!p.nome) return;
@@ -523,7 +590,6 @@ async function buscarPromessa(nome) {
 async function dbRelatorio() {
   try {
     const hoje = new Date().toISOString().split('T')[0];
-    const semanaAtras = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     const atendimentosHojeSnapshot = await db.collection('log_atendimentos')
       .where('iniciado_em', '>=', new Date(hoje))

@@ -100,33 +100,37 @@ function configurarMensagens(client, ctx, handlers) {
 
         // Sub-menu financeiro
         if (fluxoAtivo === 'menu_financeiro') {
-            state.encerrarFluxo(deQuem);
             const $fin = handlers._fluxoFinanceiro;
             if (t === '1' || t.includes('pix') || t.includes('transferência') || t.includes('transferencia')) {
+                state.encerrarFluxo(deQuem);
                 await $fin.iniciar(deQuem, msgSintetica, 'PIX'); return;
             }
             if (t === '2' || t.includes('boleto')) {
+                state.encerrarFluxo(deQuem);
                 await $fin.iniciar(deQuem, msgSintetica, 'BOLETO'); return;
             }
             if (t === '3' || t.includes('carnê') || t.includes('carne') || t.includes('físico') || t.includes('fisico')) {
+                state.encerrarFluxo(deQuem);
                 await $fin.iniciar(deQuem, msgSintetica, 'CARNE'); return;
             }
             if (t === '4' || t.includes('dinheiro') || t.includes('cobrador') || t.includes('espécie') || t.includes('especie')) {
+                state.encerrarFluxo(deQuem);
                 await $fin.iniciar(deQuem, msgSintetica, 'DINHEIRO'); return;
             }
             if (t === '5' || t.includes('paguei') || t.includes('já paguei') || t.includes('feito') || t.includes('efetuei')) {
+                state.encerrarFluxo(deQuem);
                 await $fin.iniciar(deQuem, msgSintetica, 'PAGO'); return;
             }
+            // Texto não reconhecido no menu financeiro — re-envia sem recriar estado
             await client.sendMessage(deQuem, MENU_FINANCEIRO);
-            state.iniciar(deQuem, 'menu_financeiro', 'aguardando_escolha', {});
             return;
         }
 
         // Menu principal
         if (fluxoAtivo === 'menu') {
-            state.encerrarFluxo(deQuem);
             if (t === '1' || t.includes('internet') || t.includes('caiu') || t.includes('lento') ||
                 t.includes('sinal') || t.includes('suporte') || t.includes('técnico') || t.includes('tecnico')) {
+                state.encerrarFluxo(deQuem);
                 if (!redeNormal()) {
                     const infoRede = falarSinalAmigavel();
                     const hora = new Date(Date.now() - 3 * 60 * 60 * 1000).getUTCHours();
@@ -144,15 +148,18 @@ function configurarMensagens(client, ctx, handlers) {
             }
             if (t === '2' || t.includes('pagar') || t.includes('pagamento') || t.includes('pix') ||
                 t.includes('boleto') || t.includes('carnê') || t.includes('carne') || t.includes('financeiro')) {
+                state.encerrarFluxo(deQuem);
                 await client.sendMessage(deQuem, MENU_FINANCEIRO);
                 state.iniciar(deQuem, 'menu_financeiro', 'aguardando_escolha', {});
                 return;
             }
             if (t === '3' || t.includes('cancelar') || t.includes('cancelamento') || t.includes('encerrar')) {
+                state.encerrarFluxo(deQuem);
                 await handlers._fluxoCancelamento.iniciar(deQuem, msgSintetica);
                 return;
             }
             if (t === '4' || t.includes('situacao') || t.includes('situação') || t.includes('status') || t.includes('consultar') || t.includes('verificar')) {
+                state.encerrarFluxo(deQuem);
                 await client.sendMessage(deQuem,
                     `${P}Vou consultar para você! 📋\n\nMe informe seu *CPF* (somente números) ou seu *nome completo*:`
                 );
@@ -160,16 +167,18 @@ function configurarMensagens(client, ctx, handlers) {
                 return;
             }
             if (t === '5' || t.includes('atendente') || t.includes('humano') || t.includes('pessoa') || t.includes('falar')) {
+                state.encerrarFluxo(deQuem);
                 await client.sendMessage(deQuem, `${P}Vou chamar um atendente! Aguarda um instante. 😊`);
                 await abrirChamadoComMotivo(deQuem, null, 'Cliente solicitou atendente');
                 return;
             }
+            // Texto não reconhecido no menu principal — re-envia sem recriar estado
+            // (NÃO chama encerrarFluxo + iniciar aqui para evitar o menu duplicado)
             await client.sendMessage(deQuem, MENU_PRINCIPAL);
-            state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
             return;
         }
 
-        // Sem fluxo → mostra menu
+        // Sem fluxo → mostra menu e inicia estado
         await client.sendMessage(deQuem, MENU_PRINCIPAL);
         state.iniciar(deQuem, 'menu', 'aguardando_escolha', {});
     }
@@ -299,7 +308,8 @@ function configurarMensagens(client, ctx, handlers) {
 
         if (state.isAtendimentoHumano(deQuem)) return;
 
-        // ── Debounce universal: acumula texto/mídia do mesmo remetente por 12s ──
+        // ── Debounce universal: acumula texto/mídia do mesmo remetente por 3s ──
+        // (reduzido de 12s para 3s — evita delay perceptível na resposta)
         const texto = (msg.hasMedia && ['image','document'].includes(msg.type))
             ? (msg.body?.trim() || '')
             : (msg.body?.trim() || '');
@@ -321,7 +331,7 @@ function configurarMensagens(client, ctx, handlers) {
             processarTexto(deQuem, textoCompleto, midias).catch(err => {
                 console.error('Erro ao processar mensagem debounce:', err);
             });
-        }, 12000);
+        }, 12000); // 12s — acumula mensagens consecutivas do mesmo remetente
 
         return;
     });

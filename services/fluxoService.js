@@ -175,6 +175,8 @@ async function processarMensagem(deQuem, msg, ctx) {
             return;
         }
 
+        // ✅ CORRIGIDO: buscarStatusCliente já retorna o objeto completo com id.
+        // NÃO fazemos buscarClientePorNome logo depois — era um scan redundante.
         const dadosCliente = await banco.buscarStatusCliente(deQuem);
         
         if (!dadosCliente) {
@@ -204,17 +206,17 @@ async function processarMensagem(deQuem, msg, ctx) {
             return;
         }
 
-        console.log(`✅ Cliente identificado: ${dadosCliente.nome} (${dadosCliente.status})`);
+        console.log(`✅ Cliente identificado por telefone: ${dadosCliente.nome} (${dadosCliente.status})`);
         
-        const clientesList = await banco.buscarClientePorNome(dadosCliente.nome);
-        const cliente = clientesList?.[0] || null;
-        
-        if (cliente) {
+        // ✅ CORRIGIDO: salva clienteId junto para não precisar re-buscar depois.
+        // Antes havia um buscarClientePorNome() aqui que era um scan desnecessário
+        // dado que buscarStatusCliente() já retornou nome, status e id.
+        if (dadosCliente.id) {
             state.atualizar(deQuem, { 
                 clienteIdentificado: true,
-                nomeCliente: cliente.nome,
-                statusCliente: cliente.status,
-                telefoneCliente: cliente.telefone
+                clienteId: dadosCliente.id,
+                nomeCliente: dadosCliente.nome,
+                statusCliente: dadosCliente.status,
             });
         }
         
@@ -257,7 +259,7 @@ async function processarMensagem(deQuem, msg, ctx) {
         }
 
         const hoje = new Date().getDate();
-        const diaVencimento = parseInt(dadosCliente.aba.replace('Data ', ''));
+        const diaVencimento = parseInt((dadosCliente.aba || '').replace('Data ', '')) || 0;
         const estaSuspenso = (dadosCliente.status === 'pendente' && hoje > diaVencimento);
         
         if (estaSuspenso) {
@@ -320,7 +322,7 @@ async function handleIdentificacao(deQuem, msg, ctx) {
             const nomeExtraido = await ctx.utils.extrairNomeDaMensagem(texto);
             if (nomeExtraido) {
                 nomeBusca = nomeExtraido;
-                console.log(`🆔 Nome extraído da mensagem: "${nomeExtraido}" (original: "${texto.substring(0, 40)}")`);
+                console.log(`🆔 Nome extraído: "${nomeExtraido}"`);
             }
         }
         
@@ -429,11 +431,9 @@ async function responderComIA(deQuem, msg, ctx) {
     const texto = (msg.body || '').trim();
 
     // Não responde mensagens muito curtas sem sinal de pergunta
-    // Evita responder sobre cidades, nomes ou palavras soltas com IA geral
     const palavras = texto.split(/\s+/).length;
     const temPergunta = texto.includes('?') || /como|quando|onde|qual|quanto|por que|porque|preciso|quero|pode/i.test(texto);
     if (palavras <= 2 && !temPergunta) {
-        // Mensagem muito curta e sem pergunta — não processa com IA, mostra menu
         await client.sendMessage(deQuem,
             `🤖 *Assistente JMENET*\n\nComo posso te ajudar? 😊\n\n1️⃣ Problema com a internet\n2️⃣ Pagamento / PIX\n3️⃣ Falar com atendente`
         );
@@ -468,12 +468,14 @@ async function responderComIA(deQuem, msg, ctx) {
 async function processarAposIdentificacao(deQuem, nomeTitular, msgOriginal, intencoes, ctx) {
     const { banco, state, client, iniciarFluxoPorIntencao, redeNormal, falarSinalAmigavel } = ctx;
     
+    // ✅ CORRIGIDO: busca o cliente pelo nome (necessário aqui pois vem do fluxo de identificação
+    // onde o usuário digitou o nome — não temos o id ainda neste ponto)
     const clientes = await banco.buscarClientePorNome(nomeTitular);
     const cliente = clientes?.[0] || null;
     
     if (!cliente) {
         await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\nNão encontrei nenhum cliente com esse nome. 😕\n\nVou te ajudar mesmo assim. Como posso ajudar?`);
-        if (intencoes.length > 0) {
+        if (intencoes?.length > 0) {
             await iniciarFluxoPorIntencao(intencoes[0], deQuem, { body: msgOriginal });
         }
         return;
@@ -481,6 +483,7 @@ async function processarAposIdentificacao(deQuem, nomeTitular, msgOriginal, inte
     
     state.atualizar(deQuem, { 
         clienteIdentificado: true,
+        clienteId: cliente.id,
         nomeCliente: cliente.nome,
         statusCliente: cliente.status,
         telefoneCliente: cliente.telefone,
@@ -498,7 +501,7 @@ async function processarAposIdentificacao(deQuem, nomeTitular, msgOriginal, inte
         if (cliente.status === 'pago') {
             mensagem += `Sua internet está em dia! Como posso ajudar?`;
             await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\n${mensagem}`);
-            if (intencoes.length > 0) {
+            if (intencoes?.length > 0) {
                 await iniciarFluxoPorIntencao(intencoes[0], deQuem, { body: msgOriginal });
             }
             return;
@@ -534,7 +537,7 @@ async function processarAposIdentificacao(deQuem, nomeTitular, msgOriginal, inte
             mensagem += `Como posso ajudar?`;
         }
         await client.sendMessage(deQuem, `🤖 *Assistente JMENET*\n\n${mensagem}`);
-        if (intencoes.length > 0) {
+        if (intencoes?.length > 0) {
             await iniciarFluxoPorIntencao(intencoes[0], deQuem, { body: msgOriginal });
         }
     }
