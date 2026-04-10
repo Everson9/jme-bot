@@ -116,7 +116,19 @@ const utils = criarUtils(groqChatFallback);
 // =====================================================
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: path.join(DATA_PATH, '.wwebjs_auth') }),
-    puppeteer: { args: ['--no-sandbox', '--disable-setuid-sandbox'], headless: true }
+    puppeteer: {
+        headless: true,
+        protocolTimeout: 120000, // ← 2 minutos (padrão é 30s, pouco pra servers lentos)
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',  // ← evita crash por falta de memória compartilhada
+            '--disable-gpu',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process',         // ← reduz uso de memória
+        ]
+    }
 });
 
 client.on('qr', (qr) => {
