@@ -75,9 +75,11 @@ function AppContent() {
   }, []);
 
   const toggleBot = async () => {
-    await fetch(API + "/api/bot/toggle", { method: "POST" });
-    // SSE vai atualizar automaticamente, não precisa de refetch
-  };
+    await fetch(API + "/api/bot/toggle", {
+        method: "POST",
+        headers: authHeaders()
+    });
+};
 
   return (
     <BrowserRouter>
