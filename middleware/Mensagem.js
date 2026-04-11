@@ -257,10 +257,11 @@ function configurarMensagens(client, ctx, handlers) {
             if (comando === '!cobrar') {
                 const data = args[1];
                 if (!['10','20','30'].includes(data)) return msg.reply('❌ Use: !cobrar 10|20|30');
-                msg.reply('⏳ Iniciando...');
+                msg.reply('⏳ Iniciando cobrança...');
                 setTimeout(async () => {
-                    const total = await dispararCobrancaReal(client, firebaseDb, data, args[2] || null);
-                    client.sendMessage(deQuem, `✅ Cobrança dia ${data}: ${total} mensagens`);
+                    // ✅ CORRIGIDO: passa ADMINISTRADORES para que o relatório
+                    // pós-cobrança seja enviado via WhatsApp para os admins
+                    await dispararCobrancaReal(client, firebaseDb, data, args[2] || null, null, ADMINISTRADORES);
                 }, 100);
                 return;
             }
