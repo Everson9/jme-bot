@@ -9,6 +9,8 @@
 
 ---
 
+
+
 ## Arquivos críticos do projeto
 Leia APENAS os que forem relevantes para a tarefa. Não escaneie o projeto.
 

@@ -1,0 +1,24 @@
+# Dependências e Build
+node_modules/
+dist/
+build/
+.next/
+.cache/
+
+# Dados de Sessão do WhatsApp (MUITO IMPORTANTE)
+# O wwebjs_auth guarda milhares de arquivos de sessão que sugam tokens
+.wwebjs_auth/
+.wwebjs_cache/
+auth/
+
+# Logs e Temporários
+*.log
+npm-debug.log*
+.env
+.env.*
+tmp/
+temp/
+
+# Arquivos de Sistema
+.DS_Store
+Thumbs.db
