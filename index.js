@@ -5,6 +5,13 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
+
+
+process.on('unhandledRejection', (reason) => {
+    console.error('⚠️ UnhandledRejection capturado:', reason);
+});
+
 
 // ── Fluxos ────────────────────────────────────────────
 const criarFluxoSuporte      = require('./fluxos/suporte');
@@ -135,10 +142,19 @@ client.on('qr', (qr) => {
     console.log('QR Code gerado. Acesse /qr para escanear.');
 });
 
-client.on('disconnected', (reason) => {
+client.on('disconnected', async (reason) => {
     console.log('WhatsApp desconectado:', reason);
     botIniciadoEm = null;
     sseService.broadcast();
+
+    console.log('🔄 Reconectando em 30s...');
+    await new Promise(r => setTimeout(r, 30000));
+    inicializarWhatsApp();
+});
+
+
+client.on('auth_failure', (msg) => {
+    console.error('❌ Falha na autenticação WhatsApp:', msg);
 });
 
 // =====================================================
@@ -374,9 +390,40 @@ client.on('ready', async () => {
 });
 
 // =====================================================
+// KILL ZOMBIE BROWSER
+// =====================================================
+async function killZombieBrowser() {
+    // Mata processos Chrome/Chromium pelo caminho da sessão e nomes conhecidos
+    const patterns = [
+        '.wwebjs_auth',       // processo com o caminho da sessão
+        'chromium-browser',   // nome exato em alguns distros
+        '\\.local-chromium',  // Puppeteer baixa o próprio Chrome aqui
+    ];
+    for (const p of patterns) {
+        try { execSync(`pkill -f "${p}" 2>/dev/null || true`); } catch (_) {}
+    }
+
+    // Remove o lock file que bloqueia o userDataDir
+    const lockPath = path.join(DATA_PATH, '.wwebjs_auth', 'session', 'SingletonLock');
+    try {
+        if (fs.existsSync(lockPath)) {
+            fs.unlinkSync(lockPath);
+            console.log('🧹 Lock file removido.');
+        }
+    } catch (_) {}
+
+    // Aguarda os processos morrerem de fato antes de tentar subir de novo
+    await new Promise(r => setTimeout(r, 3000));
+}
+
+// =====================================================
 // INICIALIZAÇÃO DO WHATSAPP (com retry automático)
 // =====================================================
 async function inicializarWhatsApp(tentativa = 1) {
+    // Sempre limpa antes — cobre tanto retries quanto restart abrupto do container
+    console.log('🧹 Limpando processos anteriores...');
+    await killZombieBrowser();
+
     try {
         await client.initialize();
     } catch (err) {

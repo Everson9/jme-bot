@@ -17,9 +17,14 @@ primary_region = 'gru'
   [http_service.http_options]
     idle_timeout = 600
 
+
 [mounts]
   source = "whatsapp_session"
   destination = "/data"
+
+[[restart]]
+  policy = "always"
+  max_retries = 10
 
 [[vm]]
   memory = "1024mb"
