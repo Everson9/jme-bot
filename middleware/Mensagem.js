@@ -329,11 +329,20 @@ function configurarMensagens(client, ctx, handlers) {
             debounceMensagens.delete(deQuem);
             const textoCompleto = pendente.textos.join('\n').trim();
             const midias = pendente.hasMidia && fotosPendentes.has(deQuem) ? [fotosPendentes.get(deQuem)] : [];
-            processarTexto(deQuem, textoCompleto, midias).catch(err => {
-                console.error('Erro ao processar mensagem debounce:', err);
-            });
-        }, 12000); // 12s — acumula mensagens consecutivas do mesmo remetente
-
+            processarTexto(deQuem, textoCompleto, midias).catch(async err => {
+    console.error('Erro ao processar mensagem debounce:', err);
+    const ehProtocolError = err.message?.includes('callFunctionOn timed out') ||
+                            err.message?.includes('ProtocolError') ||
+                            err.message?.includes('Target closed');
+    if (ehProtocolError) {
+        console.log('🔄 ProtocolError — aguardando 5s e tentando reenviar...');
+        await new Promise(r => setTimeout(r, 5000));
+        processarTexto(deQuem, textoCompleto, midias).catch(err2 => {
+            console.error('❌ Retry também falhou, mensagem perdida:', err2.message);
+        });
+    }
+});
+        }, 12000); // 12s — acumula mensagens consecutivas do mesmo remetente (intencional)
         return;
     });
 }

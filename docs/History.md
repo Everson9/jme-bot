@@ -15,6 +15,7 @@
 - ✅ Chrome zumbi + lock file resolvidos — bot reconecta sozinho após crash/restart
 - ✅ WhatsApp desconectado — reconexão automática em 30s implementada
 - ✅ UnhandledRejection capturado globalmente — processo não cai mais por auth timeout
+- ✅ Retry automático no debounce para ProtocolError do Puppeteer (resolvido 2026-04-12)
 - ⚠️ `buscarClientePorNome` ainda usa scan com limit(500) — solução definitiva: campo `nome_normalizado` + índice Firestore
 - ⏳ Migration do campo `telefones` (array) pendente — clientes antigos têm só `telefone` (string)
 
@@ -31,6 +32,55 @@
 - **Telefone**: Campo `telefones` é array — sempre normalizar para string antes de usar. Campo legado `telefone` (string) ainda existe em clientes antigos — todas as buscas tratam os dois
 - **Dashboard**: Usa campo `status` direto (O(n)) em vez de buscar histórico de cada cliente (O(3n))
 - **Debounce**: 12 segundos — acumula mensagens consecutivas do mesmo remetente antes de processar. Timer reinicia a cada nova mensagem. Intencional para UX.
+
+---
+
+## Sessão 2026-04-12 (tarde) — Retry automático no debounce (ProtocolError)
+
+### Problema reportado
+Log de erro apareceu após confirmação de cancelamento no painel:
+```
+Erro ao processar mensagem debounce: ProtocolError: Runtime.callFunctionOn timed out.
+```
+
+### Causa raiz
+O Chrome ficou momentaneamente ocupado processando as operações do cancelamento (writes no Firestore + SSE broadcasts). Quando o debounce de um cliente disparou 2 minutos depois, o `client.sendMessage()` tentou executar um `page.evaluate()` via CDP e o Chrome não respondeu dentro do `protocolTimeout`. O catch existente engolia o erro silenciosamente e abandonava a mensagem.
+
+A mensagem chegou mesmo assim pois o Chrome terminou de processar e enviou — o timeout foi só no acknowledgment do CDP, não no envio em si.
+
+### Correção aplicada em `middleware/Mensagem.js`
+
+Substituído o `.catch` simples do debounce por retry com detecção de ProtocolError:
+
+```js
+// ANTES — engolia o erro, mensagem perdida
+processarTexto(deQuem, textoCompleto, midias).catch(err => {
+    console.error('Erro ao processar mensagem debounce:', err);
+});
+
+// DEPOIS — retry de 5s para ProtocolError
+processarTexto(deQuem, textoCompleto, midias).catch(async err => {
+    console.error('Erro ao processar mensagem debounce:', err);
+    const ehProtocolError = err.message?.includes('callFunctionOn timed out') ||
+                            err.message?.includes('ProtocolError') ||
+                            err.message?.includes('Target closed');
+    if (ehProtocolError) {
+        console.log('🔄 ProtocolError — aguardando 5s e tentando reenviar...');
+        await new Promise(r => setTimeout(r, 5000));
+        processarTexto(deQuem, textoCompleto, midias).catch(err2 => {
+            console.error('❌ Retry também falhou, mensagem perdida:', err2.message);
+        });
+    }
+});
+```
+
+Também corrigido comentário desatualizado na linha do timeout (dizia "reduzido de 12s para 3s" sendo que o valor real é 12s).
+
+### Arquivos alterados
+
+| Arquivo | Caminho | Data |
+|---|---|---|
+| `Mensagem.js` | `middleware/Mensagem.js` | 2026-04-12 |
 
 ---
 
@@ -247,6 +297,7 @@ Quatro endpoints faziam loop individual de histórico por cliente. Todos corrigi
 | Toggle do bot | ✅ Corrigido |
 | SSE | ✅ Estabilizado |
 | Puppeteer/WhatsApp — crash loop | ✅ Resolvido (2026-04-12) |
+| Puppeteer — ProtocolError no debounce | ✅ Resolvido (2026-04-12) |
 | Puppeteer/WhatsApp — lock file zumbi | ✅ Resolvido (2026-04-12) |
 | WhatsApp — reconexão automática | ✅ Implementado (2026-04-12) |
 | Buscas Firestore (bot) | ✅ Corrigido (sem scan total) |
@@ -291,5 +342,5 @@ Flag `_reconectando` no frontend evita múltiplas reconexões simultâneas.
 
 ---
 
-**Última atualização**: 2026-04-12
+**Última atualização**: 2026-04-12 (tarde)
 **Responsável**: Equipe JMENET
