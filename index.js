@@ -6,7 +6,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
-const { FirestoreStore } = require('./FirestoreStore');
+const FirestoreStore = require('./services/firestoreStore');
 
 process.on('unhandledRejection', (reason) => {
     console.error('⚠️ UnhandledRejection capturado:', reason);
@@ -462,7 +462,7 @@ async function limparSessaoFirestore() {
     try {
         console.log('🗑️ Limpando sessão corrompida do Firestore...');
         // O FirestoreStore salva na coleção "whatsapp-sessions" por padrão
-        const snap = await firebaseDb.collection('whatsapp-sessions').get();
+        const snap = await firebaseDb.collection('whatsapp_sessions').get();
         if (!snap.empty) {
             const batch = firebaseDb.batch();
             snap.docs.forEach(d => batch.delete(d.ref));

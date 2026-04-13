@@ -1,49 +1,27 @@
-// FirestoreStore.js - VERSÃO CORRIGIDA
+'use strict';
+const fs = require('fs');
+
+const COLECAO = 'whatsapp_sessions';
+
 class FirestoreStore {
-    constructor(options) {
-        this.db = options.db;
-        this.collection = options.collection || 'whatsapp_sessions';
-    }
+    constructor({ db }) { this.db = db; }
 
-    // NOVA FUNÇÃO: Remove caracteres inválidos para ID do Firestore
-    _sanitizeSessionId(sessionId) {
-        return sessionId
-            .replace(/\//g, '_')      // Substitui / por _
-            .replace(/\.\./g, '_')    // Substitui .. por _
-            .replace(/^\./, '_')      // Substitui . inicial por _
-            .replace(/\.$/, '_')      // Substitui . final por _
-            .replace(/[^\w\-_]/g, '_') // Outros caracteres inválidos
-            .substring(0, 1500);      // Limita tamanho
-    }
-
-    async sessionExists(options) {
-        const sessionId = this._sanitizeSessionId(options.session);
-        const doc = await this.db.collection(this.collection).doc(sessionId).get();
+    async sessionExists({ session }) {
+        const doc = await this.db.collection(COLECAO).doc(session).get();
         return doc.exists;
     }
 
-    async save(options) {
-        const sessionId = this._sanitizeSessionId(options.session);
-        const data = {
-            session: sessionId,
-            data: options.data,
-            timestamp: new Date()
-        };
-        await this.db.collection(this.collection).doc(sessionId).set(data);
-        console.log(`💾 Sessão salva no Firestore: ${sessionId}`);
+    async save({ session }) {}
+
+    async extract({ session, path: destPath }) {
+        const doc = await this.db.collection(COLECAO).doc(session).get();
+        if (!doc.exists) throw new Error('Sessão não encontrada no Firestore');
+        fs.writeFileSync(destPath, Buffer.from(doc.data().data, 'base64'));
     }
 
-    async load(options) {
-        const sessionId = this._sanitizeSessionId(options.session);
-        const doc = await this.db.collection(this.collection).doc(sessionId).get();
-        if (!doc.exists) return null;
-        return doc.data().data;
-    }
-
-    async delete(options) {
-        const sessionId = this._sanitizeSessionId(options.session);
-        await this.db.collection(this.collection).doc(sessionId).delete();
+    async delete({ session }) {
+        await this.db.collection(COLECAO).doc(session).delete().catch(() => {});
     }
 }
 
-module.exports = { FirestoreStore };
+module.exports = FirestoreStore;
