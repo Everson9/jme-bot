@@ -35,7 +35,7 @@ function trackedSetTimeout(fn, ms) {
         await verificarCobrancasAutomaticas(
             client, firebaseDb, ADMINISTRADORES,
             ctx.situacaoRede, ctx.previsaoRetorno, redeNormal,
-            (data, tipo, clientes) => dispararCobrancaReal(client, firebaseDb, data, tipo, clientes)
+            (data, tipo, clientes) => dispararCobrancaReal(client, firebaseDb, data, tipo, clientes, ADMINISTRADORES)
         );
     }
     trackedSetTimeout(() => { rodarCobrancas().catch(console.error); }, 10 * 1000);

@@ -1,7 +1,7 @@
 // services/cobrancaService.js
 const { gerarMensagemCobranca } = require('./mensagemService');
 const { enviarMensagemSegura }  = require('./whatsappService');
-const { getCicloAtual }         = require('./statusService');
+const { getCicloAtual, getCicloCobranca } = require('./statusService');
 
 /**
  * Dispara cobranças para uma lista de clientes já filtrada.
@@ -45,8 +45,8 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
 
             console.log(`📬 Encontrados ${docs.length} clientes com vencimento dia ${data}`);
 
-            const cicloRef = getCicloAtual(dataNum);
-            console.log(`📬 Ciclo de referência: ${cicloRef.docId}`);
+           const cicloRef = getCicloCobranca(dataNum);
+                console.log(`📬 Ciclo de referência: ${cicloRef.docId}`);
 
             clientes = [];
 

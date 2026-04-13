@@ -493,7 +493,7 @@ module.exports = function setupRoutes(app, ctx) {
 
         setTimeout(async () => {
             try {
-                const total = await ctx.dispararCobrancaReal(client, firebaseDb, data, tipo || null);
+                const total = await ctx.dispararCobrancaReal(data, tipo || null);
                 const labels = { lembrete:'Lembrete', atraso:'Atraso', atraso_final:'Atraso Final', reconquista:'Reconquista 1', reconquista_final:'Reconquista Final' };
                 await logRef.update({ conteudo: JSON.stringify({ data, tipo: tipoVerif, total, status: 'concluido' }) });
                 for (const adm of ADMINISTRADORES) await client.sendMessage(adm, `🖥️ *DISPARO MANUAL*\n📋 Data ${data} — ${labels[tipo]||'automático'}\n📨 ${total} mensagens`).catch(() => {});

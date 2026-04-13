@@ -157,15 +157,47 @@ function calcularStatusCliente(cliente, _historico = null) {
             return _status10(agoraBR, reg);
         }
     }
+
+    
+}
+
+function getCicloCobranca(diaVencimento, hoje = new Date()) {
+    const agoraBR = new Date(hoje.getTime() - 3 * 60 * 60 * 1000);
+    const diaHoje = agoraBR.getUTCDate();
+    const mesHoje = agoraBR.getUTCMonth() + 1;
+    const anoHoje = agoraBR.getUTCFullYear();
+    
+    let mesRef, anoRef;
+    
+    // Se já passou do dia do vencimento, cobrar o mês ATUAL
+    if (diaHoje > diaVencimento) {
+        mesRef = mesHoje;
+        anoRef = anoHoje;
+    } else {
+        // Ainda não venceu, cobrar mês anterior
+        const mesAnt = mesHoje === 1 ? 12 : mesHoje - 1;
+        const anoAnt = mesHoje === 1 ? anoHoje - 1 : anoHoje;
+        mesRef = mesAnt;
+        anoRef = anoAnt;
+    }
+    
+    const mm = String(mesRef).padStart(2, '0');
+    return { 
+        mesRef, 
+        anoRef, 
+        chave: `${mm}/${anoRef}`, 
+        docId: `${mm}-${anoRef}` 
+    };
 }
 
 function deveSerCobrado(cliente, registro) {
     if (cliente.status === 'cancelado') return false;
     if (cliente.status === 'promessa')  return false;
     if (!registro) return true;
+    
     // CORRIGIDO: Verifica campo 'status' (string)
     if (registro.status === 'pago' || registro.status === 'isento') return false;
     return true;
 }
 
-module.exports = { calcularStatusCliente, getCicloAtual, deveSerCobrado };
+module.exports = { calcularStatusCliente, getCicloAtual, deveSerCobrado, getCicloCobranca };

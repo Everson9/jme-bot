@@ -342,5 +342,78 @@ Flag `_reconectando` no frontend evita múltiplas reconexões simultâneas.
 
 ---
 
-**Última atualização**: 2026-04-12 (tarde)
+---
+
+## Sessão 2026-04-13
+
+### 1. CORS bloqueando o painel admin
+**Sintoma:** Painel (`jme-bot.vercel.app`) não carregava nada. Logs mostravam `Error: CORS bloqueado para origem: https://jme-bot.vercel.app` em loop.
+
+**Causa:** O `index.js` foi atualizado na sessão anterior com CORS dinâmico via `process.env.ALLOWED_ORIGINS`, mas o secret não havia sido configurado no Fly.io. A variável ficou vazia, bloqueando toda origem.
+
+**Correção:**
+```bash
+fly secrets set ALLOWED_ORIGINS=https://jme-bot.vercel.app -a jme-bot-backend
+```
+O Fly.io reiniciou o container automaticamente e o painel voltou a funcionar.
+
+---
+
+### 2. WhatsApp não inicializava após restart
+**Sintoma:** Após o restart causado pelo `fly secrets set`, o backend subia normal (Firebase ok, Express na porta 3001, SSE conectando), mas nenhum log de WhatsApp aparecia — sem QR, sem `ready`, sem erro visível.
+
+**Diagnóstico:**
+- Chrome estava rodando (`ps aux` confirmou processos ativos)
+- Volume `/data` intacto com sessão de 34 arquivos
+- Erro real apareceu ~4 minutos depois: `Runtime.callFunctionOn timed out`
+
+**Causa:** Sessão de 10 dias sem uso ficou num estado que o Chrome não conseguia carregar dentro do `protocolTimeout: 120000ms`.
+
+**Correção imediata:** Apagar sessão e gerar novo QR:
+```bash
+fly ssh console -a jme-bot-backend
+rm -rf /data/.wwebjs_auth/session
+exit
+fly machines restart -a jme-bot-backend
+```
+Novo QR gerado em `/qr`, WhatsApp reconectado.
+
+**Correção permanente** (previne recorrência): aumentar `protocolTimeout` no `index.js`:
+```js
+puppeteer: {
+    protocolTimeout: 240000,  // era 120000
+    ...
+}
+```
+
+---
+
+### Status dos Módulos (atualizado)
+
+| Módulo | Status |
+|--------|--------|
+| Frontend (painel admin) | ✅ Funcional |
+| Cobrança automática | ✅ Funcionando |
+| Relatório pós-cobrança (!cobrar) | ✅ Corrigido (2026-04-11) |
+| Toggle do bot | ✅ Corrigido |
+| SSE | ✅ Estabilizado |
+| CORS dinâmico via env | ✅ Implementado + secret configurado (2026-04-13) |
+| Puppeteer — protocolTimeout | ✅ Aumentado para 240s (2026-04-13) |
+| Puppeteer/WhatsApp — crash loop | ✅ Resolvido (2026-04-12) |
+| Puppeteer — ProtocolError no debounce | ✅ Resolvido (2026-04-12) |
+| Puppeteer/WhatsApp — lock file zumbi | ✅ Resolvido (2026-04-12) |
+| WhatsApp — reconexão automática | ✅ Implementado (2026-04-12) |
+| Buscas Firestore (bot) | ✅ Corrigido (sem scan total) |
+| Dashboard (painel) | ✅ Corrigido (sem N+1) |
+| Comprovante — fluxo de nome | ✅ Corrigido (sem loop, busca tolerante) |
+| buscarClientePorNome | ⚠️ Parcial (limit 500, sem índice) |
+| Migration campo telefones | ⏳ Pendente |
+| Rate limiting na API | ⏳ Pendente |
+| TTL em historico_conversa | ⏳ Pendente |
+| Autenticação JWT no painel | ⏳ Pendente |
+| Health check Fly.io | ⏳ Reativar após estabilização |
+
+---
+
+**Última atualização**: 2026-04-13
 **Responsável**: Equipe JMENET
