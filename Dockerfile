@@ -39,6 +39,7 @@ WORKDIR /app
 # Copia os arquivos de dependência primeiro (para melhor cache do Docker)
 COPY package*.json ./
 COPY frontend/package*.json ./frontend/
+COPY postinstall.js ./
 
 # Instala as dependências do Node
 RUN npm install
@@ -50,7 +51,7 @@ COPY . .
 # Build do frontend
 RUN cd frontend && npm run build
 
-# Expõe a porta (opcional, o Render usa a variável PORT)
+# Expõe a porta
 EXPOSE 3001
 
 # Comando para iniciar o bot
