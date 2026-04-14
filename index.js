@@ -119,51 +119,60 @@ async function groqChatFallback(messages, temperature = 0.5, tentativa = 1) {
 const utils = criarUtils(groqChatFallback);
 
 // =====================================================
-// WHATSAPP CLIENT — RemoteAuth (sessão no Firestore)
+// WHATSAPP CLIENT — recriado a cada retry
+// Não é possível chamar client.initialize() duas vezes
+// no mesmo objeto — por isso recriamos o client inteiro
+// a cada tentativa falha.
 // =====================================================
 const store = new FirestoreStore({ db: firebaseDb, admin });
 
-const client = new Client({
-    authStrategy: new RemoteAuth({
-        store,
-        backupSyncIntervalMs: 300000,
-    }),
-    puppeteer: {
-        headless: true,
-        protocolTimeout: 240000,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--no-first-run',
-            '--no-zygote',
-        ]
-    }
-});
+function criarNovoClient() {
+    const c = new Client({
+        authStrategy: new RemoteAuth({
+            store,
+            backupSyncIntervalMs: 300000,
+        }),
+        puppeteer: {
+            headless: true,
+            protocolTimeout: 240000,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--no-first-run',
+                '--no-zygote',
+            ]
+        }
+    });
 
-client.on('qr', (qr) => {
-    ultimoQR = qr;
-    console.log('QR Code gerado. Acesse /qr para escanear.');
-});
+    c.on('qr', (qr) => {
+        ultimoQR = qr;
+        console.log('QR Code gerado. Acesse /qr para escanear.');
+    });
 
-client.on('remote_session_saved', () => {
-    console.log('☁️  Sessão salva no Firestore com sucesso.');
-});
+    c.on('remote_session_saved', () => {
+        console.log('☁️  Sessão salva no Firestore com sucesso.');
+    });
 
-client.on('disconnected', async (reason) => {
-    console.log('WhatsApp desconectado:', reason);
-    botIniciadoEm = null;
-    sseService.broadcast();
+    c.on('disconnected', async (reason) => {
+        console.log('WhatsApp desconectado:', reason);
+        botIniciadoEm = null;
+        sseService.broadcast();
+        console.log('🔄 Reconectando em 30s...');
+        await new Promise(r => setTimeout(r, 30000));
+        client = criarNovoClient();
+        inicializarWhatsApp();
+    });
 
-    console.log('🔄 Reconectando em 30s...');
-    await new Promise(r => setTimeout(r, 30000));
-    inicializarWhatsApp();
-});
+    c.on('auth_failure', (msg) => {
+        console.error('❌ Falha na autenticação WhatsApp:', msg);
+    });
 
-client.on('auth_failure', (msg) => {
-    console.error('❌ Falha na autenticação WhatsApp:', msg);
-});
+    return c;
+}
+
+let client = criarNovoClient();
 
 // =====================================================
 // EXPRESS
@@ -481,12 +490,20 @@ async function inicializarWhatsApp(tentativa = 1) {
     console.log(`🧹 Limpando processos anteriores... (tentativa ${tentativa})`);
     await killZombieBrowser();
 
-    // Só limpa sessão se esgotou todas as tentativas sem sessão
+    // Após 3 falhas, limpa sessão e pede QR
     if (tentativa >= 4) {
         console.log('⚠️ Muitas falhas consecutivas — limpando sessão e pedindo QR...');
         await limparSessaoFirestore();
         await new Promise(r => setTimeout(r, 3000));
     }
+
+    // Recria o client a cada tentativa — não é possível reutilizar
+    // um Client que já falhou no initialize()
+    client = criarNovoClient();
+
+    // Propaga o novo client para os contextos que dependem dele
+    ctxRotas.client;      // getter dinâmico — já aponta para o let
+    // (os getters 'get client()' nos contextos já usam o let, ok)
 
     try {
         await Promise.race([
@@ -509,14 +526,12 @@ async function inicializarWhatsApp(tentativa = 1) {
             err.message?.includes('initialize timeout');
 
         if (ehRecuperavel && tentativa < 4) {
-            // Preserva a sessão — só faz retry com espera progressiva
-            const delay = tentativa * 10000; // 10s, 20s, 30s
-            console.log(`🔄 Sessão preservada. Tentando novamente em ${delay / 1000}s...`);
+            const delay = tentativa * 15000; // 15s, 30s, 45s
+            console.log(`🔄 Sessão preservada. Novo client em ${delay / 1000}s...`);
             await new Promise(r => setTimeout(r, delay));
             return inicializarWhatsApp(tentativa + 1);
         }
 
-        // Erro desconhecido ou esgotou tentativas com sessão
         const delay = Math.min(tentativa * 30000, 300000);
         console.log(`🔄 Tentando novamente em ${delay / 1000}s...`);
         setTimeout(() => inicializarWhatsApp(tentativa + 1), delay);
