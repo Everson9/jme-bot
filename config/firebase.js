@@ -37,4 +37,4 @@ if (!admin.apps.length) {
 db = admin.firestore();
 
 // Exporta APENAS o db
-module.exports = { db };
+module.exports = { db, admin };

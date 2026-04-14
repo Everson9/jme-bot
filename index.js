@@ -6,7 +6,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
-const FirestoreStore = require('./services/firestoreStore');
+const FirestoreStore = require('./services/FirestoreStore');
 
 process.on('unhandledRejection', (reason) => {
     console.error('⚠️ UnhandledRejection capturado:', reason);
@@ -29,7 +29,7 @@ const { horaLocal, atendenteDisponivel, proximoAtendimento,
 const sseService                        = require('./services/sseService');
 
 // ── Banco ─────────────────────────────────────────────
-const { db: firebaseDb } = require('./config/firebase');
+const { db: firebaseDb, admin } = require('./config/firebase');
 const banco = require('./database/funcoes-firebase');
 const agendamentosDb         = require('./database/agendamentos-firebase')(firebaseDb);
 const instalacoesAgendadasDb = require('./database/instalacoes-agendadas-firebase')(firebaseDb);
@@ -120,15 +120,13 @@ const utils = criarUtils(groqChatFallback);
 
 // =====================================================
 // WHATSAPP CLIENT — RemoteAuth (sessão no Firestore)
-// Substitui LocalAuth para evitar corrupção de sessão
-// no volume do Fly.io a cada restart/crash abrupto.
 // =====================================================
-const store = new FirestoreStore({ db: firebaseDb });
+const store = new FirestoreStore({ db: firebaseDb, admin });
 
 const client = new Client({
     authStrategy: new RemoteAuth({
         store,
-        backupSyncIntervalMs: 300000, // salva no Firestore a cada 5 min
+        backupSyncIntervalMs: 300000,
     }),
     puppeteer: {
         headless: true,
@@ -149,7 +147,6 @@ client.on('qr', (qr) => {
     console.log('QR Code gerado. Acesse /qr para escanear.');
 });
 
-// Emitido pelo RemoteAuth quando a sessão é salva no Firestore com sucesso
 client.on('remote_session_saved', () => {
     console.log('☁️  Sessão salva no Firestore com sucesso.');
 });
@@ -173,7 +170,6 @@ client.on('auth_failure', (msg) => {
 // =====================================================
 const app = express();
 
-// ── CORS ──────────────────────────────────────────────
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
     .split(',')
     .map(s => s.trim())
@@ -190,8 +186,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-
-// ── Body parser ───────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -428,13 +422,12 @@ async function killZombieBrowser() {
         '.wwebjs_auth',
         'chromium-browser',
         '\\.local-chromium',
-        'RemoteAuth',        // processos do RemoteAuth
+        'RemoteAuth',
     ];
     for (const p of patterns) {
         try { execSync(`pkill -f "${p}" 2>/dev/null || true`); } catch (_) {}
     }
 
-    // Com RemoteAuth o SingletonLock fica em pasta temporária — limpa qualquer lock residual
     const possiveisLocks = [
         path.join(DATA_PATH, '.wwebjs_auth', 'session', 'SingletonLock'),
         path.join('/tmp', '.wwebjs_auth', 'session', 'SingletonLock'),
@@ -452,56 +445,78 @@ async function killZombieBrowser() {
 }
 
 // =====================================================
-// INICIALIZAÇÃO DO WHATSAPP (com retry automático)
-// RemoteAuth: sessão vem do Firestore — não corrompe
-// em crashes. Se der erro de contexto destruído na
-// tentativa 1, limpa sessão do Firestore e tenta de
-// novo (vai pedir QR uma única vez).
+// LIMPAR SESSÃO (último recurso — só após 4 falhas)
 // =====================================================
 async function limparSessaoFirestore() {
     try {
-        console.log('🗑️ Limpando sessão corrompida do Firestore...');
-        // O FirestoreStore salva na coleção "whatsapp-sessions" por padrão
+        console.log('🗑️ Limpando sessão corrompida do Firestore e Storage...');
         const snap = await firebaseDb.collection('whatsapp_sessions').get();
         if (!snap.empty) {
             const batch = firebaseDb.batch();
             snap.docs.forEach(d => batch.delete(d.ref));
             await batch.commit();
-            console.log(`🗑️ ${snap.size} documento(s) de sessão removido(s) do Firestore.`);
         }
+        await admin.storage().bucket('jme-bot.firebasestorage.app')
+            .file('whatsapp_session/RemoteAuth.zip')
+            .delete()
+            .catch(() => {});
+        console.log('🗑️ Sessão removida. Próximo restart vai pedir QR.');
     } catch (e) {
-        console.error('⚠️ Erro ao limpar sessão do Firestore:', e.message);
+        console.error('⚠️ Erro ao limpar sessão:', e.message);
     }
 }
 
+// =====================================================
+// INICIALIZAÇÃO DO WHATSAPP
+//
+// Estratégia de retry SEM apagar sessão:
+//   tentativa 1, 2, 3 → preserva sessão, retry em 10/20/30s
+//   tentativa 4+      → limpa sessão e pede QR (último recurso)
+//
+// O Promise.race garante que o initialize() nunca fique
+// pendurado para sempre — se travar, o timeout de 3min
+// força o catch e aciona o retry.
+// =====================================================
 async function inicializarWhatsApp(tentativa = 1) {
-    console.log('🧹 Limpando processos anteriores...');
+    console.log(`🧹 Limpando processos anteriores... (tentativa ${tentativa})`);
     await killZombieBrowser();
 
-    // Na tentativa 2+, apaga a sessão do Firestore para forçar novo QR
-    if (tentativa >= 2) {
+    // Só limpa sessão se esgotou todas as tentativas sem sessão
+    if (tentativa >= 4) {
+        console.log('⚠️ Muitas falhas consecutivas — limpando sessão e pedindo QR...');
         await limparSessaoFirestore();
         await new Promise(r => setTimeout(r, 3000));
     }
 
     try {
-        await client.initialize();
+        await Promise.race([
+            client.initialize(),
+            new Promise((_, reject) =>
+                setTimeout(
+                    () => reject(new Error('initialize timeout após 3min')),
+                    3 * 60 * 1000
+                )
+            )
+        ]);
     } catch (err) {
         console.error(`❌ Erro ao inicializar WhatsApp (tentativa ${tentativa}):`, err.message);
 
-        // Detecta sessão corrompida — limpa Firestore e tenta uma vez sem sessão
-        const ehSessaoCorrempida =
+        const ehRecuperavel =
             err.message?.includes('Execution context was destroyed') ||
             err.message?.includes('context was destroyed') ||
             err.message?.includes('most likely because of a navigation') ||
-            err.message?.includes('Session closed');
+            err.message?.includes('Session closed') ||
+            err.message?.includes('initialize timeout');
 
-        if (ehSessaoCorrempida && tentativa === 1) {
-            console.log('⚠️ Sessão corrompida detectada — limpando Firestore e tentando sem sessão...');
-            await new Promise(r => setTimeout(r, 5000));
-            return inicializarWhatsApp(2);
+        if (ehRecuperavel && tentativa < 4) {
+            // Preserva a sessão — só faz retry com espera progressiva
+            const delay = tentativa * 10000; // 10s, 20s, 30s
+            console.log(`🔄 Sessão preservada. Tentando novamente em ${delay / 1000}s...`);
+            await new Promise(r => setTimeout(r, delay));
+            return inicializarWhatsApp(tentativa + 1);
         }
 
+        // Erro desconhecido ou esgotou tentativas com sessão
         const delay = Math.min(tentativa * 30000, 300000);
         console.log(`🔄 Tentando novamente em ${delay / 1000}s...`);
         setTimeout(() => inicializarWhatsApp(tentativa + 1), delay);

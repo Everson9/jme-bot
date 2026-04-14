@@ -1,289 +1,180 @@
 # Histórico de Desenvolvimento - JME-BOT
 
-## Status Atual (2026-04-12)
+## Status Atual (2026-04-14)
 - ✅ Sistema de cobrança automática FUNCIONANDO
+- ✅ Cobrança D3 corrigida — `[object Object]` resolvido
+- ✅ Relatório pós-cobrança chegando nos admins
 - ✅ Frontend (Vercel) funcionando
 - ✅ Backend (Fly.io) estável — região: gru (São Paulo)
-- ✅ Relatório pós-cobrança enviado para admins via WhatsApp
 - ✅ SSE estabilizado (sem acúmulo de conexões)
 - ✅ Botão toggle do bot corrigido (401 resolvido)
-- ✅ Scans completos do Firestore eliminados (causa raiz da lentidão — resolvido 2026-04-10)
+- ✅ Scans completos do Firestore eliminados (resolvido 2026-04-10)
 - ✅ Menu duplicado no Mensagem.js corrigido
-- ✅ !cobrar passando ADMINISTRADORES corretamente (relatório pós-cobrança funcionando)
+- ✅ !cobrar passando ADMINISTRADORES corretamente
 - ✅ Fluxo de comprovante com nome não encontrado corrigido (loop infinito eliminado)
 - ✅ Busca tolerante de nome para banco importado de planilha implementada
-- ✅ Chrome zumbi + lock file resolvidos — bot reconecta sozinho após crash/restart
-- ✅ WhatsApp desconectado — reconexão automática em 30s implementada
-- ✅ UnhandledRejection capturado globalmente — processo não cai mais por auth timeout
-- ✅ Retry automático no debounce para ProtocolError do Puppeteer (resolvido 2026-04-12)
-- ⚠️ `buscarClientePorNome` ainda usa scan com limit(500) — solução definitiva: campo `nome_normalizado` + índice Firestore
-- ⏳ Migration do campo `telefones` (array) pendente — clientes antigos têm só `telefone` (string)
+- ✅ Chrome zumbi + lock file resolvidos
+- ✅ WhatsApp desconectado — reconexão automática em 30s
+- ✅ UnhandledRejection capturado globalmente
+- ✅ Retry automático no debounce para ProtocolError
+- ✅ CORS dinâmico via env + secret configurado
+- ✅ Puppeteer protocolTimeout = 240s
+- ✅ RemoteAuth + Firebase Storage implementado — sessão salva e extraída com sucesso
+- ⚠️ **PROBLEMA ABERTO**: `client.initialize()` trava após extract da sessão do Storage — `Execution context was destroyed` durante `inject` não é capturado pelo `catch`, processo fica pendurado indefinidamente sem pedir QR nem fazer retry
+- ⚠️ `buscarClientePorNome` ainda usa scan com limit(500)
+- ⏳ Migration do campo `telefones` (array) pendente
 
 ## Stack
 - **Backend**: Node.js + Express + whatsapp-web.js → Fly.io
 - **Frontend**: React + Vite → Vercel
 - **Banco**: Firebase Firestore
+- **Storage**: Firebase Storage (sessão WhatsApp em `whatsapp_session/RemoteAuth.zip`)
 - **IA**: Groq (llama-3.3-70b-versatile)
-- **Auth WhatsApp**: LocalAuth persistido em `/data/.wwebjs_auth` (volume Fly.io)
+- **Auth WhatsApp**: RemoteAuth com `services/FirestoreStore.js` customizado
 
 ## Decisões Técnicas
+- **Sessão WhatsApp**: RemoteAuth + Firebase Storage — sobrescreve sempre o mesmo arquivo, sem acúmulo
 - **IA Engine**: Groq API (fallback com retry progressivo)
-- **Padrão de Status**: Campo `status` como string ('pago', 'pendente', 'isento', 'promessa', 'cancelado') no documento do cliente — mantido atualizado por todas as operações de baixa/reverter
-- **Telefone**: Campo `telefones` é array — sempre normalizar para string antes de usar. Campo legado `telefone` (string) ainda existe em clientes antigos — todas as buscas tratam os dois
-- **Dashboard**: Usa campo `status` direto (O(n)) em vez de buscar histórico de cada cliente (O(3n))
-- **Debounce**: 12 segundos — acumula mensagens consecutivas do mesmo remetente antes de processar. Timer reinicia a cada nova mensagem. Intencional para UX.
+- **Padrão de Status**: Campo `status` string no documento do cliente
+- **Telefone**: Campo `telefones` é array — campo legado `telefone` (string) ainda existe em clientes antigos
+- **Dashboard**: Usa campo `status` direto (O(n))
+- **Debounce**: 12 segundos
+- **dispararCobrancaReal**: assinatura `(client, firebaseDb, data, tipo, clientesFiltrados, ADMINISTRADORES)` — wrappers em `timers.js` e `routes/index.js` já passam todos os parâmetros corretamente
 
 ---
 
-## Sessão 2026-04-12 (tarde) — Retry automático no debounce (ProtocolError)
+## Sessão 2026-04-13/14 — RemoteAuth + Firebase Storage
 
-### Problema reportado
-Log de erro apareceu após confirmação de cancelamento no painel:
+### Problema original
+Bot não reconectava após restart do Fly.io. `LocalAuth` corrompida a cada crash abrupto do container. Exigia `rm -rf session` manual + novo QR.
+
+### Solução implementada
+Migração para `RemoteAuth` com store customizado (`services/FirestoreStore.js`) salvando sessão no Firebase Storage.
+
+### Status atual da implementação
+- ✅ `extract()` funcionando — `📥 Sessão extraída do Storage.` aparece nos logs
+- ✅ `save()` funcionando — `☁️ Sessão salva no Storage com sucesso.` aparece após QR
+- ❌ **Problema em aberto**: após o extract, `client.initialize()` trava com `Execution context was destroyed` durante o `inject` — o erro é capturado pelo `unhandledRejection` global mas **não** pelo `catch` do `inicializarWhatsApp`, então o processo fica pendurado sem fazer retry nem pedir QR
+
+### Correção implementada mas não testada ainda
+`Promise.race` com timeout de 3 minutos no `inicializarWhatsApp` para forçar retry quando travar:
+
+```js
+await Promise.race([
+    client.initialize(),
+    new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('initialize timeout após 3min')), 3 * 60 * 1000)
+    )
+]);
 ```
-Erro ao processar mensagem debounce: ProtocolError: Runtime.callFunctionOn timed out.
+
+Com isso o fluxo esperado:
 ```
+restart → extract sessão do Storage → initialize trava → timeout 3min
+    → inicializarWhatsApp(2) → limpa Storage + Firestore → pede QR
+    → escaneia QR → save no Storage → sistema online
+```
+
+### Arquivos alterados nessa sessão
+
+| Arquivo | Caminho | Alteração |
+|---|---|---|
+| `index.js` | `index.js` | RemoteAuth, FirestoreStore, auto-recovery, Promise.race |
+| `FirestoreStore.js` | `services/FirestoreStore.js` | Store customizado com Firebase Storage |
+| `firebase.js` | `config/firebase.js` | Exporta `admin` além do `db` |
+| `Dockerfile` | `Dockerfile` | `WORKDIR /app` (era `/opt/render/project/src`) |
+
+---
+
+## Sessão 2026-04-13 — Cobrança D3 com [object Object]
+
+### Problema
+Cobrança D3 e disparo manual retornavam `dia [object Object], tipo: [object Object]` — 0 clientes encontrados mesmo com pendentes.
 
 ### Causa raiz
-O Chrome ficou momentaneamente ocupado processando as operações do cancelamento (writes no Firestore + SSE broadcasts). Quando o debounce de um cliente disparou 2 minutos depois, o `client.sendMessage()` tentou executar um `page.evaluate()` via CDP e o Chrome não respondeu dentro do `protocolTimeout`. O catch existente engolia o erro silenciosamente e abandonava a mensagem.
-
-A mensagem chegou mesmo assim pois o Chrome terminou de processar e enviou — o timeout foi só no acknowledgment do CDP, não no envio em si.
-
-### Correção aplicada em `middleware/Mensagem.js`
-
-Substituído o `.catch` simples do debounce por retry com detecção de ProtocolError:
+**Bug 1 — `routes/index.js`**: `/api/cobrar/manual` chamava `ctx.dispararCobrancaReal(client, firebaseDb, data, tipo)` mas `ctx.dispararCobrancaReal` já é wrapper com `client` e `firebaseDb` internos. Resultado: `client` virava `data`, `firebaseDb` virava `tipo`.
 
 ```js
-// ANTES — engolia o erro, mensagem perdida
-processarTexto(deQuem, textoCompleto, midias).catch(err => {
-    console.error('Erro ao processar mensagem debounce:', err);
-});
-
-// DEPOIS — retry de 5s para ProtocolError
-processarTexto(deQuem, textoCompleto, midias).catch(async err => {
-    console.error('Erro ao processar mensagem debounce:', err);
-    const ehProtocolError = err.message?.includes('callFunctionOn timed out') ||
-                            err.message?.includes('ProtocolError') ||
-                            err.message?.includes('Target closed');
-    if (ehProtocolError) {
-        console.log('🔄 ProtocolError — aguardando 5s e tentando reenviar...');
-        await new Promise(r => setTimeout(r, 5000));
-        processarTexto(deQuem, textoCompleto, midias).catch(err2 => {
-            console.error('❌ Retry também falhou, mensagem perdida:', err2.message);
-        });
-    }
-});
+// ANTES — errado
+const total = await ctx.dispararCobrancaReal(client, firebaseDb, data, tipo || null);
+// DEPOIS — correto
+const total = await ctx.dispararCobrancaReal(data, tipo || null);
 ```
 
-Também corrigido comentário desatualizado na linha do timeout (dizia "reduzido de 12s para 3s" sendo que o valor real é 12s).
-
-### Arquivos alterados
-
-| Arquivo | Caminho | Data |
-|---|---|---|
-| `Mensagem.js` | `middleware/Mensagem.js` | 2026-04-12 |
-
----
-
-## Sessão 2026-04-12 — Estabilidade do WhatsApp e Deploy no Fly.io
-
-### Problema reportado
-Bot parou de funcionar do nada. Logs mostravam loop infinito de erros:
-```
-❌ Erro ao inicializar WhatsApp (tentativa 1): Runtime.callFunctionOn timed out.
-❌ Erro ao inicializar WhatsApp (tentativa 2): The browser is already running for /data/.wwebjs_auth/session.
-```
-
-### Causa raiz
-1. **Tentativa 1**: Chrome demorou mais que o `protocolTimeout` padrão (~30s) para responder — provavelmente restart de infraestrutura do Fly.io que matou o container abruptamente.
-2. **Tentativas 2+**: O processo Chrome ficou como zumbi (não morreu com o timeout) e o lock file `SingletonLock` ficou gravado no volume persistente `/data`. Cada tentativa de reconexão encontrava o lock e falhava imediatamente.
-
-### Correções aplicadas em `index.js`
-
-#### 1. `killZombieBrowser()` — limpeza antes de cada inicialização
-```js
-async function killZombieBrowser() {
-    const patterns = ['.wwebjs_auth', 'chromium-browser', '\\.local-chromium'];
-    for (const p of patterns) {
-        try { execSync(`pkill -f "${p}" 2>/dev/null || true`); } catch (_) {}
-    }
-    const lockPath = path.join(DATA_PATH, '.wwebjs_auth', 'session', 'SingletonLock');
-    try {
-        if (fs.existsSync(lockPath)) { fs.unlinkSync(lockPath); console.log('🧹 Lock file removido.'); }
-    } catch (_) {}
-    await new Promise(r => setTimeout(r, 3000));
-}
-```
-
-Chamado **sempre** na tentativa 1 também — cobre restart abrupto do container com lock file sujo no volume.
-
-#### 2. Reconexão automática no evento `disconnected`
-```js
-client.on('disconnected', async (reason) => {
-    console.log('WhatsApp desconectado:', reason);
-    botIniciadoEm = null;
-    sseService.broadcast();
-    console.log('🔄 Reconectando em 30s...');
-    await new Promise(r => setTimeout(r, 30000));
-    inicializarWhatsApp();
-});
-```
-
-#### 3. `unhandledRejection` global — processo não cai mais
-```js
-process.on('unhandledRejection', (reason) => {
-    console.error('⚠️ UnhandledRejection capturado:', reason);
-});
-```
-
-Resolve o crash por `auth timeout` quando o QR expira sem ser escaneado.
-
-#### 4. `auth_failure` handler
-```js
-client.on('auth_failure', (msg) => {
-    console.error('❌ Falha na autenticação WhatsApp:', msg);
-});
-```
-
-#### 5. Removido `--single-process` e `--max-old-space-size=256`
-Essas flags causavam falha silenciosa: o Chrome conectava no celular mas os eventos (`ready`, etc.) nunca disparavam para o Node.js. Com 1GB de RAM no Fly não são necessárias.
-
-### Correções no `fly.toml`
-
-#### Restart automático adicionado
-```toml
-[[restart]]
-  policy = "always"
-  max_retries = 10
-```
-
-Garante que qualquer crash ou restart do Fly sobe o container automaticamente.
-
-**Nota**: sintaxe `[[restart]]` (duplo colchete) — a sintaxe `[restart]` (colchete simples) causa erro de validação na versão atual do flyctl.
-
-### Problemas de deploy encontrados e resolvidos
-
-| Problema | Causa | Solução |
-|---|---|---|
-| `npx fly` falhava no Windows | Wrapper npm usa sintaxe Unix (`DEBUG=no`) | Instalar flyctl nativo via PowerShell |
-| `flyctl login` não reconhecido | Comando mudou na versão nova | Usar `flyctl auth login` |
-| `[restart]` inválido no toml | flyctl espera array | Trocar para `[[restart]]` |
-| Health check derrubando máquina | grace_period curto demais para Chrome subir | Removido por ora (Chrome demora 2-3min para inicializar) |
-| QR expirou → processo caiu | `auth timeout` sem catch | `unhandledRejection` global |
-| `--single-process` → sem eventos | Flag incompatível com eventos do Node | Removida |
-
-### Ciclo de resiliência completo após correções
-
-```
-Crash/restart do container
-    ↓
-[[restart]] policy=always → Fly sobe container
-    ↓
-killZombieBrowser() → limpa lock file + processos zumbi
-    ↓
-client.initialize() → conecta com sessão salva no volume
-    ↓ (se WhatsApp desconectar remotamente)
-client.on('disconnected') → aguarda 30s → inicializarWhatsApp()
-    ↓ (se QR expirar sem escanear)
-unhandledRejection → loga, não cai → retry com backoff
-```
-
----
-
-## Sessão 2026-04-11 — Correções adicionais
-
-### Bug 1 — !cobrar sem ADMINISTRADORES (relatório não chegava)
-`Mensagem.js` chamava `dispararCobrancaReal` sem passar `ADMINISTRADORES`, então o relatório pós-cobrança nunca era enviado via WhatsApp quando admin usava `!cobrar` manualmente.
+**Bug 2 — `timers.js`**: callback não passava `ADMINISTRADORES`.
 
 ```js
 // ANTES
-const total = await dispararCobrancaReal(client, firebaseDb, data, args[2] || null);
-client.sendMessage(deQuem, `✅ Cobrança dia ${data}: ${total} mensagens`); // redundante
-
+(data, tipo, clientes) => dispararCobrancaReal(client, firebaseDb, data, tipo, clientes)
 // DEPOIS
-await dispararCobrancaReal(client, firebaseDb, data, args[2] || null, null, ADMINISTRADORES);
-// relatório completo já é enviado internamente pelo dispararCobrancaReal
+(data, tipo, clientes) => dispararCobrancaReal(client, firebaseDb, data, tipo, clientes, ADMINISTRADORES)
 ```
-
-### Bug 2 — Loop infinito no fluxo de comprovante com nome não encontrado
-`confirmarNomeComprovante` em `comprovante.js` não atualizava `tentativasNome` quando não achava o cliente, então repetia a mesma mensagem "Tive um erro ao validar seu nome" infinitamente a cada nova digitação.
-
-**Correção**: refatoração completa do `comprovante.js` com:
-- Gerenciamento explícito de tentativas via `state.getDados`
-- Novo fluxo com etapas: `nome` → `cpf` (desambiguação de múltiplos) → atendente
-- Busca tolerante para nomes de banco importado de planilha
-- Menu de opções quando não acha na 1ª vez: "1️⃣ Tentar outro nome / 2️⃣ Chamar atendente"
-- Router central `confirmarNomeComprovanteRouter` que decide o caminho baseado na etapa atual
-
-### Bug 3 — Busca de nome intolerante a nomes parciais/planilha
-**Correção**: `buscarNomeToleranteComprovante` em `comprovante.js` — quando `buscarClientePorNome` retorna vazio, tenta automaticamente:
-1. Só o primeiro token ("Viviane")
-2. Primeiro + último token ("Viviane Santos")
-
-Filtra falsos positivos: só retorna se pelo menos metade dos tokens digitados existem no nome do cliente.
 
 ---
 
-## Sessão 2026-04-10 — Diagnóstico e Correção de Performance
+## Sessão 2026-04-13 — CORS + protocolTimeout
 
-### Problema reportado
-Cliente digitou mensagem às 17:51, foi respondida às 18:00 (~9 minutos de delay). Menu apareceu duplicado.
-
-### Causa raiz identificada
-5 scans completos da coleção `clientes` em sequência por mensagem recebida. Com Railway → Firestore, cada scan levava 3–8s. Mais 12s de debounce = latência total de ~25–30s no pior caso.
-
-### Correções aplicadas
-
-#### Bug 1 — Scans completos no Firestore
-Todas as funções de busca em `funcoes-firebase.js` faziam `db.collection('clientes').get()` sem filtro.
-
-```js
-// ANTES — scan de TODOS os clientes
-const snapshot = await db.collection('clientes').get();
-
-// DEPOIS — query indexada
-const snap = await db.collection('clientes')
-    .where('telefones', 'array-contains', v).limit(1).get();
-```
-
-Funções corrigidas: `buscarStatusCliente`, `buscarClientePorCPF`, `buscarClientePorTelefone`, `buscarClientePorNome` (parcial — limit 500), `buscarPromessa` (limit 100).
-
-#### Bug 2 — Scan redundante em fluxoService.js
-Após identificar cliente por telefone, o código fazia `buscarClientePorNome` de novo para obter o objeto completo. Removido — `buscarStatusCliente` já retorna `id` junto.
-
-#### Bug 3 — Menu duplicado no Mensagem.js
-Nos blocos `fluxoAtivo === 'menu'` e `fluxoAtivo === 'menu_financeiro'`, quando o texto não era reconhecido, o código chamava `state.encerrarFluxo` + `state.iniciar` antes de reenviar o menu, causando dois envios. Corrigido: texto não reconhecido apenas reenvia sem alterar o estado.
-
-#### Bug 4 — N+1 nos endpoints do painel (routes/index.js)
-Quatro endpoints faziam loop individual de histórico por cliente. Todos corrigidos para usar campo `status` direto do documento (O(n) em vez de O(3n)).
+- `fly secrets set ALLOWED_ORIGINS=https://jme-bot.vercel.app`
+- `protocolTimeout` aumentado de 120000 para 240000
 
 ---
 
-## Arquivos Entregues e Localizações
+## Sessão 2026-04-12 — Retry no debounce (ProtocolError)
 
-| Arquivo entregue | Caminho no projeto | Última atualização |
+Retry de 5s no debounce do `Mensagem.js` para `ProtocolError` — mensagem não é mais perdida silenciosamente.
+
+---
+
+## Sessão 2026-04-12 — Estabilidade WhatsApp + Fly.io
+
+- `killZombieBrowser()` antes de cada inicialização
+- Reconexão automática no `disconnected` (30s)
+- `unhandledRejection` global
+- `[[restart]] policy=always` no `fly.toml`
+- Removido `--single-process` e `--max-old-space-size=256`
+
+---
+
+## Sessão 2026-04-11
+
+- `!cobrar` sem `ADMINISTRADORES` — corrigido em `Mensagem.js`
+- Loop infinito no fluxo de comprovante — refatoração completa do `comprovante.js`
+- Busca tolerante de nome (`buscarNomeToleranteComprovante`)
+
+---
+
+## Sessão 2026-04-10 — Performance Firestore
+
+5 scans completos por mensagem causavam ~9min de delay. Todas as funções de busca migradas para queries indexadas. N+1 no dashboard corrigido.
+
+---
+
+## Arquivos e Localizações
+
+| Arquivo | Caminho | Última atualização |
 |---|---|---|
-| `index.js` | `index.js` | 2026-04-12 |
-| `Mensagem.js` | `middleware/Mensagem.js` | 2026-04-11 |
+| `index.js` | `index.js` | 2026-04-14 |
+| `FirestoreStore.js` | `services/FirestoreStore.js` | 2026-04-14 |
+| `firebase.js` | `config/firebase.js` | 2026-04-13 |
+| `Dockerfile` | `Dockerfile` | 2026-04-13 |
+| `timers.js` | `middleware/timers.js` | 2026-04-13 |
+| `routes/index.js` | `routes/index.js` | 2026-04-13 |
+| `Mensagem.js` | `middleware/Mensagem.js` | 2026-04-12 |
 | `comprovante.js` | `middleware/comprovante.js` | 2026-04-11 |
 | `funcoes-firebase.js` | `database/funcoes-firebase.js` | 2026-04-10 |
 | `fluxoService.js` | `services/fluxoService.js` | 2026-04-10 |
-| `routes-index.js` | `routes/index.js` | 2026-04-10 |
 
 ---
 
-## Pendências / Próximos Passos
+## Pendências
 
-1. **Migration `telefones` (array)** — clientes importados da planilha têm só campo `telefone` (string). As buscas por `array-contains` funcionam mas sempre caem no fallback. Script de migration: para cada cliente sem `telefones`, criar array com o valor de `telefone`. ~10 linhas, alto impacto.
-
-2. **Solução definitiva para `buscarClientePorNome`** — salvar campo `nome_normalizado` em cada documento cliente e criar índice `orderBy('nome_normalizado')` no Firestore. Enquanto isso, `limit(500)` está funcional mas não escala bem acima de 500 clientes.
-
-3. **Rate limiting na API** — não implementado.
-
-4. **TTL em `historico_conversa`** — cresce indefinidamente. `dbSalvarHistorico` faz uma query extra a cada save para limpar. Necessário TTL nativo do Firestore ou job periódico.
-
-5. **Autenticação JWT no painel** — ainda só API key no bundle (não é segredo real).
-
-6. **Health check no Fly.io** — removido temporariamente. Reativar com `grace_period = "180s"` quando o bot estiver estável por alguns dias.
+1. **CRÍTICO**: `client.initialize()` trava após extract — `Promise.race` com timeout implementado mas não testado. Próximo passo: fazer restart e verificar se timeout dispara após 3min e aciona `inicializarWhatsApp(2)`
+2. **Migration `telefones`** — clientes importados da planilha têm só `telefone` (string)
+3. **`buscarClientePorNome`** — ainda usa `limit(500)`
+4. **Rate limiting na API**
+5. **TTL em `historico_conversa`**
+6. **Autenticação JWT no painel**
+7. **Health check Fly.io** — reativar com `grace_period = "180s"`
 
 ---
 
@@ -292,128 +183,24 @@ Quatro endpoints faziam loop individual de histórico por cliente. Todos corrigi
 | Módulo | Status |
 |--------|--------|
 | Frontend (painel admin) | ✅ Funcional |
-| Cobrança automática | ✅ Funcionando |
-| Relatório pós-cobrança (!cobrar) | ✅ Corrigido (2026-04-11) |
+| Cobrança automática D1/D3 | ✅ Funcionando |
+| Relatório pós-cobrança | ✅ Corrigido |
 | Toggle do bot | ✅ Corrigido |
 | SSE | ✅ Estabilizado |
-| Puppeteer/WhatsApp — crash loop | ✅ Resolvido (2026-04-12) |
-| Puppeteer — ProtocolError no debounce | ✅ Resolvido (2026-04-12) |
-| Puppeteer/WhatsApp — lock file zumbi | ✅ Resolvido (2026-04-12) |
-| WhatsApp — reconexão automática | ✅ Implementado (2026-04-12) |
-| Buscas Firestore (bot) | ✅ Corrigido (sem scan total) |
-| Dashboard (painel) | ✅ Corrigido (sem N+1) |
-| Comprovante — fluxo de nome | ✅ Corrigido (sem loop, busca tolerante) |
-| buscarClientePorNome | ⚠️ Parcial (limit 500, sem índice) |
+| CORS dinâmico | ✅ Configurado |
+| RemoteAuth — save/extract | ✅ Funcionando |
+| RemoteAuth — initialize após extract | ⚠️ Trava, Promise.race implementado não testado |
+| Buscas Firestore | ✅ Sem scan total |
+| Dashboard | ✅ Sem N+1 |
+| Comprovante — fluxo de nome | ✅ Sem loop |
+| buscarClientePorNome | ⚠️ Parcial (limit 500) |
 | Migration campo telefones | ⏳ Pendente |
-| Rate limiting na API | ⏳ Pendente |
-| TTL em historico_conversa | ⏳ Pendente |
-| Autenticação JWT no painel | ⏳ Pendente |
-| Health check Fly.io | ⏳ Reativar após estabilização |
+| Rate limiting | ⏳ Pendente |
+| TTL historico_conversa | ⏳ Pendente |
+| JWT painel | ⏳ Pendente |
+| Health check Fly.io | ⏳ Pendente |
 
 ---
 
-## Correções Anteriores (Sessão 2026-04-09)
-
-### 1. Sistema de Status e Frontend
-✅ Inconsistência no campo de status (`pago: true` → `status: 'pago'`)
-✅ Frontend mostrava status incorretos
-✅ Interface "Ciclo atual" vs "Mês corrente" corrigida
-✅ ADMIN_PHONE sem 9º dígito corrigido
-
-### 2. Cobrança Automática — 3 bugs encadeados
-✅ `adminService.js` — parâmetros invertidos no wrapper
-✅ `timers.js` — wrapper não repassava `clientes` nem `ADMINISTRADORES`
-✅ `cobrancaService.js` — campo `telefone` (string) vs `telefones` (array) descartava todos os clientes
-
-### 3. Puppeteer — crash loop
-`protocolTimeout: 120000` + retry automático com backoff progressivo.
-
-### 4. PayloadTooLargeError
-```js
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-```
-
-### 5. SSE — acúmulo de conexões
-Flag `_reconectando` no frontend evita múltiplas reconexões simultâneas.
-
-### 6. Toggle do bot — 401
-`toggleBot` no `App.jsx` não passava o header de autenticação.
-
----
-
----
-
-## Sessão 2026-04-13
-
-### 1. CORS bloqueando o painel admin
-**Sintoma:** Painel (`jme-bot.vercel.app`) não carregava nada. Logs mostravam `Error: CORS bloqueado para origem: https://jme-bot.vercel.app` em loop.
-
-**Causa:** O `index.js` foi atualizado na sessão anterior com CORS dinâmico via `process.env.ALLOWED_ORIGINS`, mas o secret não havia sido configurado no Fly.io. A variável ficou vazia, bloqueando toda origem.
-
-**Correção:**
-```bash
-fly secrets set ALLOWED_ORIGINS=https://jme-bot.vercel.app -a jme-bot-backend
-```
-O Fly.io reiniciou o container automaticamente e o painel voltou a funcionar.
-
----
-
-### 2. WhatsApp não inicializava após restart
-**Sintoma:** Após o restart causado pelo `fly secrets set`, o backend subia normal (Firebase ok, Express na porta 3001, SSE conectando), mas nenhum log de WhatsApp aparecia — sem QR, sem `ready`, sem erro visível.
-
-**Diagnóstico:**
-- Chrome estava rodando (`ps aux` confirmou processos ativos)
-- Volume `/data` intacto com sessão de 34 arquivos
-- Erro real apareceu ~4 minutos depois: `Runtime.callFunctionOn timed out`
-
-**Causa:** Sessão de 10 dias sem uso ficou num estado que o Chrome não conseguia carregar dentro do `protocolTimeout: 120000ms`.
-
-**Correção imediata:** Apagar sessão e gerar novo QR:
-```bash
-fly ssh console -a jme-bot-backend
-rm -rf /data/.wwebjs_auth/session
-exit
-fly machines restart -a jme-bot-backend
-```
-Novo QR gerado em `/qr`, WhatsApp reconectado.
-
-**Correção permanente** (previne recorrência): aumentar `protocolTimeout` no `index.js`:
-```js
-puppeteer: {
-    protocolTimeout: 240000,  // era 120000
-    ...
-}
-```
-
----
-
-### Status dos Módulos (atualizado)
-
-| Módulo | Status |
-|--------|--------|
-| Frontend (painel admin) | ✅ Funcional |
-| Cobrança automática | ✅ Funcionando |
-| Relatório pós-cobrança (!cobrar) | ✅ Corrigido (2026-04-11) |
-| Toggle do bot | ✅ Corrigido |
-| SSE | ✅ Estabilizado |
-| CORS dinâmico via env | ✅ Implementado + secret configurado (2026-04-13) |
-| Puppeteer — protocolTimeout | ✅ Aumentado para 240s (2026-04-13) |
-| Puppeteer/WhatsApp — crash loop | ✅ Resolvido (2026-04-12) |
-| Puppeteer — ProtocolError no debounce | ✅ Resolvido (2026-04-12) |
-| Puppeteer/WhatsApp — lock file zumbi | ✅ Resolvido (2026-04-12) |
-| WhatsApp — reconexão automática | ✅ Implementado (2026-04-12) |
-| Buscas Firestore (bot) | ✅ Corrigido (sem scan total) |
-| Dashboard (painel) | ✅ Corrigido (sem N+1) |
-| Comprovante — fluxo de nome | ✅ Corrigido (sem loop, busca tolerante) |
-| buscarClientePorNome | ⚠️ Parcial (limit 500, sem índice) |
-| Migration campo telefones | ⏳ Pendente |
-| Rate limiting na API | ⏳ Pendente |
-| TTL em historico_conversa | ⏳ Pendente |
-| Autenticação JWT no painel | ⏳ Pendente |
-| Health check Fly.io | ⏳ Reativar após estabilização |
-
----
-
-**Última atualização**: 2026-04-13
+**Última atualização**: 2026-04-14
 **Responsável**: Equipe JMENET

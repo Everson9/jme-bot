@@ -34,7 +34,7 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key
     && rm -rf /var/lib/apt/lists/*
 
 # Define o diretório de trabalho
-WORKDIR /opt/render/project/src
+WORKDIR /app
 
 # Copia os arquivos de dependência primeiro (para melhor cache do Docker)
 COPY package*.json ./
