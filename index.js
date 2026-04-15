@@ -135,12 +135,13 @@ const utils = criarUtils(groqChatFallback);
 function criarNovoClient() {
     const c = new Client({
         authStrategy: new RemoteAuth({
-            store,  // <-- usa o store que você já criou
+            store,
             backupSyncIntervalMs: 300000,
             clientId: 'jme-bot-render'
         }),
         puppeteer: {
             headless: true,
+            executablePath: '/usr/bin/chromium',  // caminho fixo
             protocolTimeout: 240000,
             args: [
                 '--no-sandbox',
