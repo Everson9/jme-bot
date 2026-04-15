@@ -6,7 +6,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
-const FirestoreStore = require('./services/FirestoreStore');
+
 
 process.on('unhandledRejection', (reason) => {
     console.error('⚠️ UnhandledRejection capturado:', reason);
@@ -19,6 +19,7 @@ const criarFluxoFinanceiro   = require('./fluxos/financeiro');
 const criarFluxoPromessa     = require('./fluxos/promessa');
 const criarFluxoNovoCliente  = require('./fluxos/novoCliente');
 const criarFluxoCancelamento = require('./fluxos/cancelamento');
+const FirestoreStore = require('./services/FirestoreStore');
 
 // ── Serviços ──────────────────────────────────────────
 const { dispararCobrancaReal }          = require('./services/cobrancaService');
@@ -42,11 +43,16 @@ const { configurarMensagens } = require('./middleware/Mensagem');
 const iniciarTimers     = require('./middleware/timers');
 const StateManager = require('./stateManager');
 const criarUtils   = require('./shared/utils');
-
+const store = new FirestoreStore({ db: firebaseDb, admin });
 // =====================================================
 // CONFIGURAÇÕES
 // =====================================================
 const DATA_PATH = (() => {
+     if (process.env.RENDER) {
+        const renderPath = '/tmp/data';
+        if (!fs.existsSync(renderPath)) fs.mkdirSync(renderPath, { recursive: true });
+        return renderPath;
+    }
     if (process.env.RAILWAY_VOLUME_MOUNT_PATH) return process.env.RAILWAY_VOLUME_MOUNT_PATH;
     if (process.env.FLY_VOLUME_MOUNT_PATH)     return process.env.FLY_VOLUME_MOUNT_PATH;
     if (process.env.FLY_MOUNT_DIR)             return process.env.FLY_MOUNT_DIR;
@@ -124,13 +130,14 @@ const utils = criarUtils(groqChatFallback);
 // no mesmo objeto — por isso recriamos o client inteiro
 // a cada tentativa falha.
 // =====================================================
-const store = new FirestoreStore({ db: firebaseDb, admin });
+
 
 function criarNovoClient() {
     const c = new Client({
         authStrategy: new RemoteAuth({
-            store,
+            store,  // <-- usa o store que você já criou
             backupSyncIntervalMs: 300000,
+            clientId: 'jme-bot-render'
         }),
         puppeteer: {
             headless: true,
@@ -142,36 +149,77 @@ function criarNovoClient() {
                 '--disable-gpu',
                 '--no-first-run',
                 '--no-zygote',
+                '--disable-extensions',
+                '--disable-background-networking',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-sync',
+                '--disable-translate',
+                '--hide-scrollbars',
+                '--metrics-recording-only',
+                '--mute-audio',
+                '--no-default-browser-check',
+                '--safebrowsing-disable-auto-update',
+                '--disable-features=TranslateUI,BlinkGenPropertyTrees,site-per-process',
             ]
         }
     });
 
     c.on('qr', (qr) => {
         ultimoQR = qr;
-        console.log('QR Code gerado. Acesse /qr para escanear.');
+        console.log('📱 QR Code gerado');
     });
 
-    c.on('remote_session_saved', () => {
-        console.log('☁️  Sessão salva no Firestore com sucesso.');
-    });
+    c.on('ready', async () => {
+    console.log('✅ WhatsApp conectado!');
+    inicializarFluxos();
+    inicializarTimers();
+    botIniciadoEm = Date.now();
 
+    try {
+        const [cfgBot, cfgRede, cfgPrevisao, cfgHorario, cfgCobranca] = await Promise.all([
+            firebaseDb.collection('config').doc('bot_ativo').get(),
+            firebaseDb.collection('config').doc('situacao_rede').get(),
+            firebaseDb.collection('config').doc('previsao_retorno').get(),
+            firebaseDb.collection('config').doc('horario_atendente').get(),
+            firebaseDb.collection('config').doc('horario_cobranca').get(),
+        ]);
+        if (cfgBot.exists)      botAtivo        = cfgBot.data().valor ?? true;
+        if (cfgRede.exists)     situacaoRede    = cfgRede.data().valor ?? 'normal';
+        if (cfgPrevisao.exists) previsaoRetorno = cfgPrevisao.data().valor ?? 'sem previsão';
+        const cfgMotivo = await firebaseDb.collection('config').doc('motivo_rede').get();
+        if (cfgMotivo.exists)   motivoRede      = cfgMotivo.data().valor ?? '';
+        if (cfgHorario.exists)  Object.assign(horarioFuncionamento, cfgHorario.data());
+        if (cfgCobranca.exists) Object.assign(horarioCobranca, cfgCobranca.data());
+        console.log(`⚙️  Config restaurada: bot=${botAtivo ? 'ON' : 'OFF'} | rede=${situacaoRede}`);
+    } catch(e) { console.error('⚠️  Erro ao restaurar config:', e.message); }
+
+    sseService.broadcast();
+
+    try {
+        const atendimentos = await banco.dbCarregarAtendimentosHumanos();
+        atendimentos.forEach(a => state.setAtendimentoHumano(a.numero, true));
+        if (atendimentos.length > 0) console.log(`👤 ${atendimentos.length} atendimento(s) humano(s) restaurado(s)`);
+    } catch(e) { console.error('⚠️  Erro ao restaurar atendimentos:', e.message); }
+
+    const NUMERO_TESTE = '558187500456@c.us';
+    if (state.limpar) state.limpar(NUMERO_TESTE);
+    if (banco.dbLimparHistorico) await banco.dbLimparHistorico(NUMERO_TESTE);
+
+    console.log(`\n🚀 JMENET: Sistema online!`);
+    console.log(`🤖 Bot IA: ${botAtivo ? 'LIGADO ✅' : 'DESLIGADO ❌'}`);
+    console.log(`📡 Rede: ${situacaoRede} | Previsão: ${previsaoRetorno}`);
+    console.log(`🔥 Banco de dados: Firebase Firestore`);
+});
     c.on('disconnected', async (reason) => {
         console.log('WhatsApp desconectado:', reason);
         botIniciadoEm = null;
-        sseService.broadcast();
-        console.log('🔄 Reconectando em 30s...');
         await new Promise(r => setTimeout(r, 30000));
-        client = criarNovoClient();
         inicializarWhatsApp();
-    });
-
-    c.on('auth_failure', (msg) => {
-        console.error('❌ Falha na autenticação WhatsApp:', msg);
     });
 
     return c;
 }
-
 let client = criarNovoClient();
 
 // =====================================================
@@ -198,6 +246,18 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+
+// =====================================================
+// MIDDLEWARE DE AUTENTICAÇÃO
+// =====================================================
+const requireAuth = require('./middleware/auth');
+
+// Aplica autenticação para TODAS as rotas que começam com /api
+app.use('/api', requireAuth);
+
+// =====================================================
+// ROTAS PÚBLICAS (não precisam de autenticação)
+// =====================================================
 app.get('/qr', async (req, res) => {
     if (!ultimoQR) return res.status(404).send('Nenhum QR Code disponível.');
     try { res.type('png').send(await QRCode.toBuffer(ultimoQR, { type: 'png', margin: 1 })); }
@@ -382,75 +442,41 @@ function inicializarTimers() {
 // =====================================================
 // READY
 // =====================================================
-client.on('ready', async () => {
-    inicializarFluxos();
-    inicializarTimers();
-    botIniciadoEm = Date.now();
 
-    try {
-        const [cfgBot, cfgRede, cfgPrevisao, cfgHorario, cfgCobranca] = await Promise.all([
-            firebaseDb.collection('config').doc('bot_ativo').get(),
-            firebaseDb.collection('config').doc('situacao_rede').get(),
-            firebaseDb.collection('config').doc('previsao_retorno').get(),
-            firebaseDb.collection('config').doc('horario_atendente').get(),
-            firebaseDb.collection('config').doc('horario_cobranca').get(),
-        ]);
-        if (cfgBot.exists)      botAtivo        = cfgBot.data().valor ?? true;
-        if (cfgRede.exists)     situacaoRede    = cfgRede.data().valor ?? 'normal';
-        if (cfgPrevisao.exists) previsaoRetorno = cfgPrevisao.data().valor ?? 'sem previsão';
-        const cfgMotivo = await firebaseDb.collection('config').doc('motivo_rede').get();
-        if (cfgMotivo.exists)   motivoRede      = cfgMotivo.data().valor ?? '';
-        if (cfgHorario.exists)  Object.assign(horarioFuncionamento, cfgHorario.data());
-        if (cfgCobranca.exists) Object.assign(horarioCobranca, cfgCobranca.data());
-        console.log(`⚙️  Config restaurada: bot=${botAtivo ? 'ON' : 'OFF'} | rede=${situacaoRede}`);
-    } catch(e) { console.error('⚠️  Erro ao restaurar config:', e.message); }
-
-    sseService.broadcast();
-
-    try {
-        const atendimentos = await banco.dbCarregarAtendimentosHumanos();
-        atendimentos.forEach(a => state.setAtendimentoHumano(a.numero, true));
-        if (atendimentos.length > 0) console.log(`👤 ${atendimentos.length} atendimento(s) humano(s) restaurado(s)`);
-    } catch(e) { console.error('⚠️  Erro ao restaurar atendimentos:', e.message); }
-
-    const NUMERO_TESTE = '558187500456@c.us';
-    if (state.limpar) state.limpar(NUMERO_TESTE);
-    if (banco.dbLimparHistorico) await banco.dbLimparHistorico(NUMERO_TESTE);
-
-    console.log(`\n🚀 JMENET: Sistema online!`);
-    console.log(`🤖 Bot IA: ${botAtivo ? 'LIGADO ✅' : 'DESLIGADO ❌'}`);
-    console.log(`📡 Rede: ${situacaoRede} | Previsão: ${previsaoRetorno}`);
-    console.log(`🔥 Banco de dados: Firebase Firestore`);
-});
 
 // =====================================================
 // KILL ZOMBIE BROWSER
 // =====================================================
 async function killZombieBrowser() {
-    const patterns = [
-        '.wwebjs_auth',
-        'chromium-browser',
-        '\\.local-chromium',
-        'RemoteAuth',
+    // Mata TUDO que for Chrome/Chromium com -9 (força total)
+    const cmds = [
+        'pkill -9 -f "google-chrome" 2>/dev/null || true',
+        'pkill -9 -f "chromium" 2>/dev/null || true',
+        'pkill -9 -f "chrome" 2>/dev/null || true',
+        'pkill -9 -f "puppeteer" 2>/dev/null || true',
+        'pkill -9 -f ".wwebjs" 2>/dev/null || true',
+        'pkill -9 -f "RemoteAuth" 2>/dev/null || true',
     ];
-    for (const p of patterns) {
-        try { execSync(`pkill -f "${p}" 2>/dev/null || true`); } catch (_) {}
+    for (const cmd of cmds) {
+        try { execSync(cmd); } catch (_) {}
     }
 
-    const possiveisLocks = [
+    // Remove lock files
+    const locks = [
         path.join(DATA_PATH, '.wwebjs_auth', 'session', 'SingletonLock'),
         path.join('/tmp', '.wwebjs_auth', 'session', 'SingletonLock'),
     ];
-    for (const lockPath of possiveisLocks) {
+    for (const lockPath of locks) {
         try {
             if (fs.existsSync(lockPath)) {
                 fs.unlinkSync(lockPath);
-                console.log(`🧹 Lock file removido: ${lockPath}`);
+                console.log(`🧹 Lock removido: ${lockPath}`);
             }
         } catch (_) {}
     }
 
-    await new Promise(r => setTimeout(r, 3000));
+    // Espera mais longa para garantir que os processos morreram e RAM foi liberada
+    await new Promise(r => setTimeout(r, 6000));
 }
 
 // =====================================================
@@ -487,57 +513,61 @@ async function limparSessaoFirestore() {
 // força o catch e aciona o retry.
 // =====================================================
 async function inicializarWhatsApp(tentativa = 1) {
-    console.log(`🧹 Limpando processos anteriores... (tentativa ${tentativa})`);
+    console.log(`🔄 Tentativa ${tentativa}...`);
+    
+    // Mata processos zumbis
     await killZombieBrowser();
-
-    // Após 3 falhas, limpa sessão e pede QR
-    if (tentativa >= 4) {
-        console.log('⚠️ Muitas falhas consecutivas — limpando sessão e pedindo QR...');
-        await limparSessaoFirestore();
-        await new Promise(r => setTimeout(r, 3000));
-    }
-
-    // Recria o client a cada tentativa — não é possível reutilizar
-    // um Client que já falhou no initialize()
-    client = criarNovoClient();
-
-    // Propaga o novo client para os contextos que dependem dele
-    ctxRotas.client;      // getter dinâmico — já aponta para o let
-    // (os getters 'get client()' nos contextos já usam o let, ok)
+    
+    // Limpa lock files se existirem
+    const lockPath = path.join(DATA_PATH, 'session', 'SingletonLock');
+    try {
+        if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
+    } catch(e) {}
+    
 
     try {
-        await Promise.race([
-            client.initialize(),
-            new Promise((_, reject) =>
-                setTimeout(
-                    () => reject(new Error('initialize timeout após 3min')),
-                    3 * 60 * 1000
-                )
-            )
-        ]);
-    } catch (err) {
-        console.error(`❌ Erro ao inicializar WhatsApp (tentativa ${tentativa}):`, err.message);
-
-        const ehRecuperavel =
-            err.message?.includes('Execution context was destroyed') ||
-            err.message?.includes('context was destroyed') ||
-            err.message?.includes('most likely because of a navigation') ||
-            err.message?.includes('Session closed') ||
-            err.message?.includes('initialize timeout');
-
-        if (ehRecuperavel && tentativa < 4) {
-            const delay = tentativa * 15000; // 15s, 30s, 45s
-            console.log(`🔄 Sessão preservada. Novo client em ${delay / 1000}s...`);
-            await new Promise(r => setTimeout(r, delay));
-            return inicializarWhatsApp(tentativa + 1);
+    // Força matar o Chrome completamente
+    await killZombieBrowser();
+    
+    // Limpa a sessão local FORÇADAMENTE
+    const sessionDirs = [
+        path.join(DATA_PATH, 'session'),
+        path.join(DATA_PATH, '.wwebjs_auth'),
+        path.join(DATA_PATH, 'SingletonLock'),
+        '/tmp/.wwebjs_auth'
+    ];
+    
+    for (const dir of sessionDirs) {
+        if (fs.existsSync(dir)) {
+            fs.rmSync(dir, { recursive: true, force: true });
+            console.log(`🗑️ Removido: ${dir}`);
         }
+    }
+} catch(e) { console.log('Erro ao limpar:', e.message); }
 
-        const delay = Math.min(tentativa * 30000, 300000);
-        console.log(`🔄 Tentando novamente em ${delay / 1000}s...`);
-        setTimeout(() => inicializarWhatsApp(tentativa + 1), delay);
+    client = criarNovoClient();
+    
+    // Handler de QR
+    client.on('qr', (qr) => {
+        ultimoQR = qr;
+        console.log('📱 QR Code gerado. Acesse /qr');
+    });
+    
+    try {
+        await client.initialize();
+        console.log('✅ WhatsApp inicializado!');
+    } catch (err) {
+        console.error(`❌ Erro (tentativa ${tentativa}):`, err.message);
+        
+        if (tentativa < 5) {
+            const delay = tentativa * 10000;
+            console.log(`🔄 Nova tentativa em ${delay/1000}s...`);
+            setTimeout(() => inicializarWhatsApp(tentativa + 1), delay);
+        }
     }
 }
 
+// INICIA O BOT
 inicializarWhatsApp();
 
 const PORT = process.env.PORT || 3001;

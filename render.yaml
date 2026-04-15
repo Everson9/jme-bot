@@ -1,15 +1,9 @@
 services:
   - type: web
-    name: jme-bot
-    runtime: image
-    plan: free
-    dockerfilePath: ./Dockerfile
-    envVars:
-      - key: GROQ_API_KEY
-        sync: false
-      - key: PORT
-        value: 3001
-      - key: VITE_API_URL
-        value: https://jme-bot.onrender.com
-      - key: PLANILHA_ID
-        sync: false
+    name: jme-bot-backend
+    runtime: node
+    repo: https://github.com/Everson9/jme-bot
+    branch: main
+    buildCommand: npm install
+    startCommand: node index.js
+    # NÃO coloque envVars aqui!

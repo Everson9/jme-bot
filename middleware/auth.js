@@ -7,15 +7,18 @@
 // =====================================================
 
 const ROTAS_PUBLICAS = [
-    '/api/health',
-    '/api/status-stream',
-    '/api/status',
-    '/qr',
+    '/health',
+    '/status-stream',
+    '/status',
 ];
 
 function requireAuth(req, res, next) {
     // Se não tem chave configurada, permite tudo (modo desenvolvimento)
     if (!process.env.ADMIN_API_KEY) return next();
+
+    // /qr fica fora do prefixo /api — trata pelo originalUrl
+    const fullPath = req.originalUrl.split('?')[0];
+    if (fullPath === '/qr') return next();
 
     // Rotas públicas não precisam de auth
     if (ROTAS_PUBLICAS.some(r => req.path === r || req.path.startsWith(r + '/'))) {

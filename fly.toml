@@ -17,6 +17,12 @@ primary_region = 'gru'
   [http_service.http_options]
     idle_timeout = 600
 
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "10s"
+    grace_period = "180s"
+    method = "GET"
+    path = "/api/health"
 
 [mounts]
   source = "whatsapp_session"
@@ -26,7 +32,7 @@ primary_region = 'gru'
   policy = "always"
   max_retries = 10
 
-[[vm]]
-  memory = "1024mb"
+[machine]
+  memory = "1024"
   cpu_kind = "shared"
   cpus = 1
