@@ -48,14 +48,16 @@ const store = new FirestoreStore({ db: firebaseDb, admin });
 // CONFIGURAÇÕES
 // =====================================================
 const DATA_PATH = (() => {
-     if (process.env.RENDER) {
+    if (process.env.RAILWAY) {
+        const railwayPath = '/app/data';
+        if (!fs.existsSync(railwayPath)) fs.mkdirSync(railwayPath, { recursive: true });
+        return railwayPath;
+    }
+    if (process.env.RENDER) {
         const renderPath = '/tmp/data';
         if (!fs.existsSync(renderPath)) fs.mkdirSync(renderPath, { recursive: true });
         return renderPath;
     }
-    if (process.env.RAILWAY_VOLUME_MOUNT_PATH) return process.env.RAILWAY_VOLUME_MOUNT_PATH;
-    if (process.env.FLY_VOLUME_MOUNT_PATH)     return process.env.FLY_VOLUME_MOUNT_PATH;
-    if (process.env.FLY_MOUNT_DIR)             return process.env.FLY_MOUNT_DIR;
     return '/data';
 })();
 console.log(`📁 Dados persistentes em: ${DATA_PATH}`);
@@ -137,11 +139,10 @@ function criarNovoClient() {
         authStrategy: new RemoteAuth({
             store,
             backupSyncIntervalMs: 300000,
-            clientId: 'jme-bot-render'
+           clientId: 'jme-bot-railway-' + Date.now()
         }),
         puppeteer: {
             headless: true,
-            executablePath: '/usr/bin/chromium',  // caminho fixo
             protocolTimeout: 240000,
             args: [
                 '--no-sandbox',
