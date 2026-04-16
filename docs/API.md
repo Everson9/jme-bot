@@ -14,7 +14,8 @@ x-api-key: YOUR_ADMIN_API_KEY
 
 ```
 Desenvolvimento: http://localhost:3001
-Produção: https://seu-dominio.fly.dev
+Produção (Railway): https://jme-bot-backend-production.up.railway.app
+Produção (Fly.io - legado): https://jme-bot-backend.fly.dev
 ```
 
 ---

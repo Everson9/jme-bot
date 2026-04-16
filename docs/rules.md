@@ -88,10 +88,13 @@ const hist = await db.collection('clientes').doc(id)
 
 ### Variaveis criticas (Railway secrets)
 ```
-FIREBASE_CREDENTIALS_JSON  — se vazio, banco nao conecta
-GROQ_API_KEY               — se vazio, classificacao de intencao falha
-ADMIN_API_KEY              — se vazio, API fica aberta
-PORT                       — padrao 3001
+FIREBASE_CREDENTIALS_JSON — se vazio, banco nao conecta
+GROQ_API_KEY — se vazio, classificacao de intencao falha
+ADMIN_API_KEY — se vazio, API fica aberta
+ALLOWED_ORIGINS — URLs permitidas (ex: https://jme-bot.vercel.app,https://*.vercel.app)
+PORT — Railway define automaticamente (8080)
+
+
 ```
 
 ### Endpoint /qr — risco critico

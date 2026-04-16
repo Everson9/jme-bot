@@ -367,7 +367,15 @@ Ver [SKILL: Firestore Performance](../.cursor/skills/firestore-custos-performanc
 
 ## 🚀 Deploy
 
-### Backend (Fly.io)
+### Backend (Railway - atual)
+
+- Build Command: `npm install && npx puppeteer browsers install chrome`
+- Start Command: `node index.js`
+- Variáveis de ambiente configuradas no dashboard
+- Porta definida automaticamente (Railway usa 8080)
+- Sessão WhatsApp persistente via RemoteAuth + Firebase Storage
+
+### Backend (Fly.io - legado)
 
 - Volume persistente em `/data` para sessão WhatsApp
 - Variáveis de ambiente via `fly secrets`
@@ -380,6 +388,7 @@ Ver [SKILL: Firestore Performance](../.cursor/skills/firestore-custos-performanc
 - CDN global
 - Variáveis `VITE_*` em build time
 - Auto-deploy no push para `main`
+- `VITE_API_URL` deve apontar para o backend (Railway ou Fly.io)
 
 ## 📊 Monitoramento
 

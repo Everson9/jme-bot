@@ -1,11 +1,11 @@
 # Histórico de Desenvolvimento - JME-BOT
 
-## Status Atual (2026-04-14)
+## Status Atual (2026-04-16)
 - ✅ Sistema de cobrança automática FUNCIONANDO
 - ✅ Cobrança D3 corrigida — `[object Object]` resolvido
 - ✅ Relatório pós-cobrança chegando nos admins
 - ✅ Frontend (Vercel) funcionando
-- ✅ Backend (Fly.io) estável — região: gru (São Paulo)
+- ✅ Backend (Railway) estável — sessão persistente via RemoteAuth
 - ✅ SSE estabilizado (sem acúmulo de conexões)
 - ✅ Botão toggle do bot corrigido (401 resolvido)
 - ✅ Scans completos do Firestore eliminados (resolvido 2026-04-10)
@@ -20,12 +20,12 @@
 - ✅ CORS dinâmico via env + secret configurado
 - ✅ Puppeteer protocolTimeout = 240s
 - ✅ RemoteAuth + Firebase Storage implementado — sessão salva e extraída com sucesso
-- ⚠️ **PROBLEMA ABERTO**: `client.initialize()` trava após extract da sessão do Storage — `Execution context was destroyed` durante `inject` não é capturado pelo `catch`, processo fica pendurado indefinidamente sem pedir QR nem fazer retry
+- ✅ **Migração do Fly.io para Railway** — resolvido problema de memória (Railway com 512MB ainda é limite, mas funcionou após ajustes)
 - ⚠️ `buscarClientePorNome` ainda usa scan com limit(500)
 - ⏳ Migration do campo `telefones` (array) pendente
 
 ## Stack
-- **Backend**: Node.js + Express + whatsapp-web.js → Fly.io
+- **Backend**: Node.js + Express + whatsapp-web.js → **Railway** (anteriormente Fly.io)
 - **Frontend**: React + Vite → Vercel
 - **Banco**: Firebase Firestore
 - **Storage**: Firebase Storage (sessão WhatsApp em `whatsapp_session/RemoteAuth.zip`)
@@ -149,6 +149,30 @@ Retry de 5s no debounce do `Mensagem.js` para `ProtocolError` — mensagem não 
 
 ---
 
+## Sessão 2026-04-16 — Migração para Railway
+
+### Problema original
+Fly.io com 256MB de RAM era insuficiente para rodar o Chromium. O plano gratuito não permitia 1GB sem pagamento.
+
+### Solução implementada
+Migração para Railway com trial de $5 e 512MB de RAM.
+
+### Desafios encontrados
+1. **Permissão de escrita**: `DATA_PATH` ajustado para `/data` (Railway) ou `/tmp/data` (Render)
+2. **Firebase Storage**: Service account precisou de papel `Storage Admin` no Google Cloud IAM
+3. **CORS**: Necessário adicionar `https://*.vercel.app` para permitir previews do Vercel
+4. **Chrome/Chromium**: Railway não tem Chromium pré-instalado; usado `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false` e instalado via build
+
+### Configuração final Railway
+- **Build Command**: `npm install && npx puppeteer browsers install chrome`
+- **Variáveis críticas**: `NODE_ENV=production`, `FIREBASE_CREDENTIALS_JSON`, `ALLOWED_ORIGINS`
+- **Porta**: Railway define automaticamente (8080)
+
+### Status atual
+- ✅ Backend rodando em `https://jme-bot-backend-production.up.railway.app`
+- ✅ Frontend no Vercel apontando para Railway
+- ✅ Sessão WhatsApp persistente via RemoteAuth
+
 ## Arquivos e Localizações
 
 | Arquivo | Caminho | Última atualização |
@@ -178,8 +202,6 @@ Retry de 5s no debounce do `Mensagem.js` para `ProtocolError` — mensagem não 
 
 ---
 
-## Status dos Módulos
-
 | Módulo | Status |
 |--------|--------|
 | Frontend (painel admin) | ✅ Funcional |
@@ -189,7 +211,7 @@ Retry de 5s no debounce do `Mensagem.js` para `ProtocolError` — mensagem não 
 | SSE | ✅ Estabilizado |
 | CORS dinâmico | ✅ Configurado |
 | RemoteAuth — save/extract | ✅ Funcionando |
-| RemoteAuth — initialize após extract | ⚠️ Trava, Promise.race implementado não testado |
+| RemoteAuth — initialize após extract | ✅ **Funcionando no Railway** |
 | Buscas Firestore | ✅ Sem scan total |
 | Dashboard | ✅ Sem N+1 |
 | Comprovante — fluxo de nome | ✅ Sem loop |
@@ -198,9 +220,6 @@ Retry de 5s no debounce do `Mensagem.js` para `ProtocolError` — mensagem não 
 | Rate limiting | ⏳ Pendente |
 | TTL historico_conversa | ⏳ Pendente |
 | JWT painel | ⏳ Pendente |
-| Health check Fly.io | ⏳ Pendente |
 
----
-
-**Última atualização**: 2026-04-14
+**Última atualização**: 2026-04-16
 **Responsável**: Equipe JMENET

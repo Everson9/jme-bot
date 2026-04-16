@@ -12,7 +12,8 @@ Guiar diagnóstico e recuperação do serviço (bot + API + painel) com mínimo 
 ## Contexto do projeto (essencial)
 
 - **Backend**: `index.js` (Express + WhatsApp client).
-- **Sessão WhatsApp**: `LocalAuth` persistido em `/data/.wwebjs_auth` (em Fly via mount).
+- **Plataforma atual**: **Railway** (anteriormente Fly.io)
+- **Sessão WhatsApp**: `RemoteAuth` com Firebase Storage (não depende de volume local)
 - **Endpoints úteis**:
   - `GET /api/health` (saúde)
   - `GET /api/status` (status resumido)
@@ -30,15 +31,15 @@ Guiar diagnóstico e recuperação do serviço (bot + API + painel) com mínimo 
 ## Variáveis de ambiente críticas
 
 - **Firebase**
-  - `FIREBASE_CREDENTIALS_JSON` (produção)
+  - `FIREBASE_CREDENTIALS_JSON` (produção) — necessário para RemoteAuth
 - **LLM (fallback/extração)**
   - `GROQ_API_KEY`
 - **Admin API**
   - `ADMIN_API_KEY` (se vazio, **API fica aberta**)
+- **CORS**
+  - `ALLOWED_ORIGINS` (ex: `https://jme-bot.vercel.app,https://*.vercel.app`)
 - **Porta**
-  - `PORT` (padrão 3001)
-- **Migração/planilha**
-  - `PLANILHA_ID` (se usar)
+  - `PORT` (Railway define 8080 automaticamente)
 
 ## Playbooks
 

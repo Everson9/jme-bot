@@ -43,6 +43,17 @@ Primeira versão funcional do JME-BOT.
 - 🔌 Monitoramento de status do bot
 - 🖼️ QR Code para conexão WhatsApp
 
+### Changed
+- 🔄 **Infraestrutura**: Migração do backend do Fly.io para Railway
+- 🔧 **Deploy**: Build Command agora inclui `npx puppeteer browsers install chrome`
+- 🔐 **CORS**: Adicionado suporte para `https://*.vercel.app` (previews do Vercel)
+- 📁 **DATA_PATH**: Ajustado para Railway (`/data`) e Render (`/tmp/data`)
+
+### Fixed
+- ✅ **Permissão Firebase Storage**: Adicionado papel `Storage Admin` à service account
+- ✅ **Chrome não encontrado**: Instalação explícita via `puppeteer browsers install chrome`
+- ✅ **CORS bloqueando previews**: Adicionado wildcard para `.vercel.app`
+
 ### Componentes Implementados
 
 #### Backend

@@ -13,9 +13,10 @@ description: Hardening de segurança para jme-bot: segredos (Firebase/Groq), rot
 ## Checklist de segredos
 
 - [ ] `.env` não deve ser commitado (ver `.gitignore`)
-- [ ] `FIREBASE_CREDENTIALS_JSON` deve estar só no ambiente (Fly/Render secrets)
+- [ ] `FIREBASE_CREDENTIALS_JSON` deve estar só no ambiente (Railway secrets)
 - [ ] `GROQ_API_KEY` idem
 - [ ] `ADMIN_API_KEY` definido em produção (senão API fica aberta)
+- [ ] `ALLOWED_ORIGINS` configurado com as URLs corretas (Vercel + Railway)
 
 ## Rotação (quando suspeitar de vazamento)
 
