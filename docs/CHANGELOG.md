@@ -48,11 +48,17 @@ Primeira versão funcional do JME-BOT.
 - 🔧 **Deploy**: Build Command agora inclui `npx puppeteer browsers install chrome`
 - 🔐 **CORS**: Adicionado suporte para `https://*.vercel.app` (previews do Vercel)
 - 📁 **DATA_PATH**: Ajustado para Railway (`/data`) e Render (`/tmp/data`)
+- 📝 **Mensagens de cobrança**: Personalizadas por tipo (lembrete, atraso, reconquista)
+- 📝 **Branding**: Adicionado `🤖 JMENET TELECOM` no topo das mensagens
+- 📝 **Chaves PIX**: Atualizadas para as chaves reais da empresa
 
 ### Fixed
 - ✅ **Permissão Firebase Storage**: Adicionado papel `Storage Admin` à service account
 - ✅ **Chrome não encontrado**: Instalação explícita via `puppeteer browsers install chrome`
 - ✅ **CORS bloqueando previews**: Adicionado wildcard para `.vercel.app`
+- ✅ **Cobrança**: Clientes com `status: promessa` não são mais cobrados
+- ✅ **Mensagens**: Erro ao salvar sessão no Storage (verificação de arquivo zip)
+- ✅ **FirestoreStore**: Adicionada verificação `fs.existsSync` antes do upload
 
 ### Componentes Implementados
 

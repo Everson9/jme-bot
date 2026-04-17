@@ -173,6 +173,45 @@ Migração para Railway com trial de $5 e 512MB de RAM.
 - ✅ Frontend no Vercel apontando para Railway
 - ✅ Sessão WhatsApp persistente via RemoteAuth
 
+
+## Sessão 2026-04-17 — Correções de Cobrança e Mensagens
+
+### Problemas identificados
+1. Clientes com `status: 'promessa'` estavam sendo cobrados
+2. Mensagens de cobrança muito genéricas (todos os tipos usavam o mesmo texto)
+3. Chaves PIX falsas no `mensagemService.js`
+4. Erro ao salvar sessão no Storage (arquivo zip não existia)
+
+### Soluções implementadas
+
+#### 1. Correção no `cobrancaService.js`
+Adicionadas verificações para não cobrar clientes com:
+- `status === 'promessa'`
+- Promessa ativa na collection `promessas`
+
+#### 2. Melhoria no `mensagemService.js`
+Mensagens personalizadas por tipo de cobrança:
+- `lembrete` → 🔔 Lembrete (D-1)
+- `atraso` → ⚠️ Atraso (D+3)
+- `atraso_final` → 🔴 Atraso Final (D+5)
+- `reconquista` → 💙 Reativação (D+7)
+- `reconquista_final` → 💔 Última Chance (D+10)
+
+Adicionado branding `🤖 JMENET TELECOM` no topo de todas as mensagens.
+Chaves PIX reais: `jmetelecomnt@gmail.com` e `+55 81 98750-0456`.
+
+#### 3. Correção no `FirestoreStore.js`
+Adicionada verificação `fs.existsSync(zipPath)` antes do upload para evitar erro `ENOENT`.
+
+### Status atual
+- ✅ Cobrança automática funcionando
+- ✅ Clientes com promessa não são cobrados
+- ✅ Mensagens personalizadas por tipo
+- ✅ Chaves PIX corretas
+- ✅ Sessão salva no Storage sem erros
+
+---
+
 ## Arquivos e Localizações
 
 | Arquivo | Caminho | Última atualização |
@@ -192,13 +231,12 @@ Migração para Railway com trial de $5 e 512MB de RAM.
 
 ## Pendências
 
-1. **CRÍTICO**: `client.initialize()` trava após extract — `Promise.race` com timeout implementado mas não testado. Próximo passo: fazer restart e verificar se timeout dispara após 3min e aciona `inicializarWhatsApp(2)`
+
 2. **Migration `telefones`** — clientes importados da planilha têm só `telefone` (string)
 3. **`buscarClientePorNome`** — ainda usa `limit(500)`
 4. **Rate limiting na API**
 5. **TTL em `historico_conversa`**
 6. **Autenticação JWT no painel**
-7. **Health check Fly.io** — reativar com `grace_period = "180s"`
 
 ---
 
@@ -221,5 +259,6 @@ Migração para Railway com trial de $5 e 512MB de RAM.
 | TTL historico_conversa | ⏳ Pendente |
 | JWT painel | ⏳ Pendente |
 
-**Última atualização**: 2026-04-16
+**Última atualização**: 2026-04-17
+
 **Responsável**: Equipe JMENET
