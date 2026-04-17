@@ -1,3 +1,4 @@
+// services/FirestoreStore.js
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -6,8 +7,8 @@ const BUCKET = 'jme-bot.firebasestorage.app';
 const STORAGE_PATH = 'whatsapp_session/RemoteAuth.zip';
 const COLECAO = 'whatsapp_sessions';
 
-// Throttle: tempo mínimo entre saves (5 minutos)
-const MIN_SAVE_INTERVAL = 30 * 60 * 1000; // 5 minutos
+// Throttle: tempo mínimo entre saves (30 minutos)
+const MIN_SAVE_INTERVAL = 30 * 60 * 1000;
 // Debounce: tempo para acumular múltiplos saves (2 segundos)
 const DEBOUNCE_DELAY = 2000;
 
@@ -32,9 +33,9 @@ class FirestoreStore {
     async save({ session }) {
         const agora = Date.now();
 
-        // THROTTLE: se já salvou nos últimos 5 minutos, ignora
+        // THROTTLE: se já salvou nos últimos 30 minutos, ignora
         if (this._ultimoSave && (agora - this._ultimoSave) < MIN_SAVE_INTERVAL) {
-            console.log('⏭️  Save ignorado (throttle 5min)');
+            console.log('⏭️  Save ignorado (throttle 30min)');
             return;
         }
 
@@ -51,6 +52,14 @@ class FirestoreStore {
         this._saveTimeout = setTimeout(async () => {
             const sessionToSave = this._pendingSession;
             const zipPath = `${sessionToSave}.zip`;
+            
+            // ✅ VERIFICA SE O ARQUIVO EXISTE ANTES DE FAZER UPLOAD
+            if (!fs.existsSync(zipPath)) {
+                console.log(`⚠️ Arquivo ${zipPath} não encontrado, ignorando save`);
+                this._saveTimeout = null;
+                this._pendingSession = null;
+                return;
+            }
             
             try {
                 await this.bucket.upload(zipPath, { destination: STORAGE_PATH });

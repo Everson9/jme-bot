@@ -225,21 +225,66 @@ function configurarMensagens(client, ctx, handlers) {
             const comando = args[0].toLowerCase();
 
             if (comando === '!sim' || comando === '!nao' || comando === '!cobrar-sim' || comando === '!cobrar-nao') {
-                const resposta = (comando === '!sim' || comando === '!cobrar-sim') ? 'aprovado' : 'negado';
-                let votacaoId = args[1] || null;
-                if (!votacaoId) {
-                    const doc = await firebaseDb.collection('config').doc('ultima_votacao').get();
-                    votacaoId = doc.exists ? doc.data().votacaoId : null;
-                }
-                if (!votacaoId) return msg.reply('❌ Nenhuma votação ativa.');
-                const vDoc = await firebaseDb.collection('votacoes').doc(votacaoId).get();
-                if (!vDoc.exists || vDoc.data().resolvido) return msg.reply('❌ Votação não encontrada.');
-                await firebaseDb.collection('votacoes').doc(votacaoId).update({
-                    status: 'respondido', resolvido: true, resultado: resposta,
-                    respondido_por: deQuem, respondido_em: new Date().toISOString()
-                });
-                return msg.reply(resposta === 'aprovado' ? '✅ Cobrança autorizada!' : '❌ Cobrança pulada.');
-            }
+    const resposta = (comando === '!sim' || comando === '!cobrar-sim') ? 'aprovado' : 'negado';
+    let votacaoId = args[1] || null;
+    
+    if (!votacaoId) {
+        const doc = await firebaseDb.collection('config').doc('ultima_votacao').get();
+        votacaoId = doc.exists ? doc.data().votacaoId : null;
+    }
+    
+    if (!votacaoId) return msg.reply('❌ Nenhuma votação ativa.');
+    
+    const vDoc = await firebaseDb.collection('votacoes').doc(votacaoId).get();
+    if (!vDoc.exists) return msg.reply('❌ Votação não encontrada.');
+    
+    const votacao = vDoc.data();
+    
+    if (votacao.resolvido) {
+        if (votacao.resultado === 'aprovado') {
+            return msg.reply(`✅ Cobrança já foi autorizada por outro admin. Aguarde o disparo.`);
+        } else if (votacao.resultado === 'negado') {
+            return msg.reply(`❌ Cobrança já foi recusada por outro admin.`);
+        } else {
+            return msg.reply(`⏰ Esta votação já expirou.`);
+        }
+    }
+    
+    // Verifica se o admin já votou
+    const jaVotouSim = votacao.votos_sim?.includes(deQuem);
+    const jaVotouNao = votacao.votos_nao?.includes(deQuem);
+    
+    if (jaVotouSim || jaVotouNao) {
+        return msg.reply(`🗳️ Você já votou nesta votação. Aguarde a decisão final.`);
+    }
+    
+    // Registra o voto
+    const updateData = {};
+    if (resposta === 'aprovado') {
+        updateData.votos_sim = [...(votacao.votos_sim || []), deQuem];
+    } else {
+        updateData.votos_nao = [...(votacao.votos_nao || []), deQuem];
+    }
+    
+    // Regra: 1 SIM aprova, 1 NAO reprova (pode mudar para maioria se quiser)
+    if (resposta === 'aprovado') {
+        updateData.status = 'respondido';
+        updateData.resolvido = true;
+        updateData.resultado = 'aprovado';
+        updateData.respondido_por = deQuem;
+        updateData.respondido_em = new Date().toISOString();
+        await firebaseDb.collection('votacoes').doc(votacaoId).update(updateData);
+        return msg.reply('✅ Cobrança autorizada! Iniciando disparo...');
+    } else {
+        updateData.status = 'respondido';
+        updateData.resolvido = true;
+        updateData.resultado = 'negado';
+        updateData.respondido_por = deQuem;
+        updateData.respondido_em = new Date().toISOString();
+        await firebaseDb.collection('votacoes').doc(votacaoId).update(updateData);
+        return msg.reply('❌ Cobrança cancelada por um admin.');
+    }
+}
             if (comando === '!bot') {
                 if (args[1] === 'off') { ctx.botAtivo = false; sseService.broadcast(); return msg.reply('🔴 Bot desativado.'); }
                 if (args[1] === 'on')  { ctx.botAtivo = true;  sseService.broadcast(); return msg.reply('🟢 Bot ativado.'); }

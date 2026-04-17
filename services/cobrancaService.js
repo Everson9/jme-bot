@@ -45,19 +45,43 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
 
             console.log(`📬 Encontrados ${docs.length} clientes com vencimento dia ${data}`);
 
-           const cicloRef = getCicloCobranca(dataNum);
-                console.log(`📬 Ciclo de referência: ${cicloRef.docId}`);
+            const cicloRef = getCicloCobranca(dataNum);
+            console.log(`📬 Ciclo de referência: ${cicloRef.docId}`);
 
             clientes = [];
 
             for (const doc of docs) {
                 const cliente = { id: doc.id, ...doc.data() };
 
+                // =====================================================
+                // VERIFICAÇÕES ANTES DE COBRAR
+                // =====================================================
+
+                // 1. Cliente cancelado
                 if (cliente.status === 'cancelado') {
                     console.log(`   ❌ ${cliente.nome} - cancelado`);
                     continue;
                 }
 
+                // 2. Cliente com status promessa
+                if (cliente.status === 'promessa') {
+                    console.log(`   🤝 ${cliente.nome} - status promessa, NÃO cobrar`);
+                    continue;
+                }
+
+                // 3. Verifica promessa ativa na collection promessas
+                const promessaSnap = await firebaseDb.collection('promessas')
+                    .where('cliente_id', '==', doc.id)
+                    .where('ativa', '==', true)
+                    .limit(1)
+                    .get();
+
+                if (!promessaSnap.empty) {
+                    console.log(`   🤝 ${cliente.nome} - tem promessa ativa, NÃO cobrar`);
+                    continue;
+                }
+
+                // 4. Verifica pagamento do ciclo
                 const historicoDoc = await firebaseDb.collection('clientes').doc(doc.id)
                     .collection('historico_pagamentos').doc(cicloRef.docId).get();
 
@@ -69,6 +93,7 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                     }
                 }
 
+                // 5. Verifica carnê pendente
                 const carneSnap = await firebaseDb.collection('carne_solicitacoes')
                     .where('cliente_id', '==', doc.id)
                     .where('status', 'in', ['solicitado', 'impresso'])
@@ -78,6 +103,7 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                     continue;
                 }
 
+                // 6. Verifica telefone
                 const tel = Array.isArray(cliente.telefones)
                     ? cliente.telefones[0]
                     : cliente.telefone;
@@ -101,6 +127,18 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
             const clientesValidos = [];
 
             for (const cliente of clientesFiltrados) {
+                // Verifica promessa ativa mesmo na lista aprovada (segurança extra)
+                const promessaSnap = await firebaseDb.collection('promessas')
+                    .where('cliente_id', '==', cliente.id)
+                    .where('ativa', '==', true)
+                    .limit(1)
+                    .get();
+
+                if (!promessaSnap.empty) {
+                    console.log(`   🤝 ${cliente.nome} - tem promessa ativa, NÃO cobrar (filtro extra)`);
+                    continue;
+                }
+
                 const tel = Array.isArray(cliente.telefones)
                     ? cliente.telefones[0]
                     : cliente.telefone;
@@ -114,7 +152,7 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
             }
 
             clientes = clientesValidos;
-            console.log(`📬 Após filtrar telefones: ${clientes.length} clientes válidos`);
+            console.log(`📬 Após filtrar telefones e promessas: ${clientes.length} clientes válidos`);
         }
 
         if (clientes.length === 0) {
@@ -168,7 +206,13 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
             if (!tel.startsWith('55')) tel = '55' + tel;
 
             const nome = cliente.nome?.split(' ')[0] || '';
-            const { mensagem: msgTexto, pix: msgPix } = gerarMensagemCobranca(nome, data, tipo);
+            
+            // =====================================================
+            // GERA AS MENSAGENS COM AS CHAVES PIX REAIS
+            // =====================================================
+            const valor = cliente.plano?.valor || 79.90;
+            const dataReal = `${data}/${new Date().getMonth()+1}/${new Date().getFullYear()}`;
+            const { mensagem: msgTexto, formasPagamento } = gerarMensagemCobranca(nome, data, tipo, valor, dataReal);
 
             // Tenta com e sem nono dígito
             const numerosParaTentar = tel.length === 12
@@ -182,7 +226,11 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                 if (resultado.sucesso) {
                     cliente._enviado = true;
                     console.log(`   ✅ ENVIADO para ${numero}`);
-                    setTimeout(() => client.sendMessage(resultado.numero, msgPix).catch(() => {}), 1000);
+                    
+                    // Envia as formas de pagamento (chaves PIX) como mensagem separada
+                    setTimeout(async () => {
+                        await client.sendMessage(resultado.numero, formasPagamento).catch(() => {});
+                    }, 2000);
 
                     await firebaseDb.collection('log_cobrancas').add({
                         numero: resultado.numero,

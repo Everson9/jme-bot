@@ -45,8 +45,8 @@ async function perguntarAdmins(client, firebaseDb, ADMINISTRADORES, datas, tipo,
         `👥 *${total} clientes:*\n\n` +
         `${nomes}${extra}\n\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
-        `✅ Confirmar: *!sim*\n` +
-        `❌ Pular: *!nao*`;
+        `✅ Confirmar: *!sim ${votacaoId}*\n` +
+        `❌ Pular: *!nao ${votacaoId}*`;
 
     for (const adm of ADMINISTRADORES) {
         await client.sendMessage(adm, mensagem).catch(() => {});
@@ -54,7 +54,9 @@ async function perguntarAdmins(client, firebaseDb, ADMINISTRADORES, datas, tipo,
 
     await firebaseDb.collection('votacoes').doc(votacaoId).set({
         datas, tipo, total, data: hojeStr,
-        status: 'aguardando', criado_em: new Date().toISOString(), resolvido: false
+        status: 'aguardando', criado_em: new Date().toISOString(), resolvido: false,
+        votos_sim: [], votos_nao: [],  // rastreia quem votou
+        administradores: ADMINISTRADORES
     });
 
     await firebaseDb.collection('config').doc('ultima_votacao').set({
@@ -66,15 +68,39 @@ async function perguntarAdmins(client, firebaseDb, ADMINISTRADORES, datas, tipo,
             .onSnapshot((doc) => {
                 if (!doc.exists) return;
                 const data = doc.data();
+                
+                // Se já resolvido, encerra
                 if (data.resolvido) {
                     unsubscribe();
                     if (data.resultado === 'aprovado') resolve(true);
                     else if (data.resultado === 'negado') resolve(false);
                     else resolve(null);
+                    return;
+                }
+
+                // Notifica outros admins quando alguém vota
+                if (data.votos_sim && data.votos_sim.length > 0 && !data.notificou_sim) {
+                    const quem = data.votos_sim[0];
+                    firebaseDb.collection('votacoes').doc(votacaoId).update({ notificou_sim: true });
+                    for (const adm of ADMINISTRADORES) {
+                        if (adm !== quem) {
+                            client.sendMessage(adm, `🗳️ *${quem.replace('@c.us', '')}* já confirmou a cobrança. Aguardando apenas mais um voto se necessário.`).catch(() => {});
+                        }
+                    }
+                }
+                
+                if (data.votos_nao && data.votos_nao.length > 0 && !data.notificou_nao) {
+                    const quem = data.votos_nao[0];
+                    firebaseDb.collection('votacoes').doc(votacaoId).update({ notificou_nao: true });
+                    for (const adm of ADMINISTRADORES) {
+                        if (adm !== quem) {
+                            client.sendMessage(adm, `🗳️ *${quem.replace('@c.us', '')}* NEGOU a cobrança. Votação encerrada.`).catch(() => {});
+                        }
+                    }
                 }
             });
 
-        // Timeout de 60 minutos — expira silenciosamente
+        // Timeout de 60 minutos
         setTimeout(() => {
             unsubscribe();
             firebaseDb.collection('votacoes').doc(votacaoId).update({
