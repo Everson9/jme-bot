@@ -138,7 +138,7 @@ function criarNovoClient() {
     const c = new Client({
         authStrategy: new RemoteAuth({
             store,
-            backupSyncIntervalMs: 300000,
+            backupSyncIntervalMs: 30 * 60 * 1000, // 30 minutos
            clientId: 'jme-bot-railway-' + Date.now()
         }),
         puppeteer: {
