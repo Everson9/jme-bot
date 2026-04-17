@@ -3,44 +3,85 @@
 class SSEService {
     constructor() {
         this.clients = [];
-        this.currentStatus = null;
+        this.heartbeats = new Map(); // armazena intervalos por cliente
+        this.maxClients = 5;
     }
 
     init(ctx) { this.ctx = ctx; }
 
-    addClient(res) {
-        // Limpa conexões mortas antes de adicionar nova
-        this.clients = this.clients.filter(c => {
-            try { return !c.destroyed && !c.writableEnded; } catch(_) { return false; }
+    // Remove clientes mortos antes de qualquer operação
+    _cleanDeadClients() {
+        const before = this.clients.length;
+        this.clients = this.clients.filter(client => {
+            try {
+                // Verifica se o socket ainda está vivo
+                return client && !client.destroyed && !client.writableEnded && client.socket && !client.socket.destroyed;
+            } catch(e) {
+                return false;
+            }
         });
-        // Limite de segurança — evita acúmulo infinito
-        if (this.clients.length >= 10) {
-            console.warn(`📡 SSE: Limite de 10 conexões atingido — removendo a mais antiga`);
-            try { this.clients[0].end(); } catch(_) {}
-            this.clients.shift();
+        
+        // Limpa heartbeats dos clientes mortos
+        for (const [client, interval] of this.heartbeats) {
+            if (!this.clients.includes(client)) {
+                clearInterval(interval);
+                this.heartbeats.delete(client);
+            }
         }
+        
+        if (before !== this.clients.length) {
+            console.log(`📡 SSE: Limpeza automática - ${before} → ${this.clients.length} clientes`);
+        }
+    }
+
+    addClient(res) {
+        this._cleanDeadClients();
+        
+        // Limite máximo
+        if (this.clients.length >= this.maxClients) {
+            console.warn(`📡 SSE: Limite de ${this.maxClients} conexões atingido, rejeitando`);
+            try { res.end(); } catch(e) {}
+            return false;
+        }
+        
         this.clients.push(res);
         console.log(`📡 SSE: Cliente conectado. Total: ${this.clients.length}`);
+        return true;
     }
 
     removeClient(res) {
         this.clients = this.clients.filter(client => client !== res);
+        
+        // Limpa heartbeat deste cliente
+        if (this.heartbeats.has(res)) {
+            clearInterval(this.heartbeats.get(res));
+            this.heartbeats.delete(res);
+        }
+        
         console.log(`📡 SSE: Cliente desconectado. Total: ${this.clients.length}`);
     }
 
-    // Notifica o front que um recurso específico mudou
-    // O front escuta o evento e recarrega apenas aquela página/dado
-    // Exemplo: sseService.notificar('clientes') → front recarrega clientes
-    // Exemplo: sseService.notificar('chamados') → front recarrega chamados
     notificar(recurso) {
+        this._cleanDeadClients(); // limpa antes de notificar
+        
+        if (this.clients.length === 0) return;
+        
         const data = `event: update\ndata: ${JSON.stringify({ recurso, ts: Date.now() })}\n\n`;
+        let removidos = 0;
+        
         this.clients.forEach(client => {
-            try { client.write(data); } catch(_) {}
+            try {
+                client.write(data);
+            } catch(e) {
+                removidos++;
+                this.removeClient(client);
+            }
         });
-        console.log(`📡 SSE: notificação [${recurso}]`);
+        
+        if (removidos > 0) console.log(`📡 SSE: ${removidos} clientes mortos removidos`);
+        console.log(`📡 SSE: notificação [${recurso}] para ${this.clients.length} clientes`);
     }
 
-    // Pega o status atual
     getCurrentStatus() {
         return {
             botAtivo: this.ctx?.botAtivo || false,
@@ -53,54 +94,70 @@ class SSEService {
         };
     }
 
-    // Envia atualização para todos os clientes
     broadcast() {
+        this._cleanDeadClients(); // limpa antes de broadcast
+        
         const status = this.getCurrentStatus();
-        this.currentStatus = status;
         const data = `data: ${JSON.stringify(status)}\n\n`;
+        let removidos = 0;
+        
         this.clients.forEach(client => {
-            try { client.write(data); } catch(_) {}
+            try {
+                client.write(data);
+            } catch(e) {
+                removidos++;
+                this.removeClient(client);
+            }
         });
+        
+        if (removidos > 0) console.log(`📡 SSE: ${removidos} clientes mortos removidos no broadcast`);
         console.log(`📡 SSE broadcast: online=${status.online} botAtivo=${status.botAtivo}`);
     }
 
-    // Middleware para a rota SSE
     handleConnection(req, res) {
-        // Headers necessários — X-Accel-Buffering desativa buffer do nginx/Render
-        // que quebra SSE com HTTP/2
+        // Headers
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache, no-transform');
         res.setHeader('Connection', 'keep-alive');
-        res.setHeader('X-Accel-Buffering', 'no'); // Render/nginx: não bufferiza
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.flushHeaders(); // força envio imediato dos headers
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders();
 
         // Envia status inicial
         const initialStatus = this.getCurrentStatus();
         res.write(`data: ${JSON.stringify(initialStatus)}\n\n`);
 
         // Adiciona cliente
-        this.addClient(res);
+        const added = this.addClient(res);
+        if (!added) {
+            res.status(429).end();
+            return;
+        }
 
-        // Heartbeat a cada 15s — envia status atual (não só ping)
-        // Garante que o front sempre tem o estado correto mesmo após reconexão
+        // Heartbeat mais longo (30s) e com cleanup automático
         const heartbeat = setInterval(() => {
             try {
+                if (res.destroyed || res.writableEnded) {
+                    clearInterval(heartbeat);
+                    this.removeClient(res);
+                    return;
+                }
                 const status = this.getCurrentStatus();
                 res.write(`data: ${JSON.stringify(status)}\n\n`);
-            } catch(_) {
+            } catch(e) {
                 clearInterval(heartbeat);
                 this.removeClient(res);
             }
-        }, 15000);
+        }, 30000); // 30 segundos (era 15)
+        
+        this.heartbeats.set(res, heartbeat);
 
         // Remove quando desconectar
         req.on('close', () => {
             clearInterval(heartbeat);
+            this.heartbeats.delete(res);
             this.removeClient(res);
         });
     }
 }
 
-// Exporta uma única instância (singleton)
 module.exports = new SSEService();

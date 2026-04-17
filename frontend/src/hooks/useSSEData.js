@@ -1,8 +1,4 @@
 // src/hooks/useSSEData.js
-// Substitui useFetch com polling — só recarrega quando o backend notifica via SSE
-// Uso: const { data, loading, refetch } = useSSEData('/api/chamados', 'chamados');
-//   - url: rota da API
-//   - recurso: nome do evento SSE que dispara recarga (ex: 'chamados', 'clientes', 'carne')
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
@@ -10,18 +6,31 @@ const API = import.meta.env.VITE_API_URL || "";
 const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || "";
 const authHeaders = () => API_KEY ? { "x-api-key": API_KEY } : {};
 
-// SSE singleton — uma conexão só para toda a app
+// SSE singleton com contagem de referência
 let _es = null;
-let _reconectando = false; // evita reconexões simultâneas
-const _listeners = new Map(); // recurso → Set de callbacks
+let _refCount = 0;
+let _reconectando = false;
+let _reconectDelay = 5000;
+const _maxDelay = 60000;
+const _listeners = new Map();
 
 function getSSE() {
-    if (_es && _es.readyState !== EventSource.CLOSED) return _es;
+    // Se já existe conexão saudável, apenas incrementa referência
+    if (_es && _es.readyState === EventSource.OPEN) {
+        _refCount++;
+        console.log(`📡 SSE: reutilizando conexão (refs: ${_refCount})`);
+        return _es;
+    }
+    
+    // Se existe mas está fechando, limpa
+    if (_es) {
+        _es.close();
+        _es = null;
+    }
 
-    // fecha o anterior se ainda existir
-    if (_es) { _es.close(); _es = null; }
-
+    console.log(`📡 SSE: criando nova conexão (delay: ${_reconectDelay/1000}s)`);
     _es = new EventSource(API + '/api/status-stream');
+    _refCount = 1;
 
     _es.addEventListener('update', (e) => {
         try {
@@ -31,18 +40,40 @@ function getSSE() {
         } catch(_) {}
     });
 
+    _es.addEventListener('open', () => {
+        _reconectDelay = 5000;
+        console.log('📡 SSE: conectado (backoff resetado)');
+    });
+
     _es.onerror = () => {
-        if (_reconectando) return; // ignora erros duplicados
+        if (_reconectando) return;
         _reconectando = true;
+        
+        console.log(`⚠️ SSE: erro, reconectando em ${_reconectDelay/1000}s...`);
         _es?.close();
         _es = null;
+        _refCount = 0;
+        
         setTimeout(() => {
             _reconectando = false;
+            _reconectDelay = Math.min(_reconectDelay * 2, _maxDelay);
             getSSE();
-        }, 5000);
+        }, _reconectDelay);
     };
 
     return _es;
+}
+
+function releaseSSE() {
+    _refCount--;
+    console.log(`📡 SSE: liberando referência (refs restantes: ${_refCount})`);
+    
+    if (_refCount <= 0 && _es) {
+        console.log('📡 SSE: fechando conexão (sem referências)');
+        _es.close();
+        _es = null;
+        _refCount = 0;
+    }
 }
 
 export function useSSEData(url, recurso) {
@@ -50,14 +81,20 @@ export function useSSEData(url, recurso) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const mountedRef = useRef(true);
+    const loadRef = useRef(null);
 
     const load = useCallback(async () => {
+        if (!mountedRef.current) return;
+        
         try {
             setLoading(true);
             const r = await fetch(API + url, { headers: authHeaders() });
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const json = await r.json();
-            if (mountedRef.current) { setData(json); setError(null); }
+            if (mountedRef.current) { 
+                setData(json); 
+                setError(null); 
+            }
         } catch(e) {
             if (mountedRef.current) setError(e.message);
         } finally {
@@ -65,13 +102,14 @@ export function useSSEData(url, recurso) {
         }
     }, [url]);
 
+    loadRef.current = load;
+
     useEffect(() => {
         mountedRef.current = true;
-        load(); // carrega ao montar
+        load();
 
-        // Registra listener SSE para este recurso
         if (recurso) {
-            getSSE(); // garante conexão ativa
+            getSSE(); // conecta (incrementa refCount)
             if (!_listeners.has(recurso)) _listeners.set(recurso, new Set());
             _listeners.get(recurso).add(load);
         }
@@ -80,9 +118,10 @@ export function useSSEData(url, recurso) {
             mountedRef.current = false;
             if (recurso) {
                 _listeners.get(recurso)?.delete(load);
+                releaseSSE(); // decrementa refCount e fecha se for zero
             }
         };
-    }, [load, recurso]);
+    }, [recurso]); // load não precisa estar nas dependências (useRef)
 
     return { data, loading, error, refetch: load };
 }
