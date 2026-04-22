@@ -16,7 +16,7 @@ function iniciarTimers(client, firebaseDb, ADMINISTRADORES, ctx) {
     timersIniciados = true;
 
     const { dispararCobrancaReal, verificarCobrancasAutomaticas,
-            situacaoRede, previsaoRetorno, redeNormal, state, banco, sseService } = ctx;
+            situacaoRede, previsaoRetorno, redeNormal, banco, sseService } = ctx;
 
 // Helper para rastrear e limpar timers no reconecte
 function trackedSetInterval(fn, ms) {

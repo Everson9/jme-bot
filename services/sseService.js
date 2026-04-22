@@ -87,7 +87,7 @@ class SSEService {
             botAtivo: this.ctx?.botAtivo || false,
             online: this.ctx?.botIniciadoEm ? true : false,
             iniciadoEm: this.ctx?.botIniciadoEm || null,
-            atendimentosAtivos: this.ctx?.state?.stats()?.atendimentoHumano || 0,
+            atendimentosAtivos: 0,
             situacaoRede: this.ctx?.situacaoRede || 'normal',
             previsaoRetorno: this.ctx?.previsaoRetorno || 'sem previsão',
             motivoRede: this.ctx?.motivoRede || '',

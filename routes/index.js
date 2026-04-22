@@ -3,7 +3,7 @@ module.exports = function setupRoutes(app, ctx) {
     const requireAuth = require('../middleware/auth');
     const { calcularStatusCliente, getCicloAtual } = require('../services/statusService');
     const {
-        db: firebaseDb, banco, state, client, ADMINISTRADORES,
+        db: firebaseDb, banco, client, ADMINISTRADORES,
         botAtivo, botIniciadoEm, situacaoRede, previsaoRetorno,
         horarioFuncionamento, horarioCobranca,
         dispararCobrancaReal, obterAgendaDia,
@@ -46,7 +46,7 @@ module.exports = function setupRoutes(app, ctx) {
             botAtivo:          ctx.botAtivo,
             online:            !!ctx.botIniciadoEm,
             iniciadoEm:        ctx.botIniciadoEm,
-            atendimentosAtivos: state?.stats()?.atendimentoHumano || 0,
+            atendimentosAtivos: 0,
             situacaoRede:      ctx.situacaoRede,
             previsaoRetorno:   ctx.previsaoRetorno,
         });
@@ -63,14 +63,13 @@ module.exports = function setupRoutes(app, ctx) {
         } catch (e) { res.status(500).json({ success: false, error: e.message }); }
     });
 
-    app.get('/api/estados', (req, res) => res.json({ estados: state.todos(), stats: state.stats() }));
+    app.get('/api/estados', (req, res) => res.json({ estados: [], stats: { atendimentoHumano: 0 } }));
 
     app.post('/api/estados/:numero/reset', async (req, res) => {
         const numero = req.params.numero.includes('@c.us') ? req.params.numero : `55${req.params.numero.replace(/\D/g,'')}@c.us`;
         try {
             await banco.dbRemoverAtendimentoHumano(numero);
             await banco.dbLimparHistorico(numero);
-            state.limpar(numero);
             res.json({ ok: true });
         } catch(e) { res.status(500).json({ erro: e.message }); }
     });
@@ -1149,7 +1148,6 @@ module.exports = function setupRoutes(app, ctx) {
             const batch = firebaseDb.batch();
             aq.docs.forEach(d=>batch.delete(d.ref)); eq.docs.forEach(d=>batch.delete(d.ref));
             await batch.commit();
-            state.limpar(numero);
             res.json({ ok: true });
         } catch(e) { res.status(500).json({ erro: e.message }); }
     });
@@ -1266,7 +1264,7 @@ module.exports = function setupRoutes(app, ctx) {
                 firebaseDb.collection('log_bot').where('criado_em','>=',ha).get(),
                 firebaseDb.collection('log_atendimentos').where('iniciado_em','>=',hoje).get(),
             ]);
-            res.json({ bot:{ativo:botAtivo,iniciadoEm:botIniciadoEm,uptime:botIniciadoEm?Math.floor((Date.now()-botIniciadoEm)/1000):0}, banco:{tipo:'Firebase Firestore'}, atendimentos:{ativos:state?.stats?.()?.atendimentoHumano||0,totalHoje:atSnap.size}, mensagens:{ultimaHora:uhSnap.size}, sistema:{memoria:process.memoryUsage(),versao:process.version} });
+            res.json({ bot:{ativo:botAtivo,iniciadoEm:botIniciadoEm,uptime:botIniciadoEm?Math.floor((Date.now()-botIniciadoEm)/1000):0}, banco:{tipo:'Firebase Firestore'}, atendimentos:{ativos:0,totalHoje:atSnap.size}, mensagens:{ultimaHora:uhSnap.size}, sistema:{memoria:process.memoryUsage(),versao:process.version} });
         } catch (e) { res.status(500).json({ erro: e.message }); }
     });
 
