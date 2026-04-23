@@ -222,6 +222,12 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
             let enviado = false;
             for (const numero of numerosParaTentar) {
                 console.log(`   📞 Tentando: ${numero}`);
+                if (process.env.DRY_RUN === 'true') {
+                    console.log(`🧪 DRY RUN — simulando envio para ${cliente.nome} (${numero})`);
+                    enviadas++;
+                    enviado = true;
+                    break;
+                }
                 const resultado = await enviarMensagemSegura(client, numero + '@c.us', msgTexto);
                 if (resultado.sucesso) {
                     cliente._enviado = true;
