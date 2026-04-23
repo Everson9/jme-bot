@@ -23,7 +23,7 @@ export default function BackupPage() {
   };
 
   const abrirConsoleFirebase = () => {
-    const projectId = process.env.REACT_APP_FIREBASE_PROJECT_ID || 'SEU-PROJETO';
+    const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID || 'SEU-PROJETO';
     window.open(`https://console.firebase.google.com/project/${projectId}/firestore/backups`, '_blank');
   };
 

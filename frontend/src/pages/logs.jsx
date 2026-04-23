@@ -84,14 +84,13 @@ export function PageLogs() {
                                         <th>Número</th>
                                         <th>Direção</th>
                                         <th>Tipo</th>
-                                        <th>Intenção</th>
                                         <th>Conteúdo</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {logs.length === 0 ? (
                                         <tr>
-                                            <td colSpan="6" className="td-empty">
+                                            <td colSpan="5" className="td-empty">
                                                 Nenhum log encontrado
                                             </td>
                                         </tr>
@@ -108,7 +107,6 @@ export function PageLogs() {
                                                     </span>
                                                 </td>
                                                 <td>{log.tipo}</td>
-                                                <td>{log.intencao || '-'}</td>
                                                 <td>{log.conteudo?.substring(0, 50)}...</td>
                                             </tr>
                                         ))

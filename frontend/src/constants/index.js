@@ -28,25 +28,6 @@ export const STATUS_CLIENTE = {
   }
 };
 
-// Cores e labels para intenções do bot
-export const INTENCAO_LABEL = {
-  SUPORTE: { label: "Suporte", cor: "#ef4444", emoji: "🔧" },
-  FINANCEIRO: { label: "Financeiro", cor: "#f59e0b", emoji: "💰" },
-  PIX: { label: "Pix", cor: "#10b981", emoji: "💸" },
-  BOLETO: { label: "Boleto", cor: "#3b82f6", emoji: "📄" },
-  CARNE: { label: "Carnê", cor: "#8b5cf6", emoji: "📋" },
-  DINHEIRO: { label: "Dinheiro", cor: "#f97316", emoji: "💵" },
-  PROMESSA: { label: "Promessa", cor: "#ec4899", emoji: "🤝" },
-  NOVO_CLIENTE: { label: "Novo Cliente", cor: "#06b6d4", emoji: "👤" },
-  CANCELAMENTO: { label: "Cancelamento", cor: "#ef4444", emoji: "❌" },
-  SAUDACAO: { label: "Saudação", cor: "#6b7280", emoji: "👋" },
-  OUTRO: { label: "Outro", cor: "#4b5563", emoji: "💬" },
-  SENHA_ROTEADOR: { label: "Senha Roteador", cor: "#f472b6", emoji: "🔐" }
-};
-
-// Lista de todas as intenções
-export const INTENCOES = Object.keys(INTENCAO_LABEL);
-
 // Status da rede
 export const REDE_LABELS = {
   normal: { label: "Normal", cor: "#22c55e", emoji: "🟢" },
@@ -122,16 +103,6 @@ export const STATUS_CHAMADO = {
   aberto: { label: "Aberto", cor: "#ef4444", dot: "🔴" },
   em_atendimento: { label: "Em atendimento", cor: "#f59e0b", dot: "🟡" },
   fechado: { label: "Fechado", cor: "#22c55e", dot: "✅" }
-};
-
-// Labels para fluxos do bot
-export const FLUXO_LABEL = {
-  suporte: { label: "Suporte", cor: "#f59e0b", emoji: "🔧" },
-  financeiro: { label: "Financeiro", cor: "#10b981", emoji: "💰" },
-  promessa: { label: "Promessa", cor: "#a78bfa", emoji: "🤝" },
-  novoCliente: { label: "Novo Cliente", cor: "#38bdf8", emoji: "👤" },
-  comprovantePendente: { label: "Comprovante", cor: "#fb923c", emoji: "🧾" },
-  cancelamento: { label: "Cancelamento", cor: "#ef4444", emoji: "❌" }
 };
 
 // Ícones para direção do log

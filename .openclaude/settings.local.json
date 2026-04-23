@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(node:*)",
-      "Bash(node -e \"require\\(''''./index.js''''\\)\")"
+      "Bash(node -e \"require\\(''''./index.js''''\\)\")",
+      "Bash(Get-ChildItem -Recurse -Filter \"*.jsx\" frontend/src)",
+      "Bash(Where-Object { $_ullName -notmatch \"node_modules\" })",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)"
     ]
   }
 }

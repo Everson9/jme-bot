@@ -27,9 +27,7 @@ export function PageDashboard({ status, refetch }) {
   const navigate = useNavigate();
   
   const { data: fluxoClientes } = useFetch("/api/dashboard/fluxo-clientes");
-  const { data: atend } = useFetch("/api/graficos/atendimentos");
   const { data: cobr } = useFetch("/api/graficos/cobrancas");
-  const { data: estados } = useFetch("/api/estados");
   const { data: bases } = useFetch("/api/bases");
   const { data: resumoBases } = useFetch("/api/dashboard/resumo-bases");
   const { data: caixaHoje } = useFetch("/api/dashboard/caixa-hoje");
@@ -39,27 +37,15 @@ export function PageDashboard({ status, refetch }) {
   // Status do bot vem via SSE do App.jsx (passado como prop 'status')
   const botStatus = status || null;
 
-  const statsEstados = estados?.stats || { porFluxo: {}, atendimentoHumano: 0 };
-  
   const totalAtivos = resumoBases?.bases?.reduce((acc, base) => acc + (base.total || 0), 0) ?? 0;
   const totalCancelados = resumoBases?.bases?.reduce((acc, base) => acc + (base.cancelados || 0), 0) ?? 0;
   const totalPendentes = resumoBases?.totalPendentes ?? 0;
   const totalPromessas = resumoBases?.totalPromessas ?? 0;
 
-  const fluxoLabels = {
-    suporte: "🔧 Suporte",
-    financeiro: "💰 Financeiro",
-    novoCliente: "🆕 Novo Cliente",
-    promessa: "🤝 Promessa",
-    comprovantePendente: "📄 Comprovante",
-    cancelamento: "❌ Cancelamento"
-  };
-
   React.useEffect(() => {
-    console.log('📊 Dados de atendimentos:', atend);
     console.log('📊 Dados de cobranças:', cobr);
     console.log('💰 Caixa hoje:', caixaHoje);
-  }, [atend, cobr, caixaHoje]);
+  }, [cobr, caixaHoje]);
 
   const SectionLabel = ({ text, icon }) => (
     <div style={{
@@ -245,31 +231,6 @@ export function PageDashboard({ status, refetch }) {
                 desde {fmtDate(botStatus.iniciadoEm)}
               </div>
             )}
-            <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, marginBottom: 8 }}>
-              Conversas ativas agora
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {Object.entries(statsEstados.porFluxo || {})
-                .filter(([, v]) => v > 0)
-                .map(([fluxo, count]) => (
-                  <div key={fluxo} onClick={() => navigate("/estados")} style={{
-                    padding: "4px 10px", borderRadius: 6, background: "#1a1d2e",
-                    border: "1px solid #2d3148", cursor: "pointer", fontSize: 12, display: "flex", gap: 6
-                  }}>
-                    <span style={{ color: "#94a3b8" }}>{fluxoLabels[fluxo] || fluxo}</span>
-                    <span style={{ fontWeight: 800, color: "#e2e8f0" }}>{count}</span>
-                  </div>
-                ))}
-              {(statsEstados?.atendimentoHumano ?? 0) > 0 && (
-                <div onClick={() => navigate("/estados")} style={{
-                  padding: "4px 10px", borderRadius: 6, background: "rgba(56,189,248,.08)",
-                  border: "1px solid rgba(56,189,248,.2)", cursor: "pointer", fontSize: 12, display: "flex", gap: 6
-                }}>
-                  <span style={{ color: "#38bdf8" }}>👤 Humano</span>
-                  <span style={{ fontWeight: 800, color: "#38bdf8" }}>{statsEstados.atendimentoHumano}</span>
-                </div>
-              )}
-            </div>
           </Card>
 
           <PainelRede
@@ -331,20 +292,6 @@ export function PageDashboard({ status, refetch }) {
 
         {/* Coluna Direita */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <Card style={{ padding: "18px 20px" }}>
-            <SectionLabel text="Atendimentos — 7 dias" icon="📊" />
-            <ResponsiveContainer width="100%" height={130}>
-              <BarChart data={atend || []} barSize={14}>
-                <XAxis dataKey="dia" tickFormatter={fmtDia} tick={{ fontSize: 10, fill: "#64748b" }} axisLine={false} tickLine={false} />
-                <YAxis hide />
-                <Tooltip content={<DarkTooltip />} cursor={{ fill: "rgba(56,189,248,0.07)" }} />
-                <Bar dataKey="total" radius={[3, 3, 0, 0]}>
-                  {(atend || []).map((_, i) => <Cell key={i} fill="#38bdf8" />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </Card>
-
           <Card style={{ padding: "18px 20px" }}>
             <SectionLabel text="Cobranças — 7 dias" icon="💜" />
             <ResponsiveContainer width="100%" height={130}>
