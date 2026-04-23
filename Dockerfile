@@ -37,7 +37,6 @@ WORKDIR /app
 # Copia os arquivos de dependência primeiro
 COPY package*.json ./
 COPY frontend/package*.json ./frontend/
-COPY postinstall.js ./
 
 # Instala as dependências do Node
 RUN npm install
