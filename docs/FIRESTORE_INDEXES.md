@@ -196,7 +196,7 @@ Quando uma query falhar por falta de índice, o Firestore retorna um link direto
 
 **Exemplo de erro**:
 ```
-Error: The query requires an index. You can create it here: 
+Error: The query requires an index. You can create it here:
 https://console.firebase.google.com/v1/r/project/...
 ```
 
@@ -279,9 +279,9 @@ Configure alertas no GCP quando:
 
 - [Firestore Indexing](https://firebase.google.com/docs/firestore/query-data/indexing)
 - [Best Practices](https://firebase.google.com/docs/firestore/best-practices)
-- [SKILL: Firestore Performance](.cursor/skills/firestore-custos-performance/SKILL.md)
+- [SKILL: Firestore Performance](docs/skills/firestorecustosperformance.md)
 
 ---
 
-**Última atualização**: 2024-05-20
+**Última atualização**: 2026-04-22
 **Próxima revisão**: A cada novo tipo de query implementada

@@ -57,3 +57,7 @@ Em ordem de prioridade. Atualizar conforme for resolvendo.
 - ~~Clientes com status promessa sendo cobrados~~ — resolvido 2026-04-17
 - ~~Mensagens de cobrança genéricas~~ — resolvido 2026-04-17
 - ~~Erro ao salvar sessão no Storage (ENOENT)~~ — resolvido 2026-04-17
+- ~~Timeout no WhatsApp messaging (Runtime.callFunctionOn)~~ — resolvido 2026-04-22
+- ~~Rotas desorganizadas em routes/index.js~~ — resolvido 2026-04-22
+- ~~Package.json com dependências não utilizadas~~ — resolvido 2026-04-22
+- ~~Arquivos obsoletos acumulados no projeto~~ — resolvido 2026-04-22

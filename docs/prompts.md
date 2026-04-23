@@ -15,16 +15,16 @@ O Claude vai escanear tudo e consumir 40k+ tokens antes de responder.
 
 ### Corrigir um bug
 ```
-Em middleware/comprovante.js, a função confirmarNomeComprovante
-está retornando erro quando o nome tem acento. Leia só esse arquivo
+Em services/cobrancaService.js, a função dispararCobrancaReal
+está retornando erro quando o tipo é null. Leia só esse arquivo
 e corrija.
 ```
 
 ### Adicionar funcionalidade
 ```
-Leia middleware/Mensagem.js e database/funcoes-firebase.js.
-Preciso adicionar o comando !historico [número] para o admin
-consultar o histórico de mensagens de um cliente.
+Leia services/cobrancaService.js e database/funcoes-firebase.js.
+Preciso adicionar verificação para não cobrar clientes com
+status 'promessa' na função dispararCobrancaReal.
 ```
 
 ### Novo endpoint
@@ -43,8 +43,8 @@ Implemente a migration do campo telefones descrita em PENDING.md.
 ### Debug com contexto de histórico
 ```
 Leia docs/History.md (seção de mapa de arquivos) e depois
-leia middleware/comprovante.js.
-O fluxo de comprovante está [descrever o problema].
+leia services/cobrancaService.js.
+O fluxo de cobrança está [descrever o problema].
 ```
 
 ---
@@ -109,5 +109,21 @@ docs/
 ├── PENDING.md     ← pendências priorizadas (atualizar manualmente)
 ├── PROMPTS.md     ← este arquivo
 ├── API.md         ← documentação da API REST
-└── ARCHITECTURE.md ← arquitetura do sistema
+├── ARCHITECTURE.md ← arquitetura do sistema
+├── CHANGELOG.md   ← changelog do projeto
+├── CONTRIBUTING.md ← guia de contribuição
+├── FIRESTORE_INDEXES.md ← índices do Firestore
+└── SECURITY.md    ← política de segurança
 ```
+
+---
+
+## Skills disponíveis
+
+Quando o problema se enquadrar na área da skill, leia a skill correspondente:
+
+| Skill | Caminho | Quando usar |
+|-------|---------|-------------|
+| Firestore Performance | docs/skills/firestorecustosperformance.md | Lentidão, custo alto, muitas leituras, otimização de queries |
+| Segurança e Segredos | docs/skills/seguranca-segredos-painel-admin.md | Secrets, .env, API key, painel admin, deploy |
+| Runbook de produção | docs/skills/runbook-producao-jme-bot.md | Bot offline, QR code, SSE, variáveis de ambiente, incidente |

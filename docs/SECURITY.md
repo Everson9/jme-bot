@@ -20,7 +20,7 @@ Este documento define as políticas e procedimentos de segurança do projeto JME
 - Todas credenciais são armazenadas em variáveis de ambiente
 - `.env` nunca é commitado (`.gitignore`)
 - `.env.example` documenta todas variáveis necessárias
-- Secrets gerenciados via provedor de deploy (Fly/Render)
+- Secrets gerenciados via provedor de deploy (Railway)
 
 ⚠️ **Nunca**:
 - Commit credenciais no Git
@@ -181,7 +181,7 @@ Se você encontrar uma vulnerabilidade de segurança:
 ## 📚 Recursos
 
 ### Documentação Interna
-- [SKILL: Segurança e Segredos](.cursor/skills/seguranca-segredos-painel-admin/SKILL.md)
+- [SKILL: Segurança e Segredos](docs/skills/seguranca-segredos-painel-admin.md)
 - [Arquitetura](docs/ARCHITECTURE.md)
 - [API](docs/API.md)
 
@@ -206,5 +206,5 @@ Este software é fornecido "como está", sem garantias de qualquer tipo. A equip
 
 ---
 
-**Última atualização**: 2024-05-20
+**Última atualização**: 2026-04-22
 **Responsável**: Equipe JME.NET

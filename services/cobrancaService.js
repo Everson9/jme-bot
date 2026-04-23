@@ -1,6 +1,6 @@
 // services/cobrancaService.js
 const { gerarMensagemCobranca } = require('./mensagemService');
-const { enviarMensagemSegura }  = require('./whatsappService');
+const { enviarMensagemSegura, comTimeout }  = require('./whatsappService');
 const { getCicloAtual, getCicloCobranca } = require('./statusService');
 
 /**
@@ -229,7 +229,8 @@ async function dispararCobrancaReal(client, firebaseDb, data, tipo = null, clien
                     
                     // Envia as formas de pagamento (chaves PIX) como mensagem separada
                     setTimeout(async () => {
-                        await client.sendMessage(resultado.numero, formasPagamento).catch(() => {});
+                        await comTimeout(client.sendMessage(resultado.numero, formasPagamento), 30000)
+                            .catch(() => {});
                     }, 2000);
 
                     await firebaseDb.collection('log_cobrancas').add({

@@ -15,11 +15,11 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 - ✅ CONTRIBUTING.md - Guia de contribuição
 - ✅ frontend/README.md - Documentação do painel
 - ✅ tests/README.md - Documentação dos testes
-- ✅ SECURITY.md - Política de segurança (em breve)
+- ✅ SECURITY.md - Política de segurança
 
 ---
 
-## [1.0.0] - 2024-05-20
+## [1.0.0] - 2026-04-22
 
 ### Início do Projeto
 
@@ -29,28 +29,28 @@ Primeira versão funcional do JME-BOT.
 - 🚀 Bot WhatsApp funcional via whatsapp-web.js
 - 📊 Painel Admin React com Vite
 - 🔥 Integração Firestore
-- 🤖 Integração Groq LLM para IA
 - 📨 SSE para atualizações em tempo real
-- 💸 Fluxo financeiro completo
-- 🛠️ Fluxo suporte técnico
+- 💸 Sistema de cobrança automática (D-1, D+3, D+5, D+7, D+10)
 - 📅 Agendamentos de instalação
 - 💰 Promessas de pagamento
-- 📄 Processamento de comprovantes PDF/imagem
+- 📄 Processamento de comprovantes PDF
 - 👤 Identificação de clientes por nome/CPF/telefone
-- 📋 Sistema de fluxos com StateManager
-- 📡 API REST completa
+- 📡 API REST completa (72 endpoints em 14 categorias)
 - 📊 Dashboard em tempo real
 - 🔌 Monitoramento de status do bot
 - 🖼️ QR Code para conexão WhatsApp
+- 🛡️ Timeout helper para chamadas WhatsApp (comTimeout)
+- 📁 Rotas modularizadas em 12 arquivos separados
 
 ### Changed
-- 🔄 **Infraestrutura**: Migração do backend do Fly.io para Railway
-- 🔧 **Deploy**: Build Command agora inclui `npx puppeteer browsers install chrome`
-- 🔐 **CORS**: Adicionado suporte para `https://*.vercel.app` (previews do Vercel)
-- 📁 **DATA_PATH**: Ajustado para Railway (`/data`) e Render (`/tmp/data`)
+- 🔄 **Infraestrutura**: Backend rodando em Railway
+- 🔧 **Deploy**: Build Command inclui `npx puppeteer browsers install chrome`
+- 🔐 **CORS**: Suporte para `https://*.vercel.app` (previews do Vercel)
+- 📁 **DATA_PATH**: Ajustado para Railway (`/data`)
 - 📝 **Mensagens de cobrança**: Personalizadas por tipo (lembrete, atraso, reconquista)
 - 📝 **Branding**: Adicionado `🤖 JMENET TELECOM` no topo das mensagens
 - 📝 **Chaves PIX**: Atualizadas para as chaves reais da empresa
+- 🔐 **Sessão WhatsApp**: LocalAuth em `/data/.wwebjs_auth` (mais simples e estável)
 
 ### Fixed
 - ✅ **Permissão Firebase Storage**: Adicionado papel `Storage Admin` à service account
@@ -58,7 +58,10 @@ Primeira versão funcional do JME-BOT.
 - ✅ **CORS bloqueando previews**: Adicionado wildcard para `.vercel.app`
 - ✅ **Cobrança**: Clientes com `status: promessa` não são mais cobrados
 - ✅ **Mensagens**: Erro ao salvar sessão no Storage (verificação de arquivo zip)
-- ✅ **FirestoreStore**: Adicionada verificação `fs.existsSync` antes do upload
+- ✅ **Timeout WhatsApp**: Helper `comTimeout` evita travamentos em chamadas API
+- ✅ **Rotas**: Modularização em 12 arquivos para melhor manutenção
+- ✅ **Package.json**: Removidas 9 dependências e 1 devDependency não utilizadas
+- ✅ **Arquivos obsoletos**: Limpeza completa de fluxos, middleware e services não usados
 
 ### Componentes Implementados
 
@@ -66,18 +69,15 @@ Primeira versão funcional do JME-BOT.
 - ✅ Express 5
 - ✅ Whatsapp-web.js
 - ✅ Firebase Admin
-- ✅ Groq SDK
 - ✅ pdf-parse
-- ✅ StateManager
-- ✅ Middlewares (auth, mensagem, comprovante, timers)
-- ✅ Services (fluxo, mensagem, cobrança, groq, whatsapp)
-- ✅ Fluxos (suporte, financeiro, promessa, novoCliente, cancelamento)
-- ✅ Rotas API
+- ✅ Middlewares (auth, timers)
+- ✅ Services (mensagem, cobrança, whatsapp, admin, status, sse)
+- ✅ Rotas API (12 arquivos: bot, clientes, cobranca, dashboard, logs, chamados, cancelamentos, instalacoes, relatorios, admin, boas-vindas, migracao)
 - ✅ Camada de banco de dados
 
 #### Frontend
 - ✅ React 18 + Vite
-- ✅ React Router 7
+- ✅ React Router DOM
 - ✅ Recharts
 - ✅ SSE
 - ✅ Dashboard
@@ -89,9 +89,7 @@ Primeira versão funcional do JME-BOT.
 
 ### Infraestrutura
 - ✅ Dockerfile
-- ✅ Fly.io deploy config
-- ✅ Render config
-- ✅ Github Actions CI/CD
+- ✅ Railway deploy config
 - ✅ .env.example
 - ✅ .gitignore
 
@@ -118,7 +116,6 @@ Primeira versão funcional do JME-BOT.
 - [ ] Cache Redis
 - [ ] Filas com BullMQ
 - [ ] Webhooks de pagamento
-- [ ] IA generativa para respostas
 - [ ] Notificações por email
 
 ---
@@ -141,4 +138,4 @@ Primeira versão funcional do JME-BOT.
 
 ---
 
-**Última atualização**: 2024-05-20
+**Última atualização**: 2026-04-22

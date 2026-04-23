@@ -208,8 +208,8 @@ const ListaClientes = ({ clientes, onClienteClick }) => {
   return (
     <div className="lista-clientes">
       {clientes.map(cliente => (
-        <ClienteCard 
-          key={cliente.id} 
+        <ClienteCard
+          key={cliente.id}
           cliente={cliente}
           onClick={() => onClienteClick(cliente.id)}
         />
@@ -244,27 +244,21 @@ function ListaClientes(props) {
 **⚠️ IMPORTANTE**: Antes de trabalhar em qualquer área específica, **LEIA a SKILL correspondente**:
 
 ### Backend / Performance
-- [Firestore Performance](.cursor/skills/firestore-custos-performance/SKILL.md)
+- [Firestore Performance](docs/skills/firestorecustosperformance.md)
 - Sempre use índices
 - Implemente paginação
 - Use `limit()` em queries
 - Evite N+1
 
-### Fluxos de Atendimento
-- [Diagnóstico de Fluxos](.cursor/skills/diagnostico-atendimento-fluxos/SKILL.md)
-- Respeite o StateManager
-- Trate timers e expirações
-- Valide identificação de clientes
-
 ### Segurança
-- [Segurança e Segredos](.cursor/skills/seguranca-segredos-painel-admin/SKILL.md)
+- [Segurança e Segredos](docs/skills/seguranca-segredos-painel-admin.md)
 - Nunca commite credenciais
 - Use variáveis de ambiente
 - Valide inputs
 - Sanitize outputs
 
 ### Produção
-- [Runbook Produção](.cursor/skills/runbook-producao-jme-bot/SKILL.md)
+- [Runbook Produção](docs/skills/runbook-producao-jme-bot.md)
 - Configure health checks
 - Documente variáveis necessárias
 - Teste em ambiente similar
@@ -380,7 +374,7 @@ Quando revisar PRs, verifique:
 
 ### Documentação Interna
 - [History.md](History.md) - Histórico do projeto
-- [Skills](.cursor/skills/) - Diretrizes técnicas
+- [Skills](docs/skills/) - Diretrizes técnicas
 
 ## ❓ Dúvidas?
 
