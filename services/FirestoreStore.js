@@ -39,7 +39,8 @@ class FirestoreStore {
 
     // Salva sessão local no Firebase Storage
     async save(session) {
-        console.log(`💾 Save chamado com:`, JSON.stringify(session));
+        console.log(`💾 Save keys:`, Object.keys(session || {}));
+        console.log(`💾 Save values:`, Object.values(session || {}).map(v => typeof v === 'string' ? v : typeof v));
         const zipPath = session?.zipPath || session?.path || session;
         try {
             if (!zipPath || !fs.existsSync(zipPath)) {
