@@ -80,4 +80,70 @@ module.exports = function setupAdminRoutes(app, ctx) {
             res.json({ ok:true, processados, pulados, total:snap.size, mensagem:`${processados} clientes com baixa em ${referencia}. ${pulados} já tinham registro.` });
         } catch (e) { res.status(500).json({ erro: e.message }); }
     });
+
+    // ─────────────────────────────────────────────────────
+    // MIGRATION: telefone (string) → telefones (array)
+    // ─────────────────────────────────────────────────────
+    app.post('/api/admin/migration-telefones', async (req, res) => {
+        const dryRun = req.query.dry_run === 'true';
+        const BATCH_SIZE = 400;
+
+        try {
+            const snapshot = await firebaseDb.collection('clientes').get();
+
+            const clientesParaMigrar = [];
+            snapshot.docs.forEach(doc => {
+                const data = doc.data();
+                const temTelefoneString = data.telefone && typeof data.telefone === 'string' && data.telefone.trim() !== '';
+                const temTelefonesArray = data.telefones && Array.isArray(data.telefones) && data.telefones.length > 0;
+
+                if (temTelefoneString && !temTelefonesArray) {
+                    clientesParaMigrar.push({
+                        id: doc.id,
+                        nome: data.nome || 'Sem nome',
+                        telefone: data.telefone
+                    });
+                }
+            });
+
+            if (dryRun) {
+                return res.json({
+                    total: clientesParaMigrar.length,
+                    migrados: 0,
+                    erros: 0,
+                    detalhes: clientesParaMigrar
+                });
+            }
+
+            let atualizados = 0;
+            let erros = 0;
+
+            for (let i = 0; i < clientesParaMigrar.length; i += BATCH_SIZE) {
+                const lote = clientesParaMigrar.slice(i, i + BATCH_SIZE);
+                const batch = firebaseDb.batch();
+
+                lote.forEach(cliente => {
+                    const docRef = firebaseDb.collection('clientes').doc(cliente.id);
+                    batch.update(docRef, { telefones: [cliente.telefone] });
+                });
+
+                try {
+                    await batch.commit();
+                    atualizados += lote.length;
+                } catch (error) {
+                    erros += lote.length;
+                }
+            }
+
+            res.json({
+                total: clientesParaMigrar.length,
+                migrados: atualizados,
+                erros,
+                detalhes: clientesParaMigrar
+            });
+
+        } catch (e) {
+            res.status(500).json({ erro: e.message });
+        }
+    });
 };
