@@ -78,6 +78,7 @@ function criarNovoClient() {
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
+                '--no-process-singleton',
                 '--disable-dev-shm-usage',
                 '--disable-gpu',
                 '--no-first-run',
