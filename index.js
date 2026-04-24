@@ -300,6 +300,15 @@ async function inicializarWhatsApp(tentativa = 1) {
 
     await killZombieBrowser();
 
+    // Debug: listar conteúdo do volume
+    try {
+        const { execSync } = require('child_process');
+        const tree = execSync(`find /data -type f 2>/dev/null | head -50`).toString().trim();
+        console.log(`📂 Conteúdo de /data:\n${tree || '(vazio)'}`);
+    } catch (e) {
+        console.log(`📂 Erro ao listar /data: ${e.message}`);
+    }
+
     // Remove TODOS os locks do Chromium no volume
     removerLocksRecursivo(path.join(DATA_PATH, '.wwebjs_auth'));
 
