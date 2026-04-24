@@ -1,11 +1,11 @@
 # Histórico de Desenvolvimento - JME-BOT
 
-## Status Atual (2026-04-22)
+## Status Atual (2026-04-24)
 - ✅ Sistema de cobrança automática FUNCIONANDO
 - ✅ Cobrança D3 corrigida — `[object Object]` resolvido
 - ✅ Relatório pós-cobrança chegando nos admins
 - ✅ Frontend (Vercel) funcionando
-- ✅ Backend (Railway) estável — sessão persistente via LocalAuth
+- ✅ Backend (Railway) estável — sessão persistente via RemoteAuth + Firebase Storage
 - ✅ SSE estabilizado (sem acúmulo de conexões)
 - ✅ Botão toggle do bot corrigido (401 resolvido)
 - ✅ Scans completos do Firestore eliminados (resolvido 2026-04-10)
@@ -19,11 +19,12 @@
 - ✅ Retry automático no debounce para ProtocolError
 - ✅ CORS dinâmico via env + secret configurado
 - ✅ Puppeteer protocolTimeout = 240s
-- ✅ **Migração do Fly.io para Railway** — resolvido problema de memória (Railway com 512MB ainda é limite, mas funcionou após ajustes)
+- ✅ **Migração do Fly.io para Railway** — resolvido problema de memória
 - ✅ **Timeout no WhatsApp messaging corrigido** — `comTimeout` helper implementado
 - ✅ **Rotas modularizadas** — 12 arquivos separados para melhor manutenção
 - ✅ **Package.json limpo** — 9 dependências e 1 devDependency removidos
 - ✅ **Arquivos obsoletos deletados** — limpeza completa do projeto
+- ✅ **RemoteAuth + Firebase Storage** — sessão persistida no Storage, redeploy sem QR
 - ⚠️ `buscarClientePorNome` ainda usa scan com limit(500)
 - ⏳ Migration do campo `telefones` (array) pendente
 
@@ -31,10 +32,10 @@
 - **Backend**: Node.js + Express + whatsapp-web.js → **Railway** (anteriormente Fly.io)
 - **Frontend**: React + Vite → Vercel
 - **Banco**: Firebase Firestore
-- **Auth WhatsApp**: LocalAuth em `/data/.wwebjs_auth`
+- **Auth WhatsApp**: RemoteAuth + Firebase Storage
 
 ## Decisões Técnicas
-- **Sessão WhatsApp**: LocalAuth — sessão salva localmente em `/data/.wwebjs_auth`
+- **Sessão WhatsApp**: RemoteAuth + Firebase Storage — sessão zipada e sincronizada com Storage a cada 5min
 - **Padrão de Status**: Campo `status` string no documento do cliente
 - **Telefone**: Campo `telefones` é array — campo legado `telefone` (string) ainda existe em clientes antigos
 - **Dashboard**: Usa campo `status` direto (O(n))
@@ -152,6 +153,42 @@ Adicionada verificação `fs.existsSync(zipPath)` antes do upload para evitar er
 
 ---
 
+## Sessão 2026-04-24 — RemoteAuth + Firebase Storage (segunda tentativa)
+
+### Problema
+LocalAuth causava lock files entre deploys no Railway. A sessão ficava no volume efêmero do container — ao fazer redeploy, o volume era recriado e o QR code era necessário novamente.
+
+### Solução implementada
+RemoteAuth reimplementado com `FirestoreStore.js` customizado:
+- `sessionExists({ session })` — verifica se existe zip no Firebase Storage
+- `save({ session })` — RemoteAuth já zipa a sessão, upload para `whatsapp_session/RemoteAuth-{clientId}.zip`
+- `extract({ session, path })` — baixa zip do Storage para o path indicado pelo RemoteAuth
+- `delete({ session })` — remove do Storage
+- Sessão sincronizada a cada 5min via `backupSyncIntervalMs: 300000`
+
+### Dificuldades enfrentadas
+1. Assinaturas erradas — `RemoteAuth` passa `{ session }` como objeto, não path direto
+2. RemoteAuth zipa a sessão internamente com `archiver` antes de chamar `save`
+3. Tentativa inicial de zipar no `save` com `execSync('zip')` falhou — container não tem `zip` instalado
+4. Novo pacote `archiver` adicionado ao projeto para zipagem Node.js pura
+
+### Dependências adicionadas
+- `archiver: ^7.0.1` — zip em Node.js puro
+- `fs-extra: ^11.3.1` — RemoteAuth requer
+- `unzipper: ^0.12.3` — RemoteAuth requer para extração
+
+### Arquivos alterados
+- `services/FirestoreStore.js` — recriado do zero
+- `index.js` — LocalAuth → RemoteAuth, listener `remote_session_saved` adicionado
+- `package.json` — +archiver, +fs-extra, +unzipper
+
+### Resultado
+✅ Sessão persistida no Firebase Storage — redeploy não exige QR code
+✅ Lock files eliminados — RemoteAuth gerencia extração/extinção
+✅ `remote_session_saved` logado no console a cada sync
+
+---
+
 ## Sessão 2026-04-16 — Migração para Railway
 
 ### Problema original
@@ -179,7 +216,7 @@ Migração para Railway com trial de $5 e 512MB de RAM.
 ---
 
 ## Sessão 2026-04-13/14 — RemoteAuth + Firebase Storage
-Tentativa de usar RemoteAuth com Firebase Storage para persistir sessão. Abandonado em 2026-04-22 — migrado de volta para LocalAuth que é mais simples e estável no Railway.
+Tentativa inicial de usar RemoteAuth com Firebase Storage para persistir sessão. Abandonado temporariamente — resolvido definitivamente em 2026-04-24 com FirestoreStore.js customizado.
 
 ---
 
@@ -250,7 +287,7 @@ Retry de 5s no debounce do `Mensagem.js` para `ProtocolError` — mensagem não 
 
 | Arquivo | Caminho | Última atualização |
 |---|---|---|
-| `index.js` | `index.js` | 2026-04-22 |
+| `index.js` | `index.js` | 2026-04-24 |
 | `timers.js` | `middleware/timers.js` | 2026-04-13 |
 | `routes/index.js` | `routes/index.js` | 2026-04-22 |
 | `routes/bot.js` | `routes/bot.js` | 2026-04-22 |
@@ -265,9 +302,12 @@ Retry de 5s no debounce do `Mensagem.js` para `ProtocolError` — mensagem não 
 | `routes/admin.js` | `routes/admin.js` | 2026-04-22 |
 | `routes/boas-vindas.js` | `routes/boas-vindas.js` | 2026-04-22 |
 | `routes/migracao.js` | `routes/migracao.js` | 2026-04-22 |
+| `FirestoreStore.js` | `services/FirestoreStore.js` | 2026-04-24 |
 | `whatsappService.js` | `services/whatsappService.js` | 2026-04-22 |
 | `cobrancaService.js` | `services/cobrancaService.js` | 2026-04-22 |
 | `funcoes-firebase.js` | `database/funcoes-firebase.js` | 2026-04-10 |
+| `index.js` | `index.js` | 2026-04-24 |
+| `package.json` | `package.json` | 2026-04-24 |
 
 ---
 
@@ -289,7 +329,7 @@ Retry de 5s no debounce do `Mensagem.js` para `ProtocolError` — mensagem não 
 | Toggle do bot | ✅ Corrigido |
 | SSE | ✅ Estabilizado |
 | CORS dinâmico | ✅ Configurado |
-| LocalAuth | ✅ Funcionando |
+| RemoteAuth | ✅ save/extract funcionando |
 | Buscas Firestore | ✅ Sem scan total |
 | Dashboard | ✅ Sem N+1 |
 | Timeout WhatsApp | ✅ Corrigido |
@@ -301,6 +341,6 @@ Retry de 5s no debounce do `Mensagem.js` para `ProtocolError` — mensagem não 
 | TTL historico_conversa | ⏳ Pendente |
 | JWT painel | ⏳ Pendente |
 
-**Última atualização**: 2026-04-22
+**Última atualização**: 2026-04-24
 
 **Responsável**: Equipe JMENET

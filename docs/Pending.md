@@ -61,3 +61,5 @@ Em ordem de prioridade. Atualizar conforme for resolvendo.
 - ~~Rotas desorganizadas em routes/index.js~~ — resolvido 2026-04-22
 - ~~Package.json com dependências não utilizadas~~ — resolvido 2026-04-22
 - ~~Arquivos obsoletos acumulados no projeto~~ — resolvido 2026-04-22
+- ~~Lock files entre deploys (LocalAuth)~~ — resolvido 2026-04-24
+- ~~Sessão WhatsApp não persistia entre deploys~~ — resolvido 2026-04-24

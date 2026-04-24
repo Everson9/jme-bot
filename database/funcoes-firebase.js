@@ -18,58 +18,6 @@ function fromFirestoreDate(timestamp) {
 // HISTÓRICO DE CONVERSA
 // =====================================================
 
-async function dbSalvarHistorico(numero, role, content) {
-  try {
-    await db.collection('historico_conversa').add({
-      numero,
-      role,
-      content,
-      criado_em: Timestamp.now()
-    });
-
-    // Limpar registros antigos — busca sem orderBy para evitar índice composto
-    const snapshot = await db.collection('historico_conversa')
-      .where('numero', '==', numero)
-      .get();
-
-    if (snapshot.size > 20) {
-      // Ordena em memória e deleta os mais antigos
-      const docs = snapshot.docs.sort((a, b) => {
-        const ta = a.data().criado_em?.toMillis?.() || 0;
-        const tb = b.data().criado_em?.toMillis?.() || 0;
-        return tb - ta; // mais recentes primeiro
-      });
-      const batch = db.batch();
-      docs.slice(20).forEach(doc => batch.delete(doc.ref));
-      await batch.commit();
-    }
-  } catch (error) {
-    console.error('Erro em dbSalvarHistorico:', error);
-  }
-}
-
-async function dbCarregarHistorico(numero) {
-  try {
-    // Sem orderBy para não exigir índice composto — ordena em memória
-    const snapshot = await db.collection('historico_conversa')
-      .where('numero', '==', numero)
-      .get();
-
-    return snapshot.docs
-      .map(doc => ({
-        role: doc.data().role,
-        content: doc.data().content,
-        criado_em: fromFirestoreDate(doc.data().criado_em),
-        _ts: doc.data().criado_em?.toMillis?.() || 0
-      }))
-      .sort((a, b) => a._ts - b._ts) // mais antigos primeiro (ordem cronológica)
-      .map(({ role, content, criado_em }) => ({ role, content, criado_em }));
-  } catch (error) {
-    console.error('Erro em dbCarregarHistorico:', error);
-    return [];
-  }
-}
-
 async function dbLimparHistorico(numero) {
   try {
     const snapshot = await db.collection('historico_conversa')
@@ -746,8 +694,6 @@ const agendamentos = {
 // =====================================================
 
 module.exports = {
-  dbSalvarHistorico,
-  dbCarregarHistorico,
   dbLimparHistorico,
   dbSalvarAtendimentoHumano,
   dbRemoverAtendimentoHumano,
