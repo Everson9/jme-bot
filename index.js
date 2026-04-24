@@ -48,6 +48,10 @@ if (!fs.existsSync(DATA_PATH)) fs.mkdirSync(DATA_PATH, { recursive: true });
 
 // Remove TODOS os locks do Chromium recursivamente usando Node.js puro
 function removerLocksRecursivo(dir) {
+    // Remove SingletonLock diretamente no root do perfil
+    const singletonLock = path.join(DATA_PATH, 'session-jme-bot', 'SingletonLock');
+    try { if (fs.existsSync(singletonLock)) fs.unlinkSync(singletonLock); } catch (_) {}
+
     try {
         if (!fs.existsSync(dir)) return;
         const items = fs.readdirSync(dir);
@@ -310,7 +314,7 @@ async function inicializarWhatsApp(tentativa = 1) {
     }
 
     // Remove TODOS os locks do Chromium no volume
-    removerLocksRecursivo(path.join(DATA_PATH, '.wwebjs_auth'));
+    removerLocksRecursivo(path.join(DATA_PATH, 'session-jme-bot'));
 
     client = criarNovoClient();
 
