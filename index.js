@@ -46,6 +46,26 @@ const DATA_PATH = (() => {
 console.log(`📁 Dados persistentes em: ${DATA_PATH}`);
 if (!fs.existsSync(DATA_PATH)) fs.mkdirSync(DATA_PATH, { recursive: true });
 
+// Remove TODOS os locks do Chromium recursivamente usando Node.js puro
+function removerLocksRecursivo(dir) {
+    try {
+        if (!fs.existsSync(dir)) return;
+        const items = fs.readdirSync(dir);
+        for (const item of items) {
+            const fullPath = path.join(dir, item);
+            const stat = fs.statSync(fullPath);
+            if (stat.isDirectory()) {
+                removerLocksRecursivo(fullPath);
+            } else if (item.startsWith('Singleton')) {
+                fs.unlinkSync(fullPath);
+                console.log(`🧹 Lock removido: ${fullPath}`);
+            }
+        }
+    } catch (e) {
+        console.log(`⚠️ Erro ao remover lock em ${dir}: ${e.message}`);
+    }
+}
+
 const P = "🤖 *Assistente JMENET*\n\n";
 
 const toWpp = (n) => {
@@ -323,20 +343,7 @@ async function inicializarWhatsApp(tentativa = 1) {
     await killZombieBrowser();
 
     // Remove TODOS os locks do Chromium no volume
-    try {
-        const authDir = path.join(DATA_PATH, '.wwebjs_auth');
-        if (fs.existsSync(authDir)) {
-            const { execSync: exec } = require('child_process');
-            const locks = exec(`find ${authDir} -name "Singleton*" 2>/dev/null || true`).toString().trim();
-            if (locks) {
-                console.log(`🔍 Locks encontrados:\n${locks}`);
-                exec(`find ${authDir} -name "Singleton*" -delete 2>/dev/null || true`);
-                console.log('🧹 Todos os locks removidos');
-            }
-        }
-    } catch (e) {
-        console.log('⚠️ Erro ao remover locks:', e.message);
-    }
+    removerLocksRecursivo(path.join(DATA_PATH, '.wwebjs_auth'));
 
     const lockPath = path.join(DATA_PATH, 'session', 'SingletonLock');
     try {
