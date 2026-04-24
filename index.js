@@ -1,5 +1,6 @@
 require('dotenv').config();
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, RemoteAuth } = require('whatsapp-web.js');
+const FirestoreStore = require('./services/FirestoreStore');
 const QRCode = require('qrcode');
 const express = require('express');
 const cors = require('cors');
@@ -46,30 +47,6 @@ const DATA_PATH = (() => {
 console.log(`📁 Dados persistentes em: ${DATA_PATH}`);
 if (!fs.existsSync(DATA_PATH)) fs.mkdirSync(DATA_PATH, { recursive: true });
 
-// Remove TODOS os locks do Chromium recursivamente usando Node.js puro
-function removerLocksRecursivo(dir) {
-    // Remove SingletonLock diretamente no root do perfil
-    const singletonLock = path.join(DATA_PATH, 'session-jme-bot', 'SingletonLock');
-    try { if (fs.existsSync(singletonLock)) fs.unlinkSync(singletonLock); } catch (_) {}
-
-    try {
-        if (!fs.existsSync(dir)) return;
-        const items = fs.readdirSync(dir);
-        for (const item of items) {
-            const fullPath = path.join(dir, item);
-            const stat = fs.statSync(fullPath);
-            if (stat.isDirectory()) {
-                removerLocksRecursivo(fullPath);
-            } else if (item.startsWith('Singleton')) {
-                fs.unlinkSync(fullPath);
-                console.log(`🧹 Lock removido: ${fullPath}`);
-            }
-        }
-    } catch (e) {
-        console.log(`⚠️ Erro ao remover lock em ${dir}: ${e.message}`);
-    }
-}
-
 const P = "🤖 *Assistente JMENET*\n\n";
 
 const toWpp = (n) => {
@@ -94,8 +71,13 @@ let ultimoQR             = null;
 // WHATSAPP CLIENT
 // =====================================================
 function criarNovoClient() {
+    const store = new FirestoreStore();
     const c = new Client({
-        authStrategy: new LocalAuth({ clientId: 'jme-bot', dataPath: DATA_PATH }),
+        authStrategy: new RemoteAuth({
+            clientId: 'jme-bot',
+            backupSyncIntervalMs: 300000,
+            store,
+        }),
         puppeteer: {
             headless: true,
             protocolTimeout: 240000,
@@ -250,36 +232,6 @@ async function killZombieBrowser() {
         try { execSync(cmd); } catch (_) {}
     }
 
-    const chromiumLocks = [
-        '/data/.wwebjs_auth/RemoteAuth-jme-bot/SingletonLock',
-        '/data/.wwebjs_auth/RemoteAuth-jme-bot/SingletonCookie',
-        '/data/.wwebjs_auth/RemoteAuth-jme-bot/SingletonSocket',
-        '/data/.wwebjs_auth/jme-bot/SingletonLock',
-        '/data/.wwebjs_auth/jme-bot/SingletonCookie',
-        '/data/.wwebjs_auth/jme-bot/SingletonSocket',
-    ];
-    for (const lockFile of chromiumLocks) {
-        try {
-            if (fs.existsSync(lockFile)) {
-                fs.unlinkSync(lockFile);
-                console.log(`🧹 Lock removido: ${lockFile}`);
-            }
-        } catch (_) {}
-    }
-
-    const locks = [
-        path.join(DATA_PATH, '.wwebjs_auth', 'session', 'SingletonLock'),
-        path.join('/tmp', '.wwebjs_auth', 'session', 'SingletonLock'),
-    ];
-    for (const lockPath of locks) {
-        try {
-            if (fs.existsSync(lockPath)) {
-                fs.unlinkSync(lockPath);
-                console.log(`🧹 Lock removido: ${lockPath}`);
-            }
-        } catch (_) {}
-    }
-
     await new Promise(r => setTimeout(r, 6000));
 }
 
@@ -303,26 +255,6 @@ async function inicializarWhatsApp(tentativa = 1) {
     console.log(`🔄 Tentativa ${tentativa}...`);
 
     await killZombieBrowser();
-
-    // Debug: listar conteúdo do volume
-    try {
-        const { execSync } = require('child_process');
-        const tree = execSync(`find /data -type f 2>/dev/null | head -50`).toString().trim();
-        console.log(`📂 Conteúdo de /data:\n${tree || '(vazio)'}`);
-    } catch (e) {
-        console.log(`📂 Erro ao listar /data: ${e.message}`);
-    }
-
-    // Remove pasta de sessão corrompida/lockada do Chromium
-    const sessionDir = path.join(DATA_PATH, 'session-jme-bot');
-    try {
-        if (fs.existsSync(sessionDir)) {
-            fs.rmSync(sessionDir, { recursive: true, force: true });
-            console.log(`🧹 Pasta de sessão removida: ${sessionDir}`);
-        }
-    } catch (e) {
-        console.log(`⚠️ Erro ao remover sessão: ${e.message}`);
-    }
 
     client = criarNovoClient();
 
@@ -367,29 +299,6 @@ async function inicializarWhatsApp(tentativa = 1) {
         await new Promise(r => setTimeout(r, 30000));
         inicializarWhatsApp();
     });
-
-    const lockPath = path.join(DATA_PATH, 'session', 'SingletonLock');
-    try {
-        if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
-    } catch(e) {}
-
-    try {
-        await killZombieBrowser();
-
-        const sessionDirs = [
-            path.join(DATA_PATH, 'session'),
-            path.join(DATA_PATH, '.wwebjs_auth'),
-            path.join(DATA_PATH, 'SingletonLock'),
-            '/tmp/.wwebjs_auth'
-        ];
-
-        for (const dir of sessionDirs) {
-            if (fs.existsSync(dir)) {
-                fs.rmSync(dir, { recursive: true, force: true });
-                console.log(`🗑️ Removido: ${dir}`);
-            }
-        }
-    } catch(e) { console.log('Erro ao limpar:', e.message); }
 
     try {
         await client.initialize();
