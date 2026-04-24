@@ -263,6 +263,10 @@ async function inicializarWhatsApp(tentativa = 1) {
         console.log('📱 QR Code gerado. Acesse /qr');
     });
 
+    client.on('remote_session_saved', () => {
+        console.log('💾 remote_session_saved — sessão sincronizada com Storage');
+    });
+
     client.on('ready', async () => {
         console.log('✅ WhatsApp conectado!');
         inicializarTimers();
