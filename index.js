@@ -119,52 +119,10 @@ function criarNovoClient() {
         }
     });
 
-    c.on('qr', (qr) => {
-        ultimoQR = qr;
-        console.log('📱 QR Code gerado');
-    });
-
-    c.on('ready', async () => {
-        console.log('✅ WhatsApp conectado!');
-        inicializarTimers();
-        botIniciadoEm = Date.now();
-
-        try {
-            const [cfgBot, cfgRede, cfgPrevisao, cfgMotivo, cfgHorario, cfgCobranca] = await Promise.all([
-                firebaseDb.collection('config').doc('bot_ativo').get(),
-                firebaseDb.collection('config').doc('situacao_rede').get(),
-                firebaseDb.collection('config').doc('previsao_retorno').get(),
-                firebaseDb.collection('config').doc('motivo_rede').get(),
-                firebaseDb.collection('config').doc('horario_atendente').get(),
-                firebaseDb.collection('config').doc('horario_cobranca').get(),
-            ]);
-            if (cfgBot.exists)      botAtivo        = cfgBot.data().valor ?? true;
-            if (cfgRede.exists)     situacaoRede    = cfgRede.data().valor ?? 'normal';
-            if (cfgPrevisao.exists) previsaoRetorno = cfgPrevisao.data().valor ?? 'sem previsão';
-            if (cfgMotivo.exists)   motivoRede      = cfgMotivo.data().valor ?? '';
-            if (cfgHorario.exists)  Object.assign(horarioFuncionamento, cfgHorario.data());
-            if (cfgCobranca.exists) Object.assign(horarioCobranca, cfgCobranca.data());
-            console.log(`⚙️  Config restaurada: bot=${botAtivo ? 'ON' : 'OFF'} | rede=${situacaoRede}`);
-        } catch(e) { console.error('⚠️  Erro ao restaurar config:', e.message); }
-
-        sseService.broadcast();
-        console.log(`\n🚀 JMENET: Sistema online!`);
-        console.log(`🤖 Bot IA: ${botAtivo ? 'LIGADO ✅' : 'DESLIGADO ❌'}`);
-        console.log(`📡 Rede: ${situacaoRede} | Previsão: ${previsaoRetorno}`);
-        console.log(`🔥 Banco de dados: Firebase Firestore`);
-    });
-
-    c.on('disconnected', async (reason) => {
-        console.log('WhatsApp desconectado:', reason);
-        botIniciadoEm = null;
-        await new Promise(r => setTimeout(r, 30000));
-        inicializarWhatsApp();
-    });
-
     return c;
 }
 
-let client = criarNovoClient();
+let client;
 
 // =====================================================
 // EXPRESS
@@ -273,19 +231,6 @@ sseService.init(ctxRotas);
 require('./routes/index')(app, ctxRotas);
 
 // =====================================================
-// TIMERS EM BACKGROUND
-// =====================================================
-function inicializarTimers() {
-    iniciarTimers(client, firebaseDb, ADMINISTRADORES, {
-        dispararCobrancaReal, verificarCobrancasAutomaticas,
-        get situacaoRede()    { return situacaoRede; },
-        get previsaoRetorno() { return previsaoRetorno; },
-        redeNormal: () => situacaoRede === 'normal',
-        banco, sseService,
-    });
-}
-
-// =====================================================
 // KILL ZOMBIE BROWSER
 // =====================================================
 async function killZombieBrowser() {
@@ -335,6 +280,19 @@ async function killZombieBrowser() {
 }
 
 // =====================================================
+// TIMERS EM BACKGROUND
+// =====================================================
+function inicializarTimers() {
+    iniciarTimers(client, firebaseDb, ADMINISTRADORES, {
+        dispararCobrancaReal, verificarCobrancasAutomaticas,
+        get situacaoRede()    { return situacaoRede; },
+        get previsaoRetorno() { return previsaoRetorno; },
+        redeNormal: () => situacaoRede === 'normal',
+        banco, sseService,
+    });
+}
+
+// =====================================================
 // INICIALIZAÇÃO DO WHATSAPP
 // =====================================================
 async function inicializarWhatsApp(tentativa = 1) {
@@ -344,6 +302,50 @@ async function inicializarWhatsApp(tentativa = 1) {
 
     // Remove TODOS os locks do Chromium no volume
     removerLocksRecursivo(path.join(DATA_PATH, '.wwebjs_auth'));
+
+    client = criarNovoClient();
+
+    client.on('qr', (qr) => {
+        ultimoQR = qr;
+        console.log('📱 QR Code gerado. Acesse /qr');
+    });
+
+    client.on('ready', async () => {
+        console.log('✅ WhatsApp conectado!');
+        inicializarTimers();
+        botIniciadoEm = Date.now();
+
+        try {
+            const [cfgBot, cfgRede, cfgPrevisao, cfgMotivo, cfgHorario, cfgCobranca] = await Promise.all([
+                firebaseDb.collection('config').doc('bot_ativo').get(),
+                firebaseDb.collection('config').doc('situacao_rede').get(),
+                firebaseDb.collection('config').doc('previsao_retorno').get(),
+                firebaseDb.collection('config').doc('motivo_rede').get(),
+                firebaseDb.collection('config').doc('horario_atendente').get(),
+                firebaseDb.collection('config').doc('horario_cobranca').get(),
+            ]);
+            if (cfgBot.exists)      botAtivo        = cfgBot.data().valor ?? true;
+            if (cfgRede.exists)     situacaoRede    = cfgRede.data().valor ?? 'normal';
+            if (cfgPrevisao.exists) previsaoRetorno = cfgPrevisao.data().valor ?? 'sem previsão';
+            if (cfgMotivo.exists)   motivoRede      = cfgMotivo.data().valor ?? '';
+            if (cfgHorario.exists)  Object.assign(horarioFuncionamento, cfgHorario.data());
+            if (cfgCobranca.exists) Object.assign(horarioCobranca, cfgCobranca.data());
+            console.log(`⚙️  Config restaurada: bot=${botAtivo ? 'ON' : 'OFF'} | rede=${situacaoRede}`);
+        } catch(e) { console.error('⚠️  Erro ao restaurar config:', e.message); }
+
+        sseService.broadcast();
+        console.log(`\n🚀 JMENET: Sistema online!`);
+        console.log(`🤖 Bot IA: ${botAtivo ? 'LIGADO ✅' : 'DESLIGADO ❌'}`);
+        console.log(`📡 Rede: ${situacaoRede} | Previsão: ${previsaoRetorno}`);
+        console.log(`🔥 Banco de dados: Firebase Firestore`);
+    });
+
+    client.on('disconnected', async (reason) => {
+        console.log('WhatsApp desconectado:', reason);
+        botIniciadoEm = null;
+        await new Promise(r => setTimeout(r, 30000));
+        inicializarWhatsApp();
+    });
 
     const lockPath = path.join(DATA_PATH, 'session', 'SingletonLock');
     try {
@@ -367,13 +369,6 @@ async function inicializarWhatsApp(tentativa = 1) {
             }
         }
     } catch(e) { console.log('Erro ao limpar:', e.message); }
-
-    client = criarNovoClient();
-
-    client.on('qr', (qr) => {
-        ultimoQR = qr;
-        console.log('📱 QR Code gerado. Acesse /qr');
-    });
 
     try {
         await client.initialize();
