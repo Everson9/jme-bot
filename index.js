@@ -280,6 +280,23 @@ async function killZombieBrowser() {
         try { execSync(cmd); } catch (_) {}
     }
 
+    const chromiumLocks = [
+        '/data/.wwebjs_auth/RemoteAuth-jme-bot/SingletonLock',
+        '/data/.wwebjs_auth/RemoteAuth-jme-bot/SingletonCookie',
+        '/data/.wwebjs_auth/RemoteAuth-jme-bot/SingletonSocket',
+        '/data/.wwebjs_auth/jme-bot/SingletonLock',
+        '/data/.wwebjs_auth/jme-bot/SingletonCookie',
+        '/data/.wwebjs_auth/jme-bot/SingletonSocket',
+    ];
+    for (const lockFile of chromiumLocks) {
+        try {
+            if (fs.existsSync(lockFile)) {
+                fs.unlinkSync(lockFile);
+                console.log(`🧹 Lock removido: ${lockFile}`);
+            }
+        } catch (_) {}
+    }
+
     const locks = [
         path.join(DATA_PATH, '.wwebjs_auth', 'session', 'SingletonLock'),
         path.join('/tmp', '.wwebjs_auth', 'session', 'SingletonLock'),
