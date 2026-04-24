@@ -7,7 +7,10 @@
       "Bash(Where-Object { $_ullName -notmatch \"node_modules\" })",
       "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(Sort-Object)",
-      "Bash(find C:/Users/versi/Documents/GitHub/jme-bot -type f -name *migration* -o -name *migrate*)"
+      "Bash(find C:/Users/versi/Documents/GitHub/jme-bot -type f -name *migration* -o -name *migrate*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
