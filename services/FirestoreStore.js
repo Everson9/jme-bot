@@ -39,12 +39,19 @@ class FirestoreStore {
 
     // Salva sessão local no Firebase Storage
     async save(session) {
-        console.log(`💾 Save keys:`, Object.keys(session || {}));
-        console.log(`💾 Save values:`, Object.values(session || {}).map(v => typeof v === 'string' ? v : typeof v));
-        const zipPath = session?.zipPath || session?.path || session;
+        const sessionDir = session?.session || session?.zipPath || session?.path;
+        console.log(`💾 Save chamado com sessionDir: ${sessionDir}`);
         try {
-            if (!zipPath || !fs.existsSync(zipPath)) {
-                console.log(`⚠️ Zip não encontrado: ${zipPath}`);
+            if (!sessionDir || !fs.existsSync(sessionDir)) {
+                console.log(`⚠️ Diretório não encontrado: ${sessionDir}`);
+                return;
+            }
+            const zipPath = `${sessionDir}.zip`;
+            // Zipa o diretório
+            const { execSync } = require('child_process');
+            execSync(`zip -r "${zipPath}" "${sessionDir}"`, { stdio: 'pipe' });
+            if (!fs.existsSync(zipPath)) {
+                console.log(`⚠️ Zip não foi criado: ${zipPath}`);
                 return;
             }
             const b = getBucket();
@@ -52,6 +59,8 @@ class FirestoreStore {
                 destination: this.remotePath,
                 metadata: { contentType: 'application/zip' },
             });
+            // Limpa zip local
+            fs.unlinkSync(zipPath);
             console.log(`💾 Sessão salva no Firebase Storage: ${this.remotePath}`);
         } catch (e) {
             console.log(`⚠️ Erro ao salvar sessão: ${e.message}`);
