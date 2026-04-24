@@ -3,6 +3,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const archiver = require('archiver');
 
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET || 'jmenet.appspot.com';
 const REMOTE_PATH = 'whatsapp_session/RemoteAuth-jme-bot.zip';
@@ -47,9 +48,15 @@ class FirestoreStore {
                 return;
             }
             const zipPath = `${sessionDir}.zip`;
-            // Zipa o diretório
-            const { execSync } = require('child_process');
-            execSync(`zip -r "${zipPath}" "${sessionDir}"`, { stdio: 'pipe' });
+            await new Promise((resolve, reject) => {
+                const output = fs.createWriteStream(zipPath);
+                const archive = archiver('zip', { zlib: { level: 9 } });
+                output.on('close', resolve);
+                archive.on('error', reject);
+                archive.pipe(output);
+                archive.directory(sessionDir, false);
+                archive.finalize();
+            });
             if (!fs.existsSync(zipPath)) {
                 console.log(`⚠️ Zip não foi criado: ${zipPath}`);
                 return;
