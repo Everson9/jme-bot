@@ -313,8 +313,16 @@ async function inicializarWhatsApp(tentativa = 1) {
         console.log(`📂 Erro ao listar /data: ${e.message}`);
     }
 
-    // Remove TODOS os locks do Chromium no volume
-    removerLocksRecursivo(path.join(DATA_PATH, 'session-jme-bot'));
+    // Remove pasta de sessão corrompida/lockada do Chromium
+    const sessionDir = path.join(DATA_PATH, 'session-jme-bot');
+    try {
+        if (fs.existsSync(sessionDir)) {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+            console.log(`🧹 Pasta de sessão removida: ${sessionDir}`);
+        }
+    } catch (e) {
+        console.log(`⚠️ Erro ao remover sessão: ${e.message}`);
+    }
 
     client = criarNovoClient();
 
