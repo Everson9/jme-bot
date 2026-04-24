@@ -6,7 +6,6 @@ const fs = require('fs');
 const archiver = require('archiver');
 
 const BUCKET_NAME = process.env.FIREBASE_STORAGE_BUCKET || 'jmenet.appspot.com';
-const REMOTE_PATH = 'whatsapp_session/RemoteAuth-jme-bot.zip';
 
 let admin;
 let bucket;
@@ -21,16 +20,22 @@ function getBucket() {
 
 class FirestoreStore {
     constructor() {
-        this.remotePath = REMOTE_PATH;
+        // remotePath é montado dinamicamente por session
+    }
+
+    remotePathFor(session) {
+        // session pode vir como path completo, extrair só o nome final
+        const sessionName = path.basename(session);
+        return `whatsapp_session/${sessionName}.zip`;
     }
 
     // Verifica se existe sessão no Firebase Storage
-    async sessionExists() {
+    async sessionExists({ session }) {
         try {
             const b = getBucket();
-            const file = b.file(this.remotePath);
+            const file = b.file(this.remotePathFor(session));
             const [exists] = await file.exists();
-            console.log(`🔍 Session exists: ${exists}`);
+            console.log(`🔍 Session exists [${session}]: ${exists}`);
             return exists;
         } catch (e) {
             console.log(`⚠️ Erro ao verificar sessão: ${e.message}`);
@@ -38,51 +43,43 @@ class FirestoreStore {
         }
     }
 
-    // Salva sessão local no Firebase Storage
-    async save(session) {
-        const sessionDir = session?.session || session?.zipPath || session?.path;
-        console.log(`💾 Save chamado com sessionDir: ${sessionDir}`);
+    // Salva sessão (já zipada pelo RemoteAuth) no Firebase Storage
+    async save({ session }) {
+        const sessionDir = session;
+        const zipPath = `${sessionDir}.zip`;
+        console.log(`💾 Save chamado — sessionDir: ${sessionDir}, zipPath: ${zipPath}`);
         try {
-            if (!sessionDir || !fs.existsSync(sessionDir)) {
+            if (!fs.existsSync(sessionDir)) {
                 console.log(`⚠️ Diretório não encontrado: ${sessionDir}`);
                 return;
             }
-            const zipPath = `${sessionDir}.zip`;
-            await new Promise((resolve, reject) => {
-                const output = fs.createWriteStream(zipPath);
-                const archive = archiver('zip', { zlib: { level: 9 } });
-                output.on('close', resolve);
-                archive.on('error', reject);
-                archive.pipe(output);
-                archive.directory(sessionDir, false);
-                archive.finalize();
-            });
             if (!fs.existsSync(zipPath)) {
-                console.log(`⚠️ Zip não foi criado: ${zipPath}`);
+                console.log(`⚠️ Zip não existe: ${zipPath}`);
                 return;
             }
+            const stat = fs.statSync(zipPath);
+            console.log(`📦 Zip existe: ${stat.size} bytes`);
+
             const b = getBucket();
             await b.upload(zipPath, {
-                destination: this.remotePath,
+                destination: this.remotePathFor(session),
                 metadata: { contentType: 'application/zip' },
             });
-            // Limpa zip local
-            fs.unlinkSync(zipPath);
-            console.log(`💾 Sessão salva no Firebase Storage: ${this.remotePath}`);
+            console.log(`💾 Sessão salva no Firebase Storage: ${this.remotePathFor(session)}`);
         } catch (e) {
             console.log(`⚠️ Erro ao salvar sessão: ${e.message}`);
         }
     }
 
-    // Extrai sessão do Firebase Storage para local
-    async extract() {
+    // Extrai sessão do Firebase Storage e dezipa para o diretório
+    async extract({ session, path: compressedSessionPath }) {
         try {
-            const localTmp = path.join('/tmp', 'RemoteAuth-jme-bot.zip');
+            const localZip = compressedSessionPath || path.join('/tmp', `${session}.zip`);
             const b = getBucket();
-            const file = b.file(this.remotePath);
-            await file.download({ destination: localTmp });
-            console.log(`📥 Sessão extraída do Firebase Storage: ${localTmp}`);
-            return localTmp;
+            const file = b.file(this.remotePathFor(session));
+            await file.download({ destination: localZip });
+            console.log(`📥 Sessão extraída para: ${localZip}`);
+            return localZip;
         } catch (e) {
             console.log(`⚠️ Erro ao extrair sessão: ${e.message}`);
             return null;
@@ -90,12 +87,12 @@ class FirestoreStore {
     }
 
     // Remove sessão do Firebase Storage
-    async delete() {
+    async delete({ session }) {
         try {
             const b = getBucket();
-            const file = b.file(this.remotePath);
+            const file = b.file(this.remotePathFor(session));
             await file.delete();
-            console.log(`🗑️ Sessão removida do Firebase Storage`);
+            console.log(`🗑️ Sessão removida do Firebase Storage: ${this.remotePathFor(session)}`);
         } catch (e) {
             if (e.code !== 404) {
                 console.log(`⚠️ Erro ao remover sessão: ${e.message}`);

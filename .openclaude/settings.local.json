@@ -10,7 +10,8 @@
       "Bash(find C:/Users/versi/Documents/GitHub/jme-bot -type f -name *migration* -o -name *migrate*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(npm show:*)"
     ]
   }
 }
