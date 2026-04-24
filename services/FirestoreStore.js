@@ -73,16 +73,24 @@ class FirestoreStore {
 
     // Extrai sessão do Firebase Storage e dezipa para o diretório
     async extract({ session, path: compressedSessionPath }) {
+        console.log(`📥 Extract chamado: session=${session}, path=${compressedSessionPath}`);
         try {
-            const localZip = compressedSessionPath || path.join('/tmp', `${session}.zip`);
+            // Garante que o diretório pai existe
+            const dir = require('path').dirname(compressedSessionPath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
             const b = getBucket();
             const file = b.file(this.remotePathFor(session));
-            await file.download({ destination: localZip });
-            console.log(`📥 Sessão extraída para: ${localZip}`);
-            return localZip;
+            const [exists] = await file.exists();
+            if (!exists) {
+                console.log(`📥 Nenhuma sessão no Storage para extrair`);
+                return;
+            }
+            await file.download({ destination: compressedSessionPath });
+            console.log(`📥 Sessão extraída: ${compressedSessionPath}`);
         } catch (e) {
             console.log(`⚠️ Erro ao extrair sessão: ${e.message}`);
-            return null;
         }
     }
 
