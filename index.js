@@ -321,12 +321,20 @@ async function inicializarWhatsApp(tentativa = 1) {
 
     await killZombieBrowser();
 
-    // Remove lock files do LocalAuth antes de inicializar
-    const localAuthLock = path.join(DATA_PATH, '.wwebjs_auth', 'jme-bot', 'SingletonLock');
-    const localAuthCookie = path.join(DATA_PATH, '.wwebjs_auth', 'jme-bot', 'SingletonCookie');
-    const localAuthSocket = path.join(DATA_PATH, '.wwebjs_auth', 'jme-bot', 'SingletonSocket');
-    for (const f of [localAuthLock, localAuthCookie, localAuthSocket]) {
-        try { if (fs.existsSync(f)) { fs.unlinkSync(f); console.log(`🧹 Lock removido: ${f}`); } } catch (_) {}
+    // Remove TODOS os locks do Chromium no volume
+    try {
+        const authDir = path.join(DATA_PATH, '.wwebjs_auth');
+        if (fs.existsSync(authDir)) {
+            const { execSync: exec } = require('child_process');
+            const locks = exec(`find ${authDir} -name "Singleton*" 2>/dev/null || true`).toString().trim();
+            if (locks) {
+                console.log(`🔍 Locks encontrados:\n${locks}`);
+                exec(`find ${authDir} -name "Singleton*" -delete 2>/dev/null || true`);
+                console.log('🧹 Todos os locks removidos');
+            }
+        }
+    } catch (e) {
+        console.log('⚠️ Erro ao remover locks:', e.message);
     }
 
     const lockPath = path.join(DATA_PATH, 'session', 'SingletonLock');
