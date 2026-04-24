@@ -300,6 +300,14 @@ async function inicializarWhatsApp(tentativa = 1) {
     client.on('disconnected', async (reason) => {
         console.log('WhatsApp desconectado:', reason);
         botIniciadoEm = null;
+        // Deleta sessão corrompida do Storage
+        try {
+            const store = new FirestoreStore();
+            await store.delete({ session: 'RemoteAuth-jme-bot' });
+            console.log('🗑️ Sessão removida do Storage após desconexão');
+        } catch (e) {
+            console.log('⚠️ Erro ao remover sessão:', e.message);
+        }
         await new Promise(r => setTimeout(r, 30000));
         inicializarWhatsApp();
     });
