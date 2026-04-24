@@ -321,6 +321,14 @@ async function inicializarWhatsApp(tentativa = 1) {
 
     await killZombieBrowser();
 
+    // Remove lock files do LocalAuth antes de inicializar
+    const localAuthLock = path.join(DATA_PATH, '.wwebjs_auth', 'jme-bot', 'SingletonLock');
+    const localAuthCookie = path.join(DATA_PATH, '.wwebjs_auth', 'jme-bot', 'SingletonCookie');
+    const localAuthSocket = path.join(DATA_PATH, '.wwebjs_auth', 'jme-bot', 'SingletonSocket');
+    for (const f of [localAuthLock, localAuthCookie, localAuthSocket]) {
+        try { if (fs.existsSync(f)) { fs.unlinkSync(f); console.log(`🧹 Lock removido: ${f}`); } } catch (_) {}
+    }
+
     const lockPath = path.join(DATA_PATH, 'session', 'SingletonLock');
     try {
         if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
