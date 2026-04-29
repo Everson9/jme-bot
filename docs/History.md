@@ -1,346 +1,160 @@
 # Histórico de Desenvolvimento - JME-BOT
 
-## Status Atual (2026-04-24)
+## Status Atual (2026-04-29)
+
 - ✅ Sistema de cobrança automática FUNCIONANDO
-- ✅ Cobrança D3 corrigida — `[object Object]` resolvido
-- ✅ Relatório pós-cobrança chegando nos admins
-- ✅ Frontend (Vercel) funcionando
-- ✅ Backend (Railway) estável — sessão persistente via RemoteAuth + Firebase Storage
+- ✅ RemoteAuth + Firebase Storage — sessão persiste entre deploys
+- ✅ Frontend (Vercel) + Backend (Railway) estáveis
 - ✅ SSE estabilizado (sem acúmulo de conexões)
-- ✅ Botão toggle do bot corrigido (401 resolvido)
-- ✅ Scans completos do Firestore eliminados (resolvido 2026-04-10)
-- ✅ Menu duplicado no Mensagem.js corrigido
-- ✅ !cobrar passando ADMINISTRADORES corretamente
-- ✅ Fluxo de comprovante com nome não encontrado corrigido (loop infinito eliminado)
-- ✅ Busca tolerante de nome para banco importado de planilha implementada
-- ✅ Chrome zumbi + lock file resolvidos
-- ✅ WhatsApp desconectado — reconexão automática em 30s
-- ✅ UnhandledRejection capturado globalmente
-- ✅ Retry automático no debounce para ProtocolError
-- ✅ CORS dinâmico via env + secret configurado
-- ✅ Puppeteer protocolTimeout = 240s
-- ✅ **Migração do Fly.io para Railway** — resolvido problema de memória
-- ✅ **Timeout no WhatsApp messaging corrigido** — `comTimeout` helper implementado
-- ✅ **Rotas modularizadas** — 12 arquivos separados para melhor manutenção
-- ✅ **Package.json limpo** — 9 dependências e 1 devDependency removidos
-- ✅ **Arquivos obsoletos deletados** — limpeza completa do projeto
-- ✅ **RemoteAuth + Firebase Storage** — sessão persistida no Storage, redeploy sem QR
-- ⚠️ `buscarClientePorNome` ainda usa scan com limit(500)
-- ⏳ Migration do campo `telefones` (array) pendente
+- ✅ Cobrança com filtros: promessa, carnê, cancelado, histórico
+- ✅ Votação de admins via WhatsApp para disparos automáticos
+- ✅ Relatório pós-cobrança nos admins
+- ✅ Rotas modularizadas em 19 arquivos
+- ✅ Timers: cobrança (2h), limpeza (3h), promessas (08h BRT)
+- ✅ Kill zombie browser antes de iniciar
+- ✅ Reconexão automática com backoff exponencial
+- ✅ ComTimeout em todas as chamadas WhatsApp
+- ⚠️ `buscarClientePorNome` usa `limit(500)` — não escala
+- ⚠️ N+1 query em `adminService.js` — loop sequencial `historico_pagamentos`
+- ⚠️ Migration campo `telefones` (array) pendente para clientes legados
 
 ## Stack
-- **Backend**: Node.js + Express + whatsapp-web.js → **Railway** (anteriormente Fly.io)
-- **Frontend**: React + Vite → Vercel
+
+- **Backend**: Node.js + Express 5 + whatsapp-web.js → **Railway**
+- **Frontend**: React + Vite → **Vercel**
 - **Banco**: Firebase Firestore
-- **Auth WhatsApp**: RemoteAuth + Firebase Storage
+- **Auth WhatsApp**: `RemoteAuth` + `FirestoreStore` → Firebase Storage
+- **Sessão**: zip em `whatsapp_session/` no bucket `jmenet.appspot.com`
 
-## Decisões Técnicas
-- **Sessão WhatsApp**: RemoteAuth + Firebase Storage — sessão zipada e sincronizada com Storage a cada 5min
-- **Padrão de Status**: Campo `status` string no documento do cliente
-- **Telefone**: Campo `telefones` é array — campo legado `telefone` (string) ainda existe em clientes antigos
-- **Dashboard**: Usa campo `status` direto (O(n))
-- **Debounce**: 12 segundos
-- **dispararCobrancaReal**: assinatura `(client, firebaseDb, data, tipo, clientesFiltrados, ADMINISTRADORES)` — wrappers em `timers.js` e `routes/index.js` já passam todos os parâmetros corretamente
-- **Timeout WhatsApp**: `comTimeout` helper com 30s para `sendMessage`, 15s para `getNumberId` e `isRegisteredUser`
-- **Rotas**: Modularizadas em 12 arquivos separados por funcionalidade
+## Infraestrutura de Sessão WhatsApp
 
----
+```
+RemoteAuth (whatsapp-web.js)
+    ↓ save()
+FirestoreStore.save({ session })
+    ↓ archiver zip
+    ↓ upload
+Firebase Storage: whatsapp_session/{sessionName}.zip
+    ↓ extract()
+FirestoreStore.extract({ session, path })
+    ↓ download + unzip
+/wwebjs_auth/ (temporário local)
+```
 
-## Sessão 2026-04-22 — Limpeza e Modularização
-
-### Problemas identificados
-1. Arquivos obsoletos acumulados no projeto (fluxos, middleware, services deletados)
-2. `package.json` com dependências não utilizadas
-3. `routes/index.js` com ~800 linhas, difícil de manter
-4. Timeout no WhatsApp messaging causando travamentos (Runtime.callFunctionOn)
-
-### Soluções implementadas
-
-#### 1. Deleção de arquivos obsoletos
-Arquivos deletados:
-- `database/database.js` — substituído por `database/funcoes-firebase.js`
-- `migrardados.js` — script de migração antigo
-- `fluxos/cancelamento.js` — fluxo integrado no bot
-- `fluxos/financeiro.js` — fluxo integrado no bot
-- `fluxos/novoCliente.js` — fluxo integrado no bot
-- `fluxos/promessa.js` — fluxo integrado no bot
-- `fluxos/suporte.js` — fluxo integrado no bot
-- `middleware/Mensagem.js` — fluxo integrado no bot
-- `middleware/comprovante.js` — fluxo integrado no bot
-- `services/FirestoreStore.js` — não usado (LocalAuth em vez de RemoteAuth)
-- `services/audioService.js` — não utilizado
-- `services/fluxoService.js` — fluxo integrado no bot
-- `services/groqService.js` — não utilizado
-- `services/midiaService.js` — não utilizado
-- `stateManager.js` — estado integrado no bot
-
-#### 2. Limpeza do package.json
-Dependências removidas:
-- `axios`, `body-parser`, `helmet`, `morgan`, `multer`, `node-cron`, `puppeteer`, `sharp`, `uuid`
-- DevDependency removida: `nodemon`
-
-Dependências finais: `cors`, `dotenv`, `express`, `firebase-admin`, `qrcode`, `whatsapp-web.js`
-
-#### 3. Modularização de routes/index.js
-Rotas divididas em 12 arquivos:
-- `routes/bot.js` — horário, status, rede, ciclo-info, health, metrics, whatsapp
-- `routes/clientes.js` — clientes, bases, histórico
-- `routes/cobranca.js` — cobrança, promessas, carnê
-- `routes/dashboard.js` — resumo-bases, caixa-hoje, alertas, fluxo-clientes
-- `routes/logs.js` — logs de cobranças, comprovantes, bot, correções, stats
-- `routes/chamados.js` — listagem, assumir, fechar chamados
-- `routes/cancelamentos.js` — CRUD de cancelamentos
-- `routes/instalacoes.js` — CRUD de instalações
-- `routes/relatorios.js` — relatórios, inadimplentes, gráficos, exportar, planilha
-- `routes/admin.js` — limpar-estado, SGP, clientes recentes, baixa retroativa
-- `routes/boas-vindas.js` — envio de boas-vindas
-- `routes/migracao.js` — migração de planilhas
-
-#### 4. Correção de timeout no WhatsApp messaging
-Adicionado helper `comTimeout` em `services/whatsappService.js`:
-- `sendMessage`: 30s timeout
-- `getNumberId`: 15s timeout
-- `isRegisteredUser`: 15s timeout
-
-Aplicado em:
-- `enviarMensagemSegura` — todas as tentativas de envio
-- `cobrancaService.js` — envio de formas de pagamento
-
-### Status atual
-- ✅ Projeto limpo sem arquivos obsoletos
-- ✅ Package.json com apenas dependências necessárias
-- ✅ Rotas organizadas em arquivos menores
-- ✅ Timeout no WhatsApp corrigido
-- ✅ Todas as verificações de sintaxe passaram
+- `backupSyncIntervalMs`: 43200000 (12h)
+- Se servidor reiniciar antes do próximo sync: sessão no Storage pode estar 12h desatualizada
+- Em caso de desconexão: `FirestoreStore.delete()` remove a sessão do Storage e reinicia com QR
 
 ---
 
-## Sessão 2026-04-17 — Correções de Cobrança e Mensagens
+## Sessão 2026-04-29 — Auditoria de Documentação
 
-### Problemas identificados
-1. Clientes com `status: 'promessa'` estavam sendo cobrados
-2. Mensagens de cobrança muito genéricas (todos os tipos usavam o mesmo texto)
-3. Chaves PIX falsas no `mensagemService.js`
-4. Erro ao salvar sessão no Storage (arquivo zip não existia)
+### Problema
+Documentação desatualizada: mencionava LocalAuth, atendimento automático, fluxes removidos, stack antiga.
 
-### Soluções implementadas
+### Correções aplicadas
+- `ARCHITECTURE.md`: 19 rotas (não 12), RemoteAuth+Storage, sem chatbot, sem Groq, sem pdf-parse, Express 5
+- `API.md`: removido `/api/health`, atualizado com rotas reais (19 arquivos), tipos de cobrança corretos
+- `CHANGELOG.md`: notas de deploy Railway, RemoteAuth rollout
+- `History.md`: removida menção a LocalAuth como principal, atualizado mapa de arquivos
+- `rules.md`: `dispararCobrancaReal` com 6 parâmetros, backupSyncIntervalMs = 12h
+- `PATTERNS.md`: comTimeout em todas as chamadas WhatsApp
+- `Pending.md`: atualizado com N+1 query, RemoteAuth como resolvido
+- `SECURITY.md`: atualizado para RemoteAuth, sessão via Storage
 
-#### 1. Correção no `cobrancaService.js`
-Adicionadas verificações para não cobrar clientes com:
-- `status === 'promessa'`
-- Promessa ativa na collection `promessas`
+### Mapa de arquivos atual
 
-#### 2. Melhoria no `mensagemService.js`
-Mensagens personalizadas por tipo de cobrança:
-- `lembrete` → 🔔 Lembrete (D-1)
-- `atraso` → ⚠️ Atraso (D+3)
-- `atraso_final` → 🔴 Atraso Final (D+5)
-- `reconquista` → 💙 Reativação (D+7)
-- `reconquista_final` → 💔 Última Chance (D+10)
-
-Adicionado branding `🤖 JMENET TELECOM` no topo de todas as mensagens.
-Chaves PIX reais: `jmetelecomnt@gmail.com` e `+55 81 98750-0456`.
-
-#### 3. Correção no `FirestoreStore.js`
-Adicionada verificação `fs.existsSync(zipPath)` antes do upload para evitar erro `ENOENT`.
-
-### Status atual
-- ✅ Cobrança automática funcionando
-- ✅ Clientes com promessa não são cobrados
-- ✅ Mensagens personalizadas por tipo
-- ✅ Chaves PIX corretas
-- ✅ Sessão salva no Storage sem erros
+| Arquivo | Última modificação |
+|---------|-------------------|
+| `index.js` | 2026-04-24 |
+| `services/FirestoreStore.js` | 2026-04-24 |
+| `services/cobrancaService.js` | 2026-04-22 |
+| `services/adminService.js` | 2026-04-22 |
+| `services/whatsappService.js` | 2026-04-22 |
+| `middleware/timers.js` | 2026-04-22 |
+| `routes/index.js` | 2026-04-22 |
 
 ---
 
 ## Sessão 2026-04-24 — RemoteAuth + Firebase Storage (segunda tentativa)
 
 ### Problema
-LocalAuth causava lock files entre deploys no Railway. A sessão ficava no volume efêmero do container — ao fazer redeploy, o volume era recriado e o QR code era necessário novamente.
+LocalAuth causava lock files entre deploys no Railway. Sessão ficava em volume efêmero — ao fazer deploy, volume era recriado e QR code necessário.
 
 ### Solução implementada
-RemoteAuth reimplementado com `FirestoreStore.js` customizado:
-- `sessionExists({ session })` — verifica se existe zip no Firebase Storage
-- `save({ session })` — RemoteAuth já zipa a sessão, upload para `whatsapp_session/RemoteAuth-{clientId}.zip`
-- `extract({ session, path })` — baixa zip do Storage para o path indicado pelo RemoteAuth
+RemoteAuth com `FirestoreStore.js` customizado:
+- `sessionExists({ session })` — verifica zip no Firebase Storage
+- `save({ session })` — RemoteAuth já zipa; upload para `whatsapp_session/{sessionName}.zip`
+- `extract({ session, path })` — baixa zip, dezipa para path do RemoteAuth
 - `delete({ session })` — remove do Storage
-- Sessão sincronizada a cada 5min via `backupSyncIntervalMs: 300000`
-
-### Dificuldades enfrentadas
-1. Assinaturas erradas — `RemoteAuth` passa `{ session }` como objeto, não path direto
-2. RemoteAuth zipa a sessão internamente com `archiver` antes de chamar `save`
-3. Tentativa inicial de zipar no `save` com `execSync('zip')` falhou — container não tem `zip` instalado
-4. Novo pacote `archiver` adicionado ao projeto para zipagem Node.js pura
+- `backupSyncIntervalMs`: 43200000 (12h)
 
 ### Dependências adicionadas
 - `archiver: ^7.0.1` — zip em Node.js puro
 - `fs-extra: ^11.3.1` — RemoteAuth requer
 - `unzipper: ^0.12.3` — RemoteAuth requer para extração
 
-### Arquivos alterados
-- `services/FirestoreStore.js` — recriado do zero
-- `index.js` — LocalAuth → RemoteAuth, listener `remote_session_saved` adicionado
-- `package.json` — +archiver, +fs-extra, +unzipper
-
 ### Resultado
-✅ Sessão persistida no Firebase Storage — redeploy não exige QR code
-✅ Lock files eliminados — RemoteAuth gerencia extração/extinção
+✅ Sessão persiste no Firebase Storage — redeploy não exige QR code
+✅ Lock files eliminados
 ✅ `remote_session_saved` logado no console a cada sync
+
+---
+
+## Sessão 2026-04-22 — Limpeza e Modularização
+
+### Alterações
+- 19 arquivos de rotas (não 12): adicionados `agendamentos.js`, `instalacoes-agendadas.js`, `paginacao.js`, `alertas.js`, `backup.js`
+- Package.json limpo: removidas dependências não utilizadas
+- Helper `comTimeout` em todas as chamadas WhatsApp
+- `express: ^5.2.1` (confirmado)
+
+---
+
+## Sessão 2026-04-17 — Correções de Cobrança
+
+- Clientes com `status: 'promessa'` não são cobrados
+- Verificação de promessa ativa na collection `promessas`
+- Mensagens personalizadas por tipo de cobrança
+- Chaves PIX reais: `jmetelecomnt@gmail.com` e `+55 81 98750-0456`
 
 ---
 
 ## Sessão 2026-04-16 — Migração para Railway
 
-### Problema original
-Fly.io com 256MB de RAM era insuficiente para rodar o Chromium. O plano gratuito não permitia 1GB sem pagamento.
-
-### Solução implementada
-Migração para Railway com trial de $5 e 512MB de RAM.
-
-### Desafios encontrados
-1. **Permissão de escrita**: `DATA_PATH` ajustado para `/data` (Railway) ou `/tmp/data` (Render)
-2. **Firebase Storage**: Service account precisou de papel `Storage Admin` no Google Cloud IAM
-3. **CORS**: Necessário adicionar `https://*.vercel.app` para permitir previews do Vercel
-4. **Chrome/Chromium**: Railway não tem Chromium pré-instalado; usado `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false` e instalado via build
-
-### Configuração final Railway
-- **Build Command**: `npm install && npx puppeteer browsers install chrome`
-- **Variáveis críticas**: `NODE_ENV=production`, `FIREBASE_CREDENTIALS_JSON`, `ALLOWED_ORIGINS`
-- **Porta**: Railway define automaticamente (8080)
-
-### Status atual
-- ✅ Backend rodando em `https://jme-bot-backend-production.up.railway.app`
-- ✅ Frontend no Vercel apontando para Railway
-- ✅ Sessão WhatsApp persistente via LocalAuth
-
----
-
-## Sessão 2026-04-13/14 — RemoteAuth + Firebase Storage
-Tentativa inicial de usar RemoteAuth com Firebase Storage para persistir sessão. Abandonado temporariamente — resolvido definitivamente em 2026-04-24 com FirestoreStore.js customizado.
-
----
-
-## Sessão 2026-04-13 — Cobrança D3 com [object Object]
-
-### Problema
-Cobrança D3 e disparo manual retornavam `dia [object Object], tipo: [object Object]` — 0 clientes encontrados mesmo com pendentes.
-
-### Causa raiz
-**Bug 1 — `routes/index.js`**: `/api/cobrar/manual` chamava `ctx.dispararCobrancaReal(client, firebaseDb, data, tipo)` mas `ctx.dispararCobrancaReal` já é wrapper com `client` e `firebaseDb` internos. Resultado: `client` virava `data`, `firebaseDb` virava `tipo`.
-
-```js
-// ANTES — errado
-const total = await ctx.dispararCobrancaReal(client, firebaseDb, data, tipo || null);
-// DEPOIS — correto
-const total = await ctx.dispararCobrancaReal(data, tipo || null);
-```
-
-**Bug 2 — `timers.js`**: callback não passava `ADMINISTRADORES`.
-
-```js
-// ANTES
-(data, tipo, clientes) => dispararCobrancaReal(client, firebaseDb, data, tipo, clientes)
-// DEPOIS
-(data, tipo, clientes) => dispararCobrancaReal(client, firebaseDb, data, tipo, clientes, ADMINISTRADORES)
-```
-
----
-
-## Sessão 2026-04-13 — CORS + protocolTimeout
-
-- `fly secrets set ALLOWED_ORIGINS=https://jme-bot.vercel.app`
-- `protocolTimeout` aumentado de 120000 para 240000
-
----
-
-## Sessão 2026-04-12 — Retry no debounce (ProtocolError)
-
-Retry de 5s no debounce do `Mensagem.js` para `ProtocolError` — mensagem não é mais perdida silenciosamente.
-
----
-
-## Sessão 2026-04-12 — Estabilidade WhatsApp + Fly.io
-
-- `killZombieBrowser()` antes de cada inicialização
-- Reconexão automática no `disconnected` (30s)
-- `unhandledRejection` global
-- `[[restart]] policy=always` no `fly.toml`
-- Removido `--single-process` e `--max-old-space-size=256`
-
----
-
-## Sessão 2026-04-11
-
-- `!cobrar` sem `ADMINISTRADORES` — corrigido em `Mensagem.js`
-- Loop infinito no fluxo de comprovante — refatoração completa do `comprovante.js`
-- Busca tolerante de nome (`buscarNomeToleranteComprovante`)
-
----
-
-## Sessão 2026-04-10 — Performance Firestore
-
-5 scans completos por mensagem causavam ~9min de delay. Todas as funções de busca migradas para queries indexadas. N+1 no dashboard corrigido.
-
----
-
-## Arquivos e Localizações
-
-| Arquivo | Caminho | Última atualização |
-|---|---|---|
-| `index.js` | `index.js` | 2026-04-24 |
-| `timers.js` | `middleware/timers.js` | 2026-04-13 |
-| `routes/index.js` | `routes/index.js` | 2026-04-22 |
-| `routes/bot.js` | `routes/bot.js` | 2026-04-22 |
-| `routes/clientes.js` | `routes/clientes.js` | 2026-04-22 |
-| `routes/cobranca.js` | `routes/cobranca.js` | 2026-04-22 |
-| `routes/dashboard.js` | `routes/dashboard.js` | 2026-04-22 |
-| `routes/logs.js` | `routes/logs.js` | 2026-04-22 |
-| `routes/chamados.js` | `routes/chamados.js` | 2026-04-22 |
-| `routes/cancelamentos.js` | `routes/cancelamentos.js` | 2026-04-22 |
-| `routes/instalacoes.js` | `routes/instalacoes.js` | 2026-04-22 |
-| `routes/relatorios.js` | `routes/relatorios.js` | 2026-04-22 |
-| `routes/admin.js` | `routes/admin.js` | 2026-04-22 |
-| `routes/boas-vindas.js` | `routes/boas-vindas.js` | 2026-04-22 |
-| `routes/migracao.js` | `routes/migracao.js` | 2026-04-22 |
-| `FirestoreStore.js` | `services/FirestoreStore.js` | 2026-04-24 |
-| `whatsappService.js` | `services/whatsappService.js` | 2026-04-22 |
-| `cobrancaService.js` | `services/cobrancaService.js` | 2026-04-22 |
-| `funcoes-firebase.js` | `database/funcoes-firebase.js` | 2026-04-10 |
-| `index.js` | `index.js` | 2026-04-24 |
-| `package.json` | `package.json` | 2026-04-24 |
+Fly.io 256MB insuficiente → Railway com 512MB trial.
 
 ---
 
 ## Pendências
 
-1. **Migration `telefones`** — clientes importados da planilha têm só `telefone` (string)
-2. **`buscarClientePorNome`** — ainda usa `limit(500)`
-3. **Rate limiting na API**
-4. **TTL em `historico_conversa`**
-5. **Autenticação JWT no painel**
+1. **`buscarClientePorNome`** — `limit(500)` + range query — não escala
+2. **N+1 query em adminService.js** — loop sequencial `historico_pagamentos`
+3. **Migration `telefones`** — clientes legados têm só `telefone` (string), não `telefones` (array)
+4. **Rate limiting na API**
+5. **TTL em `historico_conversa`**
+6. **Autenticação JWT no painel**
 
 ---
 
 | Módulo | Status |
 |--------|--------|
-| Frontend (painel admin) | ✅ Funcional |
-| Cobrança automática D1/D3 | ✅ Funcionando |
-| Relatório pós-cobrança | ✅ Corrigido |
-| Toggle do bot | ✅ Corrigido |
-| SSE | ✅ Estabilizado |
+| Cobrança automática D-1/D+3/D+5/D+7/D+10 | ✅ Funcionando |
+| Votação de admins | ✅ Funcionando |
+| RemoteAuth + Firebase Storage | ✅ Funcionando |
+| ComTimeout WhatsApp | ✅ Corrigido |
+| Rotas modularizadas (19) | ✅ Concluído |
+| SSE | ✅ Estável |
 | CORS dinâmico | ✅ Configurado |
-| RemoteAuth | ✅ save/extract funcionando |
-| Buscas Firestore | ✅ Sem scan total |
-| Dashboard | ✅ Sem N+1 |
-| Timeout WhatsApp | ✅ Corrigido |
-| Rotas modularizadas | ✅ Concluído |
 | Package.json limpo | ✅ Concluído |
-| buscarClientePorNome | ⚠️ Parcial (limit 500) |
-| Migration campo telefones | ⏳ Pendente |
+| buscarClientePorNome | ⚠️ limit(500) |
+| N+1 historico_pagamentos | ⚠️ Sequencial |
+| Migration telefones | ⏳ Pendente |
 | Rate limiting | ⏳ Pendente |
 | TTL historico_conversa | ⏳ Pendente |
 | JWT painel | ⏳ Pendente |
 
-**Última atualização**: 2026-04-24
+---
 
-**Responsável**: Equipe JMENET
+**Última atualização**: 2026-04-29
+**Revisado por**: Auditoria técnica — código real vs documentação

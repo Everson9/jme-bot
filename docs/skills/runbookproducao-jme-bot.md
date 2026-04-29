@@ -1,80 +1,84 @@
 ---
 name: runbook-producao-jme-bot
-description: Runbook operacional para o jme-bot (WhatsApp + Express + Firestore + painel React). Use quando o usuário mencionar produção, deploy (Fly/Render), variáveis de ambiente, bot offline, QR code, SSE, sessão do WhatsApp, reiniciar serviço, logs ou indisponibilidade.
+description: Runbook operacional para o jme-bot (WhatsApp + Express + Firestore + painel React). Use quando o usuário mencionar produção, deploy, variáveis de ambiente, bot offline, QR code, SSE, sessão do WhatsApp, reiniciar serviço, logs ou indisponibilidade.
 ---
 
 # Runbook de Produção — jme-bot
 
-## Objetivo
+## Contexto do projeto
 
-Guiar diagnóstico e recuperação do serviço (bot + API + painel) com mínimo risco.
+- **Backend**: `index.js` (Express 5 + whatsapp-web.js)
+- **Plataforma**: Railway
+- **Sessão WhatsApp**: `RemoteAuth` + Firebase Storage (`whatsapp_session/*.zip`)
+- **Frontend**: React + Vite na Vercel
 
-## Contexto do projeto (essencial)
+## Endpoints úteis
 
-- **Backend**: `index.js` (Express + WhatsApp client).
-- **Plataforma atual**: **Railway** (anteriormente Fly.io)
-- **Sessão WhatsApp**: `RemoteAuth` com Firebase Storage (não depende de volume local)
-- **Endpoints úteis**:
-  - `GET /api/health` (saúde)
-  - `GET /api/status` (status resumido)
-  - `GET /api/status-stream` (SSE)
-  - `GET /qr` (PNG do QR)
+| Endpoint | Descrição |
+|----------|-----------|
+| `GET /api/status` | Status resumido do bot |
+| `GET /api/status-stream` | SSE em tempo real |
+| `GET /qr` | QR Code PNG |
 
 ## Checklist rápido (triagem)
 
-- [ ] Confirmar se o serviço está respondendo em `GET /api/health`
-- [ ] Confirmar se `GET /api/status` mostra `online=true`
-- [ ] Se `online=false`, checar `GET /qr` e logs de reconexão
-- [ ] Se painel não atualiza, checar SSE (`/api/status-stream`) e CORS
-- [ ] Confirmar variáveis críticas no ambiente de deploy
+1. `GET /api/status` — `online: true`?
+2. Se `online: false` → `GET /qr` + checar logs Railway
+3. Se painel não atualiza → SSE `/api/status-stream` + CORS
+4. Confirmar variáveis no Railway
 
 ## Variáveis de ambiente críticas
 
-- **Firebase**
-  - `FIREBASE_CREDENTIALS_JSON` (produção) — necessário para RemoteAuth
-- **LLM (fallback/extração)**
-  - `GROQ_API_KEY`
-- **Admin API**
-  - `ADMIN_API_KEY` (se vazio, **API fica aberta**)
-- **CORS**
-  - `ALLOWED_ORIGINS` (ex: `https://jme-bot.vercel.app,https://*.vercel.app`)
-- **Porta**
-  - `PORT` (Railway define 8080 automaticamente)
+| Variável | Obrigatória | Observação |
+|----------|-------------|------------|
+| `FIREBASE_CREDENTIALS_JSON` | Sim | Service account JSON ( Railway secrets) |
+| `ADMIN_API_KEY` | Sim (produção) | Se vazia, API fica aberta |
+| `ALLOWED_ORIGINS` | Sim | URLs separadas por vírgula |
+| `PORT` | Não | Railway define 8080 |
+| `FIREBASE_STORAGE_BUCKET` | Não | Default: `jmenet.appspot.com` |
 
 ## Playbooks
 
 ### Bot offline / WhatsApp desconectado
 
-1. Verificar `GET /api/status` (`online` e `iniciadoEm`).
-2. Se `online=false`, abrir `GET /qr`.
-3. Se `GET /qr` retorna 404:
-   - O cliente do WhatsApp pode não ter emitido QR ainda; checar logs do processo.
-4. Se `GET /qr` retorna PNG:
-   - Escanear QR com o WhatsApp correto.
-5. Se reconecta e cai em loop:
-   - Suspeitar de sessão corrompida no volume `/data`.
-   - Priorizar backup/inspeção antes de apagar (apagar sessão deve ser último recurso).
+1. Verificar `GET /api/status` (`online` e `iniciadoEm`)
+2. Se `online=false`:
+   - `GET /qr` retorna PNG → escanear com WhatsApp
+   - `GET /qr` retorna 404 → cliente ainda não emitiu QR, ver logs
+3. Reconexão em loop:
+   - Sessão corrompida no Firebase Storage
+   - Solução: deletar manualmente o zip `whatsapp_session/RemoteAuth-jme-bot.zip` do Storage
+   - OU: via API deletar sessão e esperar novo QR
 
-### Painel “travado” / não atualiza status em tempo real
+### QR Code não carrega
 
-1. Confirmar `GET /api/status-stream` responde com `text/event-stream`.
-2. Confirmar headers para SSE (sem buffer) estão presentes.
-3. Checar se há proxy/infra cortando conexões longas (timeout).
-4. Se precisar, orientar o usuário a recarregar o painel e observar reconexão SSE.
+1. Cliente WhatsApp ainda não emitiu QR (normal nos primeiros segundos)
+2. Aguardar 30s e tentar novamente
+3. Ver logs Railway por erros `initialize()`
 
-### API recusando (401/403) ou aberta demais
+### Painel não atualiza em tempo real
 
-1. Se `ADMIN_API_KEY` não está definida:
-   - O middleware permite tudo (modo dev).
-2. Se está definida:
-   - O frontend envia `x-api-key` (mas **não é segredo** se está no bundle).
-3. Recomendação mínima:
-   - Definir `ADMIN_API_KEY` em produção.
-   - Proteger painel/API por rede (allowlist IP / basic auth no proxy) quando possível.
+1. `GET /api/status-stream` responde como `text/event-stream`?
+2. Proxy/infra cortando conexões longas (timeout)?
+3. Recarregar painel e observar reconexão SSE
+
+### Sessão WhatsApp desatualizada após reinício
+
+- `backupSyncIntervalMs` = 12h
+- Se Railway reiniciar antes do próximo sync: sessão no Storage pode ter até 12h de diferença
+- Solução: força novo sync ao reconectar (RemoteAuth faz automaticamente)
+
+### API retornando 401
+
+- `ADMIN_API_KEY` não está definida no Railway
+- Definir valor forte nos Railway secrets
 
 ## Pós-incidente
 
-- [ ] Registrar causa raiz (ex.: sessão WhatsApp, env faltando, timeout SSE)
-- [ ] Se envolveu segredo: rotacionar chaves e invalidar as antigas
-- [ ] Adicionar verificação automatizada (healthcheck) ou alerta
+- [ ] Registrar causa raiz
+- [ ] Se envolveu segredo: rotacionar chaves
+- [ ] Adicionar healthcheck ou alerta se não houver
 
+---
+
+**Última atualização**: 2026-04-29

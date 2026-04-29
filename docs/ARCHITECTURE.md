@@ -2,7 +2,7 @@
 
 ## 🏗️ Visão Geral
 
-O JME-BOT é uma aplicação distribuída composta por três componentes principais:
+O JME-BOT é uma aplicação distribuída com três componentes:
 
 ```
 ┌─────────────────┐
@@ -13,79 +13,100 @@ O JME-BOT é uma aplicação distribuída composta por três componentes princip
          ↓
 ┌─────────────────────────────────────┐
 │         Bot Backend                 │
-│  (Node.js + Express + whatsapp.js) │
+│  (Node.js + Express 5 + whatsapp.js)│
 │  ┌─────────────────────────────┐   │
-│  │  Services (Mensagens,       │   │
-│  │  Cobrança, WhatsApp)         │   │
+│  │  Services (Cobrança, SSE,  │   │
+│  │  WhatsApp, Status)          │   │
 │  └─────────────────────────────┘   │
 └────────┬───────────────────┬────────┘
          │                   │
          ↓                   ↓
 ┌────────────────┐   ┌──────────────┐
-│   Firestore    │   │  SSE Stream  │
-│   (Database)   │   │  (Real-time) │
+│   Firestore    │   │  SSE Stream   │
+│   Database     │   │  (Real-time) │
 └────────────────┘   └──────────────┘
          ↑
          │ (SSE + REST)
          │
 ┌────────────────────────────────┐
 │     Painel Admin (React)       │
-│  Dashboard | Clientes | Stats  │
+│  Dashboard | Clientes | Stats   │
 └────────────────────────────────┘
 ```
+
+**IMPORTANTE**: O bot NÃO possui fluxo de atendimento automático via WhatsApp. Não há `client.on('message')`, menus automáticos, chatbot ou estados de conversa. O WhatsApp é usado exclusivamente para envio de mensagens (cobranças, notificações). O painel admin é a interface principal de operação.
 
 ## 📦 Componentes
 
 ### 1. Bot Backend (Node.js)
 
-**Localização**: Raiz do projeto (`index.js`)
+**Localização**: `index.js` (entry point)
 
 **Responsabilidades**:
-- Gerenciar conexão WhatsApp via `whatsapp-web.js`
-- Processar mensagens recebidas
-- Executar cobranças automáticas
+- Manter conexão WhatsApp via `whatsapp-web.js` + `RemoteAuth`
+- Persistir sessão no Firebase Storage (zip)
+- Executar timers em background (cobranças automáticas, limpeza, notificações)
 - Servir API REST para o painel admin
 - Enviar eventos SSE em tempo real
+- **NÃO processa mensagens recebidas** (sem chatbot, sem atendimento automático)
 
 **Stack**:
+- Node.js
 - Express 5
-- whatsapp-web.js
+- whatsapp-web.js (RemoteAuth strategy)
 - Firebase Admin SDK
-- pdf-parse (extração de dados)
+- archiver (zip para sessão)
+- fs-extra / unzipper (RemoteAuth requirements)
+- qrcode
+
+**Dependências** (`package.json`):
+```
+archiver, cors, dotenv, express, firebase-admin,
+fs-extra, qrcode, unzipper, whatsapp-web.js
+```
 
 **Estrutura de Pastas**:
 ```
 .
-├── index.js              # Entry point principal
+├── index.js                    # Entry point — Express + WhatsApp client
 ├── config/
-│   └── firebase.js       # Configuração Firebase
-├── services/             # Serviços de negócio
-│   ├── mensagemService.js
-│   ├── cobrancaService.js
-│   ├── whatsappService.js
-│   ├── adminService.js
-│   ├── statusService.js
-│   └── sseService.js
-├── middleware/           # Middlewares
-│   ├── timers.js         # Timers e agendamentos
-│   └── auth.js           # Autenticação API
-├── routes/               # Rotas da API REST (12 arquivos)
-│   ├── index.js
-│   ├── bot.js
-│   ├── clientes.js
-│   ├── cobranca.js
-│   ├── dashboard.js
-│   ├── logs.js
-│   ├── chamados.js
-│   ├── cancelamentos.js
-│   ├── instalacoes.js
-│   ├── relatorios.js
-│   ├── admin.js
-│   ├── boas-vindas.js
-│   └── migracao.js
-├── database/             # Camada de dados
-│   └── funcoes-firebase.js
-└── helpers/              # Utilitários
+│   └── firebase.js             # Firebase Admin SDK
+├── services/
+│   ├── FirestoreStore.js       # RemoteAuth store — salva sessão no Storage
+│   ├── adminService.js         # Votação de admins + verificação automática
+│   ├── cobrancaService.js      # Disparo de cobranças (lista filtrada ou busca)
+│   ├── mensagemService.js      # Geração de mensagens de cobrança/PIX
+│   ├── sseService.js           # Server-Sent Events em tempo real
+│   ├── statusService.js        # Ciclos de cobrança, deveSerCobrado
+│   ├── utilsService.js         # Utilitários gerais
+│   └── whatsappService.js      # Envio seguro com timeout (comTimeout)
+├── middleware/
+│   ├── auth.js                # Autenticação API via x-api-key
+│   └── timers.js               # Timers em background (2h, diário, 08h BRT)
+├── routes/                     # 17 arquivos de rota (além do index.js)
+│   ├── index.js                # Monta todas as rotas no app
+│   ├── admin.js                # Limpar estado, SGP, baixa retroativa
+│   ├── agendamentos.js         # CRUD de agendamentos
+│   ├── alertas.js              # Alertas do sistema
+│   ├── backup.js               # Exportação e restauração
+│   ├── bot.js                  # Horário, rede, ciclo-info, toggle
+│   ├── boas-vindas.js          # Envio de boas-vindas
+│   ├── cancelamentos.js        # CRUD de cancelamentos
+│   ├── chamados.js             # Listagem e gestão de chamados
+│   ├── clientes.js             # CRUD, busca por nome/telefone
+│   ├── cobranca.js             # Cobrança manual, promessas, carnê
+│   ├── dashboard.js            # Resumo bases, caixa, alertas, fluxo
+│   ├── instalacoes.js          # CRUD de instalações
+│   ├── instalacoes-agendadas.js # Instalações pendentes
+│   ├── logs.js                 # Logs de cobranças, bot, comprovantes
+│   ├── migracao.js             # Migração de planilhas
+│   ├── paginacao.js            # Paginação genérica
+│   └── relatorios.js           # Inadimplentes, gráficos, exportar
+├── database/
+│   ├── funcoes-firebase.js     # Queries de clientes, histórico, logs
+│   ├── agendamentos-firebase.js
+│   └── instalacoes-agendadas-firebase.js
+└── helpers/
     └── banco.js
 ```
 
@@ -94,50 +115,19 @@ O JME-BOT é uma aplicação distribuída composta por três componentes princip
 **Localização**: `frontend/`
 
 **Responsabilidades**:
-- Interface de gerenciamento
+- Interface de gerenciamento de clientes, promessas, agendamentos
 - Dashboard com métricas em tempo real
-- CRUD de clientes, promessas, agendamentos
-- Visualização de histórico
+- Disparo manual de cobranças
+- Gestão de cancelamentos, instalações, relatórios
 - Backup e exportação
 
 **Stack**:
-- React 18 + Vite
+- React + Vite
 - React Router DOM
 - Recharts (gráficos)
 - Server-Sent Events (atualização em tempo real)
 
-**Estrutura**:
-```
-frontend/
-├── src/
-│   ├── main.jsx          # Entry point
-│   ├── App.jsx           # App principal com rotas
-│   ├── pages/            # Páginas
-│   │   ├── dashboard.jsx
-│   │   ├── clientes.jsx
-│   │   ├── promessas.jsx
-│   │   └── agendamentos.jsx
-│   ├── components/       # Componentes reutilizáveis
-│   │   ├── TopNav.jsx
-│   │   ├── StatusBadge.jsx
-│   │   └── Pagination.jsx
-│   ├── contexts/         # Context API
-│   │   ├── ThemeContext.jsx
-│   │   └── NotificationContext.jsx
-│   ├── hooks/            # Custom hooks
-│   │   ├── useFetch.js
-│   │   ├── usePagination.js
-│   │   └── useSSEData.js
-│   ├── api/              # Cliente API
-│   │   └── client.js
-│   └── utils/            # Utilitários
-│       └── formatadores.js
-└── public/
-```
-
 ### 3. Firestore (Banco de Dados)
-
-**Schema Principais**:
 
 #### Collection: `clientes`
 ```javascript
@@ -145,7 +135,8 @@ frontend/
   id: string,
   nome: string,
   cpf: string,
-  telefones: string[],
+  telefones: string[],        // Array — campo principal
+  telefone: string,          // Legado — clientes importados de planilha
   endereco: {
     rua, numero, bairro, cidade, uf, cep
   },
@@ -154,15 +145,17 @@ frontend/
   },
   base_id: string,
   status: "pago" | "pendente" | "isento" | "promessa" | "cancelado",
-  dia_vencimento: number,
+  dia_vencimento: number,   // 10, 20 ou 30
   data_cadastro: timestamp,
 
-  // Subcoleção
+  // Subcoleção — buscar apenas o doc do ciclo, nunca toda a subcoleção
   historico_pagamentos/{MM-YYYY}: {
     status: "pago" | "pendente" | "isento",
     data_pagamento: timestamp,
     valor: number,
-    forma_pagamento: string
+    forma_pagamento: string,
+    referencia: "MM/YYYY",
+    pago_em: timestamp
   }
 }
 ```
@@ -172,13 +165,16 @@ frontend/
 {
   id: string,
   cliente_id: string,
-  base_id: string,
+  numero: string,           // formato WhatsApp: 55xxxxxxxx@c.us
+  nome: string,
   valor: number,
-  data_promessa: date,
+  data_promessa: string,    // "YYYY-MM-DD"
+  status: "pendente" | "pago" | "cancelada",
   ativa: boolean,
   cumprida: boolean,
   observacao: string,
-  criada_em: timestamp
+  criado_em: timestamp,
+  pago_em: timestamp
 }
 ```
 
@@ -187,8 +183,15 @@ frontend/
 {
   id: string,
   cliente_id: string,
+  numero: string,
+  nome: string,
+  endereco: string,
+  observacao: string,
   status: "solicitado" | "impresso" | "entregue",
-  data_solicitacao: timestamp
+  origem: "painel",
+  solicitado_em: timestamp,
+  impresso_em: timestamp,
+  entregue_em: timestamp
 }
 ```
 
@@ -198,70 +201,162 @@ frontend/
   id: string,
   numero: string,
   nome: string,
-  data_vencimento: string,
-  data_envio: string,
-  tipo: string,
+  data_vencimento: string,   // "10", "20", "30"
+  data_envio: string,        // "YYYY-MM-DD"
+  tipo: string,              // "lembrete", "atraso", "atraso_final", "reconquista", "reconquista_final"
+  origem: string,            // "auto" ou "manual"
   status: "enviado" | "falha",
   enviado_em: timestamp
 }
 ```
 
+#### Collection: `log_bot`, `log_comprovantes`, `log_atendimentos`
+Logs genéricos de ações do sistema.
+
+#### Collection: `agendamentos`
+```javascript
+{
+  id: string,
+  cliente_id: string,
+  tipo: "instalacao" | "suporte" | "visita",
+  data_agendamento: timestamp,
+  descricao: string,
+  status: "pendente" | "concluido" | "cancelado",
+  base_id: string,
+  criado_em: timestamp
+}
+```
+
+#### Collection: `instalacoes_agendadas`
+Instalações pendentes com endereço e dados do cliente.
+
+#### Collection: `bases`
+```javascript
+{ id: string, nome: string, ativa: boolean }
+```
+
+#### Collection: `config`
+Documentos isolados: `bot_ativo`, `situacao_rede`, `previsao_retorno`, `motivo_rede`, `horario_atendente`, `horario_cobranca`, `ultima_votacao`, `cobranca_adiada`.
+
+#### Collection: `votacoes`
+```javascript
+{
+  id: string,               // "votacao_${Date.now()}"
+  datas: string,            // dia de vencimento
+  tipo: string,             // tipo de cobrança
+  total: number,
+  data: string,             // hoje
+  status: "aguardando" | "expirado",
+  resolvido: boolean,
+  resultado: "aprovado" | "negado" | "expirado",
+  votos_sim: string[],
+  votos_nao: string[],
+  administradores: string[],
+  notificou_sim: boolean,
+  notificou_nao: boolean,
+  criado_em: timestamp
+}
+```
+
+#### Collection: `atendimento_humano`
+Rastreia números em atendimento humano (para não entregar ao bot automaticamente).
+
+#### Collection: `historico_conversa`
+Registros de conversas. **Cresce indefinidamente — TTL recomendado.**
+
 ## 🔄 Fluxos Principais
 
-### Fluxo 1: Cobrança Automática
+### Fluxo 1: Cobrança Automática (background timer 2h)
 
 ```
-Timer dispara (D-1, D+3, D+5, D+7, D+10)
+Timer dispara a cada 2h (11h-17h, seg-sáb)
     ↓
-adminService filtra clientes elegíveis
-    ↓
-Verifica promessas ativas
-    ↓
-Verifica histórico de pagamentos
-    ↓
-cobrancaService envia mensagens
-    ↓
-Relatório enviado para admins via WhatsApp
+adminService.verificarCobrancasAutomaticas
+    ├── Calcula ciclos: D-1, D+3, D+5, D+7, D+10
+    ├── Busca clientes por dia_vencimento (num e string)
+    ├── Filtra: cancelados, promessas, carnês pendentes
+    ├── Para cada cliente: busca histórico do ciclo
+    ├── perguntaAdmins → votação via WhatsApp
+    └── Se aprovado: disparaCobrancaReal com lista filtrada
+        ├── Duplicatas (log_cobrancas do dia)
+        ├── Envio com retry (tenta com/sem 9º dígito)
+        ├── log_cobrancas por cliente
+        └── Relatório para admins
 ```
 
-### Fluxo 2: Dashboard em Tempo Real (SSE)
+### Fluxo 2: Cobrança Manual (via API)
+
+```
+POST /api/cobrar/manual
+    ↓
+Verifica se já foi disparado hoje
+    ↓
+ctx.dispararCobrancaReal(data, tipo)
+    → Modo BUSCA (sem lista): busca clientes, filtra, envia
+    ↓
+Relatório para admins
+```
+
+### Fluxo 3: Dashboard em Tempo Real (SSE)
 
 ```
 Frontend conecta em /api/status-stream
     ↓
-Backend mantém conexão SSE aberta
+sseService mantém conexão aberta
     ↓
 Eventos emitidos quando:
   - Bot conecta/desconecta WhatsApp
-  - Nova mensagem recebida
-  - Cliente identificado
-  - Promessa criada
-  - Agendamento criado
+  - Config do bot é alterada
+  - Timer de cobrança é executado
     ↓
 Frontend recebe evento
     ↓
-Atualiza UI sem recarregar página
+Atualiza UI sem recarregar
 ```
+
+### Fluxo 4: Votação de Cobrança (WhatsApp)
+
+```
+adminService.perguntarAdmins
+    ↓
+Envia mensagem para cada admin com lista de clientes
+    ↓
+Admins votam via !sim / !nao no WhatsApp
+    ↓
+Firestore snapshot ouvia votos em tempo real
+    ↓
+Resultado: aprovado → disparaCobrancaReal
+           negado → ignora
+           expirou (60min) → ignora
+```
+
+## 🚫 O que NÃO existe neste projeto
+
+- **Sem atendimento automático**: Não há `client.on('message')`, sem menus, sem chatbot, sem estados de conversa
+- **Sem Groq/IA**: Serviços de IA foram removidos
+- **Sem pdf-parse**: Removido do package.json
+- **Sem LocalAuth**: Pasta `.wwebjs_auth` é temporária; sessão real persiste no Firebase Storage via RemoteAuth
+- **Sem fluxo de comprovante**: Fluxo antigo removido
+- **Sem fila de mensagens**: Envio direto via WhatsApp
 
 ## 🔐 Segurança
 
 ### Camadas de Proteção
 
 1. **API Key** (`ADMIN_API_KEY`)
-   - Header `x-api-key` obrigatório
+   - Header `x-api-key` obrigatório em `/api/*`
    - Validado em `middleware/auth.js`
 
 2. **Ambiente de Variáveis**
-   - Credenciais Firebase em secrets
+   - Credenciais Firebase em secrets (Railway)
    - Nunca commitadas no Git
 
 3. **Proteção QR Code**
-   - Endpoint `/qr` deve ser protegido em produção
-   - Recomendado: Basic Auth no proxy/IP whitelist
+   - Endpoint `/qr` deve ser protegido em produção (IP whitelist / proxy auth)
+   - Acesso público permite assumir o número WhatsApp
 
-4. **Sanitização**
-   - Inputs validados antes de queries
-   - XSS prevention no frontend
+4. **CORS**
+   - Dinâmico via `ALLOWED_ORIGINS` — valores separados por vírgula
 
 ## ⚡ Performance
 
@@ -269,90 +364,50 @@ Atualiza UI sem recarregar página
 
 1. **Firestore**
    - Índices compostos para queries frequentes
-   - Paginação com `limit()` e cursors
-   - Queries específicas por ciclo (não busca todo histórico)
+   - Paginação com `limit()` em todas as listagens
    - Sempre `where` + `limit` (nunca scan total)
+   - Histórico de pagamentos: busca doc específico, nunca toda subcoleção
 
 2. **Backend**
-   - Timeout em chamadas WhatsApp (comTimeout helper)
-   - Reuso de conexão WhatsApp (LocalAuth)
-   - Rotas modularizadas em 12 arquivos
-
-3. **Frontend**
-   - Lazy loading de páginas
-   - Memoização de componentes pesados
-   - SSE para updates (vs polling)
-   - Build otimizado com Vite
+   - `comTimeout` helper: 30s em `sendMessage`, 15s em `getNumberId`/`isRegisteredUser`
+   - Retry com sufixo @c.us e 9º dígito
+   - Timers em background (não bloqueiam requisições)
+   - Votação via Firestore snapshot (não polling)
 
 ### Pontos de Atenção
 
-⚠️ **Gargalos potenciais**:
-- `historico_conversa` pode crescer muito (considerar TTL)
-- Queries sem índice em produção
-- Scan de `clientes` sem filtro de base
-- N+1 ao buscar histórico de múltiplos clientes
-
-Ver [SKILL: Firestore Performance](docs/skills/firestorecustosperformance.md)
+⚠️ **Gargalos conhecidos**:
+- `historico_conversa` sem TTL (cresce indefinidamente)
+- `buscarClientePorNome` usa `limit(500)` + range query — não escala acima de 500
+- N+1 em `adminService.js`: loop sequencial consultando `historico_pagamentos` por cliente
+- Queries de `agendamentos` e `instalacoes_agendadas` inicializam tabelas no startup
+- Fallback `clientes.limit(500).get()` em buscas sem filtro
 
 ## 🚀 Deploy
 
 ### Backend (Railway)
 
-- Build Command: `npm install && npx puppeteer browsers install chrome`
-- Start Command: `node index.js`
-- Variáveis de ambiente configuradas no dashboard
-- Porta definida automaticamente (Railway usa 8080)
-- Sessão WhatsApp persistente via LocalAuth em `/data/.wwebjs_auth`
+- Build: `npm install && npx puppeteer browsers install chrome`
+- Start: `node index.js`
+- Sessão WhatsApp: RemoteAuth + Firebase Storage (zip em `whatsapp_session/`)
+- `DATA_PATH`: `/data` (Railway), `/tmp/data` (Render)
+- Porta: Railway define 8080 automaticamente
 
 ### Frontend (Vercel)
 
-- Build estático otimizado
+- Build estático: `cd frontend && npm install && npm run build`
 - CDN global
-- Variáveis `VITE_*` em build time
+- `VITE_API_URL` em build time → URL do backend Railway
 - Auto-deploy no push para `main`
-- `VITE_API_URL` deve apontar para o backend (Railway)
 
 ## 📊 Monitoramento
 
-### Métricas Importantes
-
-1. **WhatsApp**
-   - Status conexão (online/offline)
-   - Tempo de uptime
-   - Mensagens processadas/min
-
-2. **Firestore**
-   - Reads/dia (custo)
-   - Writes/dia
-   - Latência de queries
-
-3. **API**
-   - Requests/min
-   - Erros 5xx
-   - Latência p95
-
-4. **Frontend**
-   - Conexões SSE ativas
-   - Tempo de carregamento
-
-## 🔄 Próximas Melhorias
-
-### Curto Prazo
-- [ ] Rate limiting na API
-- [ ] Logs estruturados (Winston)
-- [ ] TTL em historico_conversa
-
-### Médio Prazo
-- [ ] Autenticação JWT no painel
-- [ ] Relatórios personalizados
-- [ ] Integração com ERPs
-
-### Longo Prazo
-- [ ] Microserviços (separar bot de API)
-- [ ] Cache distribuído (Redis)
-- [ ] Filas (Bull/RabbitMQ)
+1. **WhatsApp**: Status conexão, uptime, QR code
+2. **Firestore**: Reads/dia, writes/dia, latência
+3. **API**: Requests/min, erros 5xx
+4. **SSE**: Conexões ativas
 
 ---
 
-**Última atualização**: 2026-04-22
-**Revisado por**: Equipe JME.NET
+**Última atualização**: 2026-04-29
+**Revisado por**: Auditoria técnica — código real vs documentação

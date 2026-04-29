@@ -2,92 +2,80 @@
 
 ## 🔐 Autenticação
 
-Todos os endpoints `/api/*` (exceto `/api/health` e `/api/status`) requerem autenticação via header:
+Todos os endpoints `/api/*` (exceto `/qr`, `/api/status`, `/api/status-stream`, `/api/health`) requerem:
 
 ```http
 x-api-key: YOUR_ADMIN_API_KEY
 ```
 
-**⚠️ Em produção, SEMPRE defina `ADMIN_API_KEY` no .env!**
+**⚠️ Em produção, SEMPRE defina `ADMIN_API_KEY` no `.env` (Railway secrets)!**
 
 ## 📡 Base URL
 
 ```
 Desenvolvimento: http://localhost:3001
 Produção (Railway): https://jme-bot-backend-production.up.railway.app
-Produção (Fly.io - legado): https://jme-bot-backend.fly.dev
 ```
 
 ---
 
-## Endpoints
+## Endpoints Públicos (sem autenticação)
 
-### 🏥 Health & Status
+### `GET /qr`
 
-#### `GET /api/health`
+QR Code PNG para conectar WhatsApp.
 
-Health check do serviço.
+**⚠️ Risco crítico: exposto publicamente → qualquer pessoa pode assumir o número. Proteger com IP whitelist ou proxy auth em produção.**
 
-**Autenticação**: Não requerida
-
-**Response**:
-```json
-{
-  "status": "ok",
-  "timestamp": "2024-05-20T10:30:00.000Z",
-  "uptime": 3600
-}
-```
+**Response**: Imagem PNG
 
 ---
 
-#### `GET /api/status`
+### `GET /api/status-stream`
 
-Status detalhado do bot WhatsApp.
-
-**Autenticação**: Não requerida
-
-**Response**:
-```json
-{
-  "online": true,
-  "iniciadoEm": "2024-05-20T10:00:00.000Z",
-  "qrCode": null,
-  "sessaoAtiva": true
-}
-```
-
----
-
-#### `GET /api/status-stream`
-
-Stream SSE (Server-Sent Events) de status em tempo real.
-
-**Autenticação**: Não requerida
+Stream SSE de status em tempo real.
 
 **Response**: `text/event-stream`
 
-**Exemplo**:
-```
-data: {"online":true,"iniciadoEm":"2024-05-20T10:00:00.000Z"}
+```json
+data: {"online":true,"iniciadoEm":"2026-04-29T10:00:00.000Z","botAtivo":true,"situacaoRede":"normal"}
 
-data: {"online":false,"qrCode":"data:image/png;base64,..."}
+data: {"online":false}
+
+data: {"botAtivo":false}
 ```
 
 ---
 
-### 👥 Clientes
+### `GET /api/status`
 
-#### `GET /api/clientes`
+Status do bot.
 
-Lista todos os clientes com paginação.
+**Response**:
+```json
+{
+  "botAtivo": true,
+  "online": true,
+  "iniciadoEm": "2026-04-29T10:00:00.000Z",
+  "situacaoRede": "normal",
+  "previsaoRetorno": "sem previsão"
+}
+```
 
-**Query Params**:
+---
+
+## Clientes
+
+### `GET /api/clientes`
+
+Lista clientes com paginação e filtros.
+
+**Query params**:
 - `page` (number, default: 1)
 - `limit` (number, default: 50, max: 200)
-- `base_id` (string, optional) - Filtrar por base
-- `status` (string, optional) - Filtrar por status
-- `inadimplente` (boolean, optional) - Filtrar inadimplentes
+- `base_id` (string)
+- `status` (string): `pago`, `pendente`, `isento`, `promessa`, `cancelado`
+- `nome` (string) — busca por nome (usa `buscarClientePorNome`, limit 500)
 
 **Response**:
 ```json
@@ -98,57 +86,32 @@ Lista todos os clientes com paginação.
       "nome": "João Silva",
       "cpf": "123.456.789-00",
       "telefones": ["5581999999999"],
+      "telefone": "5581999999999",
+      "endereco": { "rua": "...", "numero": "...", "bairro": "...", "cidade": "...", "uf": "PE", "cep": "50000-000" },
+      "plano": { "nome": "100 Mega", "valor": 79.90 },
       "base_id": "base1",
-      "status": "ativo",
-      "inadimplente": false,
+      "status": "pendente",
+      "dia_vencimento": 10,
       "data_cadastro": "2024-01-15T10:00:00.000Z"
     }
   ],
-  "pagination": {
-    "page": 1,
-    "limit": 50,
-    "total": 150,
-    "pages": 3
-  }
+  "pagination": { "page": 1, "limit": 50, "total": 150, "pages": 3 }
 }
 ```
 
+**⚠️ Nota**: `buscarClientePorNome` usa `limit(500)` — não escala para bases grandes.
+
 ---
 
-#### `GET /api/clientes/:id`
+### `GET /api/clientes/:id`
 
 Busca cliente por ID.
 
-**Response**:
-```json
-{
-  "id": "cliente123",
-  "nome": "João Silva",
-  "cpf": "123.456.789-00",
-  "telefones": ["5581999999999"],
-  "endereco": {
-    "rua": "Rua das Flores",
-    "numero": "123",
-    "bairro": "Centro",
-    "cidade": "Recife",
-    "uf": "PE",
-    "cep": "50000-000"
-  },
-  "plano": {
-    "nome": "100 Mega",
-    "valor": 79.90,
-    "vencimento": 10
-  },
-  "base_id": "base1",
-  "status": "ativo",
-  "inadimplente": false,
-  "historico_pagamentos": []
-}
-```
+**Response**: Documento cliente completo com subcoleção `historico_pagamentos`.
 
 ---
 
-#### `POST /api/clientes`
+### `POST /api/clientes`
 
 Cria novo cliente.
 
@@ -158,336 +121,455 @@ Cria novo cliente.
   "nome": "João Silva",
   "cpf": "12345678900",
   "telefones": ["5581999999999"],
+  "endereco": { "rua": "...", "numero": "...", "bairro": "...", "cidade": "...", "uf": "PE", "cep": "50000-000" },
+  "plano": { "nome": "100 Mega", "valor": 79.90 },
   "base_id": "base1",
-  "plano": {
-    "nome": "100 Mega",
-    "valor": 79.90,
-    "vencimento": 10
-  }
+  "dia_vencimento": 10
 }
 ```
 
-**Response**: `201 Created`
+**Response**: `201 Created` com `{ id: "novoId" }`
 
 ---
 
-#### `PUT /api/clientes/:id`
+### `PUT /api/clientes/:id`
 
-Atualiza cliente existente.
-
-**Body**: Campos a atualizar
-
-**Response**: `200 OK`
+Atualiza campos de cliente.
 
 ---
 
-#### `DELETE /api/clientes/:id`
+### `DELETE /api/clientes/:id`
 
-Remove cliente (soft delete - marca como inativo).
-
-**Response**: `204 No Content`
+Soft delete (marca `status: 'cancelado'`).
 
 ---
 
-### 💰 Promessas
+### `GET /api/clientes/buscar`
 
-#### `GET /api/promessas`
+Busca por telefone (tenta variantes com/sem 55, com/sem 9º dígito).
 
-Lista promessas com filtros.
+**Query**: `telefone` (string)
 
-**Query Params**:
-- `ativa` (boolean) - Apenas ativas
-- `base_id` (string) - Filtrar por base
-- `cliente_id` (string) - Filtrar por cliente
+---
+
+### `GET /api/bases`
+
+Lista todas as bases.
+
+---
+
+## Cobrança
+
+### `POST /api/cobrar/manual`
+
+Dispara cobrança manual para todos os clientes de um dia de vencimento.
+
+**Body**:
+```json
+{
+  "data": "10",
+  "tipo": "lembrete"
+}
+```
+
+`data`: `"10"`, `"20"` ou `"30"`
+`tipo`: `"lembrete"`, `"atraso"`, `"atraso_final"`, `"reconquista"`, `"reconquista_final"` (opcional, default `"auto"`)
+
+**Fluxo**:
+1. Verifica se já foi disparado hoje (via `log_cobrancas`)
+2. `dispararCobrancaReal` em modo **BUSCA** (busca todos os clientes do dia, filtra e envia)
+3. Relatório para admins via WhatsApp
+
+**Response**:
+```json
+{ "ok": true, "mensagem": "Disparo iniciado", "logId": "logId" }
+```
+
+---
+
+### `GET /api/cobrar/agenda`
+
+Retorna agenda de cobranças do mês atual (quais dias já tiveram disparo).
 
 **Response**:
 ```json
 {
-  "promessas": [
-    {
-      "id": "promessa123",
-      "cliente_id": "cliente123",
-      "cliente_nome": "João Silva",
-      "valor": 79.90,
-      "data_promessa": "2024-05-25",
-      "observacao": "Recebe dia 25",
-      "ativa": true,
-      "cumprida": false,
-      "criada_em": "2024-05-20T10:00:00.000Z"
-    }
-  ]
+  "agenda": {
+    "9": [{ "data": "10", "tipo": "lembrete", "clientes": 25, "status": "realizado" }],
+    "13": [{ "data": "10", "tipo": "atraso", "clientes": 12, "status": "realizado" }]
+  },
+  "diaAtual": 14,
+  "mes": 4,
+  "ano": 2026,
+  "pendencia": null
 }
 ```
 
 ---
 
-#### `POST /api/promessas`
+## Promessas
 
-Cria nova promessa de pagamento.
+### `GET /api/promessas`
+
+Lista promessas.
+
+**Query**:
+- `status` (string): `pendente`, `pago`, `cancelada`
+
+---
+
+### `POST /api/promessas`
+
+Cria promessa.
 
 **Body**:
 ```json
 {
   "cliente_id": "cliente123",
-  "valor": 79.90,
-  "data_promessa": "2024-05-25",
-  "observacao": "Recebe dia 25"
+  "nome": "João Silva",
+  "numero": "5581999999999",
+  "data_promessa": "2026-05-05",
+  "observacao": "Recebe dia 5"
 }
 ```
 
-**Response**: `201 Created`
+---
+
+### `POST /api/promessas/:id/pago`
+
+Marca promessa como paga. Atualiza `status` do cliente para `pago` e insere registro em `historico_pagamentos`.
 
 ---
 
-#### `PUT /api/promessas/:id/cumprir`
+### `POST /api/promessas/:id/cancelar`
 
-Marca promessa como cumprida.
-
-**Response**: `200 OK`
+Cancela promessa. Restaura `status` do cliente para `pendente` se necessário.
 
 ---
 
-#### `DELETE /api/promessas/:id`
+### `DELETE /api/promessas/:id`
 
-Cancela promessa.
-
-**Response**: `204 No Content`
+Remove promessa.
 
 ---
 
-### 📅 Agendamentos
+### `POST /api/promessas/verificar`
 
-#### `GET /api/agendamentos`
+Dispara verificação de promessas vencidas (muda status para `vencida` e clientes de `promessa` → `pendente`).
+
+---
+
+## Carnê
+
+### `GET /api/carne`
+
+Lista solicitações de carnê.
+
+**Query**: `status` (opcional)
+
+---
+
+### `POST /api/carne`
+
+Solicita carnê para cliente.
+
+**Body**:
+```json
+{
+  "cliente_id": "cliente123",
+  "nome": "João Silva",
+  "numero": "5581999999999",
+  "endereco": "Rua das Flores 123, Centro",
+  "observacao": "Cliente preferiu carnê físico"
+}
+```
+
+---
+
+### `POST /api/carne/:id/imprimir`
+
+Marca carnê como impresso.
+
+---
+
+### `POST /api/carne/:id/entregar`
+
+Marca como entregue. Envia notificação WhatsApp para o cliente.
+
+---
+
+### `DELETE /api/carne/:id`
+
+Remove solicitação de carnê.
+
+---
+
+## Agendamentos
+
+### `GET /api/agendamentos`
 
 Lista agendamentos.
 
-**Query Params**:
-- `data_inicio` (date) - Data inicial
-- `data_fim` (date) - Data final
-- `status` (string) - pendente, concluido, cancelado
-- `tipo` (string) - instalacao, suporte, visita
-
-**Response**:
-```json
-{
-  "agendamentos": [
-    {
-      "id": "agend123",
-      "cliente_id": "cliente123",
-      "cliente_nome": "João Silva",
-      "tipo": "suporte",
-      "data_agendamento": "2024-05-21T14:00:00.000Z",
-      "descricao": "Problema de conexão",
-      "status": "pendente",
-      "criado_em": "2024-05-20T10:00:00.000Z"
-    }
-  ]
-}
-```
+**Query**:
+- `data_inicio`, `data_fim` (date)
+- `status`: `pendente`, `concluido`, `cancelado`
+- `tipo`: `instalacao`, `suporte`, `visita`
 
 ---
 
-#### `POST /api/agendamentos`
+### `POST /api/agendamentos`
 
-Cria novo agendamento.
-
-**Body**:
-```json
-{
-  "cliente_id": "cliente123",
-  "tipo": "suporte",
-  "data_agendamento": "2024-05-21T14:00:00.000Z",
-  "descricao": "Problema de conexão"
-}
-```
-
-**Response**: `201 Created`
+Cria agendamento.
 
 ---
 
-#### `PUT /api/agendamentos/:id`
+### `PUT /api/agendamentos/:id`
 
 Atualiza agendamento.
 
-**Response**: `200 OK`
+---
+
+## Instalações Agendadas
+
+### `GET /api/instalacoes-agendadas`
+
+Lista instalações pendentes.
+
+**Query**: `status`, `base_id`
 
 ---
 
-### 🛠️ Instalações Agendadas
+### `POST /api/instalacoes-agendadas`
 
-#### `GET /api/instalacoes-agendadas`
-
-Lista instalações agendadas.
-
-**Query Params**:
-- `status` (string)
-- `base_id` (string)
-
-**Response**:
-```json
-{
-  "instalacoes": [
-    {
-      "id": "inst123",
-      "nome": "Maria Santos",
-      "telefone": "5581988888888",
-      "endereco": "Rua das Palmeiras, 456",
-      "data_agendamento": "2024-05-22T09:00:00.000Z",
-      "status": "pendente",
-      "base_id": "base1"
-    }
-  ]
-}
-```
+Cria instalação agendada.
 
 ---
 
-### 📊 Dashboard
+### `PUT /api/instalacoes-agendadas/:id`
 
-#### `GET /api/dashboard/stats`
-
-Estatísticas gerais do dashboard.
-
-**Response**:
-```json
-{
-  "clientes_ativos": 150,
-  "inadimplentes": 12,
-  "promessas_ativas": 8,
-  "agendamentos_hoje": 5,
-  "receita_mes": 11985.00,
-  "taxa_inadimplencia": 8.0
-}
-```
+Atualiza.
 
 ---
 
-#### `GET /api/dashboard/bases`
+## Dashboard
+
+### `GET /api/dashboard/resumo-bases`
 
 Estatísticas por base.
 
-**Response**:
-```json
-{
-  "bases": [
-    {
-      "base_id": "base1",
-      "nome": "Boa Viagem",
-      "total_clientes": 80,
-      "inadimplentes": 6,
-      "receita_mes": 6392.00
-    }
-  ]
-}
-```
+---
+
+### `GET /api/dashboard/caixa-hoje`
+
+Movimentação do dia.
 
 ---
 
-### 💸 Cobrança
+### `GET /api/dashboard/alertas`
 
-#### `POST /api/cobranca/enviar`
-
-Envia cobrança manual para cliente.
-
-**Body**:
-```json
-{
-  "cliente_id": "cliente123",
-  "mensagem_personalizada": "Olá! Seu boleto está disponível..."
-}
-```
-
-**Response**: `200 OK`
+Alertas ativos (clientes sem telefone, promessas, inadimplência).
 
 ---
 
-#### `POST /api/cobranca/automatica`
+### `GET /api/dashboard/fluxo-clientes`
 
-Dispara cobrança automática para inadimplentes.
-
-**Body**:
-```json
-{
-  "base_id": "base1",
-  "dias_atraso_minimo": 5
-}
-```
-
-**Response**:
-```json
-{
-  "enviadas": 12,
-  "falhas": 1,
-  "detalhes": []
-}
-```
+Fluxo de clientes (novos, cancelados, reactivados no período).
 
 ---
 
-### 📄 Backup
+## Relatórios
 
-#### `GET /api/backup/clientes`
+### `GET /api/relatorios/inadimplentes`
 
-Exporta todos os clientes em JSON.
+Lista inadimplentes por base.
 
-**Response**: Arquivo JSON para download
-
----
-
-#### `GET /api/backup/completo`
-
-Backup completo do banco de dados.
-
-**Response**: Arquivo JSON com todas as coleções
+**Query**: `base_id`
 
 ---
 
-### 🖼️ QR Code
+### `GET /api/relatorios/estatisticas`
 
-#### `GET /qr`
-
-Retorna QR Code para conectar WhatsApp.
-
-**Autenticação**: Não requerida
-
-**⚠️ Deve ser protegido em produção!**
-
-**Response**: Imagem PNG do QR Code
+Estatísticas gerais.
 
 ---
 
-### 📝 Logs
+### `GET /api/relatorios/grafico`
 
-#### `GET /api/logs`
-
-Retorna logs do sistema.
-
-**Query Params**:
-- `level` (string) - error, warn, info
-- `limit` (number) - Máximo de linhas
-
-**Response**:
-```json
-{
-  "logs": [
-    {
-      "timestamp": "2024-05-20T10:30:00.000Z",
-      "level": "info",
-      "message": "Cliente identificado: João Silva"
-    }
-  ]
-}
-```
+Dados para gráficos (arrecadação por dia/mês).
 
 ---
 
-## 🔄 Webhooks (Futuro)
+### `GET /api/relatorios/exportar`
 
-### `POST /webhook/pagamento`
+Exporta clientes em JSON.
 
-Recebe notificação de pagamento de gateway.
+---
 
-**Status**: Em desenvolvimento
+### `GET /api/relatorios/planilha`
+
+Exporta clientes em formato planilha.
+
+---
+
+## Admin
+
+### `GET /api/admin/clientes-recentes`
+
+Lista clientes modificados recentemente.
+
+---
+
+### `POST /api/admin/baixa-retroativa`
+
+Baixa pagamento de ciclo anterior manualmente.
+
+---
+
+### `GET /api/admin/sgp`
+
+Dados do SGP.
+
+---
+
+### `POST /api/admin/isentar-mensalidade`
+
+Isenta mês de entrada para novo cliente.
+
+---
+
+## Logs
+
+### `GET /api/logs/cobrancas`
+
+Logs de cobranças.
+
+---
+
+### `GET /api/logs/comprovantes`
+
+Logs de comprovantes.
+
+---
+
+### `GET /api/logs/bot`
+
+Logs gerais do bot.
+
+---
+
+### `GET /api/logs/estatisticas`
+
+Estatísticas de logs.
+
+---
+
+## Bot
+
+### `GET /api/bot/horario`
+
+Horário de funcionamento.
+
+---
+
+### `PUT /api/bot/horario`
+
+Atualiza horário.
+
+---
+
+### `GET /api/bot/rede`
+
+Status da rede.
+
+---
+
+### `PUT /api/bot/rede`
+
+Atualiza status da rede.
+
+---
+
+### `POST /api/bot/toggle`
+
+Liga/desliga bot.
+
+---
+
+### `GET /api/bot/ciclo-info`
+
+Informações do ciclo de cobrança atual.
+
+---
+
+## Cancelamentos
+
+### `GET /api/cancelamentos`
+
+Lista cancelamentos.
+
+---
+
+### `POST /api/cancelamentos`
+
+Cria registro de cancelamento.
+
+---
+
+### `DELETE /api/cancelamentos/:id`
+
+Remove cancelamento.
+
+---
+
+## Boas-Vindas
+
+### `POST /api/boas-vindas/enviar`
+
+Envia mensagem de boas-vindas para cliente.
+
+---
+
+## Alertas
+
+### `GET /api/alertas`
+
+Lista alertas.
+
+---
+
+### `POST /api/alertas/:id/reconhecer`
+
+Marca alerta como reconhecido.
+
+---
+
+## Backup
+
+### `GET /api/backup/clientes`
+
+Exporta clientes em JSON.
+
+---
+
+### `POST /api/backup/restore`
+
+Restaura clientes de backup.
+
+---
+
+## Migração
+
+### `POST /api/migracao/executar`
+
+Executa migração de planilha de clientes.
+
+---
+
+## Paginação
+
+### `GET /api/paginacao/:colecao`
+
+Paginação genérica.
 
 ---
 
@@ -498,62 +580,13 @@ Recebe notificação de pagamento de gateway.
 | 200 | OK |
 | 201 | Created |
 | 204 | No Content |
-| 400 | Bad Request - Dados inválidos |
-| 401 | Unauthorized - API Key inválida |
-| 403 | Forbidden - Sem permissão |
-| 404 | Not Found - Recurso não encontrado |
-| 409 | Conflict - Conflito (ex: CPF duplicado) |
+| 400 | Bad Request — dados inválidos |
+| 401 | Unauthorized — API Key inválida |
+| 403 | Forbidden |
+| 404 | Not Found |
 | 500 | Internal Server Error |
-| 503 | Service Unavailable - Bot offline |
+| 503 | Service Unavailable — bot offline |
 
 ---
 
-## 📚 Exemplos de Uso
-
-### JavaScript/Fetch
-
-```javascript
-const response = await fetch('https://seu-dominio.fly.dev/api/clientes', {
-  headers: {
-    'x-api-key': 'YOUR_API_KEY'
-  }
-});
-
-const data = await response.json();
-```
-
-### cURL
-
-```bash
-curl -H "x-api-key: YOUR_API_KEY" \
-  https://seu-dominio.fly.dev/api/clientes
-```
-
-### React (Frontend)
-
-```javascript
-import { apiClient } from './api/client';
-
-const clientes = await apiClient.get('/clientes');
-```
-
----
-
-## 🚀 Rate Limiting
-
-**Atualmente não implementado**, mas recomendado para produção:
-
-- 100 requests/minuto por IP
-- 1000 requests/hora por API Key
-
----
-
-## 📖 Versionamento
-
-API atual: **v1** (implícito, sem prefixo)
-
-Futuras versões usarão prefixo: `/api/v2/...`
-
----
-
-**Última atualização**: 2024-05-20
+**Última atualização**: 2026-04-29

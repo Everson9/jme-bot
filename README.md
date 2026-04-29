@@ -1,84 +1,84 @@
-# JME-BOT 🤖
+# JME-BOT (Internal Ops Platform)
 
-Bot de atendimento automatizado via WhatsApp para gestão de clientes, cobranças e suporte técnico da JME.NET.
+> Status: Em produção ativa
 
-## 📋 Visão Geral
+Sistema de cobrança automática e gestão de clientes via WhatsApp para a JME.NET.
 
-O JME-BOT é uma solução completa de automação de atendimento que integra:
+## O que é
 
-- **WhatsApp Business** via whatsapp-web.js
-- **Firestore** para persistência de dados
-- **IA (Groq LLM)** para classificação de intenções
-- **Painel Admin React** para gestão em tempo real
-- **Sistema de fluxos** para diferentes tipos de atendimento
+O JME-BOT é uma plataforma de automação operacional que utiliza o WhatsApp como canal de comunicação para:
 
-## 🚀 Funcionalidades
+- **Cobrança automática** — disparos programados D-1, D+3, D+5, D+7, D+10 com votação de admins
+- **Gestão de clientes** — cadastro, status, histórico de pagamentos
+- **Painel Admin React** — dashboard em tempo real via SSE
+- **Promessas e carnês** — controle de acordos de pagamento
+- **Agendamentos** — instalações e suporte técnico
 
-### Bot WhatsApp
-- ✅ Atendimento automatizado com múltiplos fluxos
-- ✅ Identificação de clientes por nome/CPF/telefone
-- ✅ Consulta de situação financeira
-- ✅ Processamento de comprovantes (PDF/imagem)
-- ✅ Agendamentos de instalação e suporte
-- ✅ Promessas de pagamento
-- ✅ Transferência para atendimento humano
-- ✅ Cobranças automatizadas
+**O bot não possui atendimento automático via WhatsApp.** Não há chatbot, menus interativos ou processamento de mensagens recebidas. O WhatsApp é usado exclusivamente para envio de mensagens transacionais (cobranças, notificações, relatórios).
+
+## Funcionalidades
+
+### Cobrança Automática
+- Calendário de disparos: D-1 (lembrete), D+3, D+5, D+7, D+10
+- Votação de admins antes de cada disparo
+- Filtros: promessa ativa, carnê pendente, cancelado, já pago
+- Relatório pós-disparo para admins via WhatsApp
+
+### Gestão de Operações
+- Clientes: CRUD, busca por nome/CPF/telefone, histórico
+- Bases: agrupamento e estatísticas por região
+- Promessas: criação, baixa, cancelamento
+- Carnês: solicitação, impressão, entrega
+- Agendamentos: instalações e suporte
 
 ### Painel Admin
-- ✅ Dashboard em tempo real (SSE)
-- ✅ Gestão de clientes e bases
-- ✅ Monitoramento de promessas
-- ✅ Acompanhamento de agendamentos
-- ✅ Visualização de histórico de conversas
-- ✅ Backup e exportação de dados
-- ✅ Estatísticas e métricas
+- Dashboard com métricas em tempo real (SSE)
+- Listagens com paginação
+- Relatórios de inadimplência e arrecadação
 
-## 🛠️ Tecnologias
+## Stack
 
 ### Backend
-- **Node.js** + Express
-- **whatsapp-web.js** para integração WhatsApp
-- **Firebase Admin SDK** (Firestore)
-- **Groq SDK** para LLM
-- **pdf-parse** para extração de dados
+- **Node.js** + **Express 5**
+- **whatsapp-web.js** (RemoteAuth)
+- **Firebase Admin SDK** (Firestore + Storage)
+- **archiver** + **fs-extra** + **unzipper** (RemoteAuth)
 
 ### Frontend
-- **React 18** + Vite
-- **React Router** para navegação
-- **Recharts** para gráficos
-- **Server-Sent Events (SSE)** para atualizações em tempo real
+- **React** + **Vite**
+- **Recharts** (gráficos)
+- **Server-Sent Events** (tempo real)
 
 ### Infraestrutura
-- **Fly.io** para deploy backend
-- **Vercel** para deploy frontend
-- **Volumes persistentes** para sessão WhatsApp
+- **Railway** — backend
+- **Vercel** — frontend
+- **Firebase Storage** — sessão WhatsApp
 
-## 📦 Instalação
+## WhatsApp Auth
+
+A sessão é persistida via **RemoteAuth + FirestoreStore**:
+
+```
+RemoteAuth → zip → Firebase Storage: whatsapp_session/{session}.zip
+```
+
+- Intervalo de sync: 12h (`backupSyncIntervalMs: 43200000`)
+- Bucket padrão: `jmenet.appspot.com` (configurável via `FIREBASE_STORAGE_BUCKET`)
+- A pasta `.wwebjs_auth/` é temporária — não é a origem da verdade
+
+## Instalação
 
 ### Pré-requisitos
-
 - Node.js 18+
-- Conta Firebase (Firestore)
-- Conta Groq (API Key)
+- Projeto Firebase com Firestore e Storage habilitados
+- Service Account com papel Storage Admin
 
 ### Backend
 
 ```bash
-# Clonar repositório
-git clone https://github.com/Everson9/jme-bot.git
-cd jme-bot
-
-# Instalar dependências
 npm install
-
-# Configurar variáveis de ambiente
 cp .env.example .env
-# Editar .env com suas credenciais
-
-# Executar em desenvolvimento
-npm run dev
-
-# Executar em produção
+# configurar FIREBASE_CREDENTIALS_JSON, ADMIN_API_KEY, ALLOWED_ORIGINS
 npm start
 ```
 
@@ -86,149 +86,90 @@ npm start
 
 ```bash
 cd frontend
-
-# Instalar dependências
 npm install
-
-# Executar em desenvolvimento
-npm run dev
-
-# Build para produção
 npm run build
 ```
 
-## ⚙️ Configuração
+## Variáveis de Ambiente
 
-### Variáveis de Ambiente
+| Variável | Obrigatória | Descrição |
+|----------|-------------|-----------|
+| `FIREBASE_CREDENTIALS_JSON` | Sim | Service account JSON |
+| `ADMIN_API_KEY` | Sim (prod) | Protege a API |
+| `ALLOWED_ORIGINS` | Sim | URLs separadas por vírgula |
+| `ADMIN_PHONE` | Sim | Telefone admin (formato WhatsApp) |
+| `FIREBASE_STORAGE_BUCKET` | Não | Default: `jmenet.appspot.com` |
+| `PORT` | Não | Default: 3001 (dev), 8080 (Railway) |
 
-Consulte `.env.example` para todas as variáveis necessárias:
+## Deploy
 
-- `FIREBASE_CREDENTIALS_JSON` - Credenciais do Firebase
-- `GROQ_API_KEY` - Chave API do Groq
-- `ADMIN_API_KEY` - Chave para proteger API admin
-- `ADMIN_PHONE` - Telefone do administrador
-- `PLANILHA_ID` - ID da planilha Google (opcional)
-
-### Firestore
-
-Configure os índices compostos necessários conforme documentado em `docs/FIRESTORE_INDEXES.md`.
-
-## 📚 Documentação
-
-- [Arquitetura](docs/ARCHITECTURE.md) - Visão geral da arquitetura
-- [API Endpoints](docs/API.md) - Documentação completa da API
-- [Índices Firestore](docs/FIRESTORE_INDEXES.md) - Índices necessários
-- [Testes](tests/README.md) - Como executar testes
-- [Frontend](frontend/README.md) - Documentação do painel
-- [Contribuindo](CONTRIBUTING.md) - Guidelines para contribuição
-- [Segurança](SECURITY.md) - Política de segurança
-
-## 🔒 Segurança
-
-Este projeto segue práticas de segurança rigorosas:
-
-- Credenciais nunca commitadas no repositório
-- API Key obrigatória em produção
-- Proteção de endpoints administrativos
-- Sanitização de inputs
-- Logs sem dados sensíveis
-
-Consulte `SECURITY.md` para mais detalhes.
-
-## 🧪 Testes
+### Railway (backend)
 
 ```bash
-# Testes de carga
-node tests/carga.js
-
-# Simulador de conversas
-node tests/simulador.js
+# Build: npm install && npx puppeteer browsers install chrome
+# Start: node index.js
+# Variables: configurar no dashboard do Railway
 ```
 
-Veja `tests/README.md` para documentação completa.
-
-## 📖 Guias de Desenvolvimento
-
-### Skills (Diretrizes Técnicas)
-
-O projeto utiliza "Skills" - diretrizes específicas para diferentes áreas:
-
-- **[Firestore Performance](.cursor/skills/firestore-custos-performance/SKILL.md)** - Otimização de custos
-- **[Fluxos de Atendimento](.cursor/skills/diagnostico-atendimento-fluxos/SKILL.md)** - Debug de fluxos
-- **[Segurança](.cursor/skills/seguranca-segredos-painel-admin/SKILL.md)** - Hardening
-- **[Produção](.cursor/skills/runbook-producao-jme-bot/SKILL.md)** - Runbook operacional
-
-**Leia sempre as Skills antes de fazer alterações!**
-
-## 🚀 Deploy
-
-### Fly.io (Backend)
+### Vercel (frontend)
 
 ```bash
-# Login
-fly auth login
-
-# Deploy
-fly deploy
-
-# Ver logs
-fly logs
+cd frontend && vercel --prod
 ```
 
-### Vercel (Frontend)
+## Para novos devs / IAs
 
-```bash
-cd frontend
+Leia nesta ordem:
 
-# Deploy
-vercel --prod
+1. **[docs/AI_HANDOFF.md](docs/AI_HANDOFF.md)** — contexto rápido para IAs
+2. **[docs/CURRENT_STATE.md](docs/CURRENT_STATE.md)** — resumo do estado atual
+3. **[docs/DOCS_MAP.md](docs/DOCS_MAP.md)** — mapa de toda a documentação
+4. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — arquitetura real do sistema
+5. **[docs/API.md](docs/API.md)** — todos os endpoints da REST API
+6. **[docs/PATTERNS.md](docs/PATTERNS.md)** — padrões de código obrigatórios
+7. **[docs/PENDING.md](docs/PENDING.md)** — pendências e gargalos conhecidos
+
+Depois consulte:
+- **[docs/RULES.md](docs/RULES.md)** — regras consolidadas
+- **[docs/History.md](docs/History.md)** — histórico de decisões e sessões
+
+## Estrutura do Projeto
+
+```
+.
+├── index.js                 # Entry point
+├── config/firebase.js       # Firebase Admin SDK
+├── services/
+│   ├── FirestoreStore.js   # RemoteAuth store (Storage)
+│   ├── cobrancaService.js  # Disparo de cobranças
+│   ├── adminService.js     # Verificação automática + votação
+│   ├── whatsappService.js  # Envio com comTimeout
+│   └── sseService.js       # Server-Sent Events
+├── middleware/
+│   ├── auth.js             # x-api-key
+│   └── timers.js           # Background: 2h, 3h, 08h BRT
+├── routes/                 # 17 arquivos — ver docs/DOCS_MAP.md
+├── database/
+│   └── funcoes-firebase.js
+└── frontend/               # Painel admin React
 ```
 
-## 📊 Monitoramento
+## Regras Importantes
 
-### Health Check
+1. **NUNCA** fazer `db.collection('clientes').get()` sem `where` + `limit`
+2. `dispararCobrancaReal` sempre recebe `ADMINISTRADORES` como 6º parâmetro
+3. Status do cliente é string: `'pago'`, `'pendente'`, `'isento'`, `'promessa'`, `'cancelado'`
+4. `telefones` é array; `telefone` (string) é legado — tratar os dois
+5. Dashboard usa `status` direto — nunca buscar histórico em listagens
+6. Sempre usar `comTimeout` em chamadas WhatsApp
 
-```bash
-curl https://seu-dominio.fly.dev/api/health
-```
+## Segurança
 
-### Status do Bot
-
-```bash
-curl https://seu-dominio.fly.dev/api/status
-```
-
-### QR Code WhatsApp
-
-```bash
-# Se o bot estiver desconectado
-https://seu-dominio.fly.dev/qr
-```
-
-## 🤝 Contribuindo
-
-Contribuições são bem-vindas! Por favor, leia [CONTRIBUTING.md](CONTRIBUTING.md) antes de enviar PRs.
-
-## 📝 Changelog
-
-Veja [CHANGELOG.md](CHANGELOG.md) para histórico de versões.
-
-## 📜 Licença
-
-ISC
-
-## 👥 Autores
-
-- Equipe JME.NET
-
-## 🆘 Suporte
-
-Para problemas ou dúvidas:
-
-1. Verifique a documentação nas Skills
-2. Consulte [Issues](https://github.com/Everson9/jme-bot/issues)
-3. Entre em contato com a equipe
+- Credenciais em variáveis de ambiente — nunca no código
+- `.env` e `firebasekey.json` no `.gitignore`
+- API key obrigatória em produção (`ADMIN_API_KEY`)
+- Endpoint `/qr` é crítico — proteger com IP whitelist ou proxy auth
 
 ---
 
-**⚠️ Atenção:** Este bot manuseia dados sensíveis. Sempre siga as diretrizes de segurança!
+**Mantenedor**: Equipe JME.NET

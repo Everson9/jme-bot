@@ -303,7 +303,7 @@ Documente quando:
 - Adicionar nova funcionalidade
 - Mudar comportamento existente
 - Adicionar novo endpoint de API
-- Criar novo fluxo de atendimento
+- Criar novo fluxo de cobrança ou notificação
 - Adicionar índice Firestore
 
 ### O Que Documentar

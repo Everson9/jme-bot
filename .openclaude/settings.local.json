@@ -11,7 +11,9 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(npm show:*)"
+      "Bash(npm show:*)",
+      "Bash(ls routes/*.js)",
+      "Bash(grep:*)"
     ]
   }
 }

@@ -1,71 +1,46 @@
 ---
 name: diagnostico-atendimento-fluxos
-description: Diagnosticar e corrigir problemas de lógica de atendimento no bot (perda de fluxo, menu reaparecendo, debounce, timers, atendimento humano, identificação por nome/CPF/telefone, comprovante PDF/foto). Use quando o usuário mencionar fluxo quebrando, menu do nada, não encontra cliente, admin assumiu e bot interferiu, ou comprovante PDF.
+description: LEGADO — Não há mais atendimento automático via WhatsApp. Este documento está obsoleto e será removido. O bot apenas envia mensagens (cobranças, notificações) — não processa mensagens recebidas.
 ---
 
-# Diagnóstico — Atendimento e Fluxos (jme-bot)
+# ⚠️ AVISO — Skill Obsoleta
 
-## Objetivo
+**Esta skill está desatualizada. O bot NÃO possui mais atendimento automático via WhatsApp.**
 
-Encontrar rapidamente a causa quando o bot “perde o contexto” e volta menu, ou falha em identificar cliente.
+## O que mudou
 
-## Arquivos-chave
+O bot JME-BOT **não processa mensagens recebidas**. Não existe mais:
 
-- **Roteamento WhatsApp (principal)**: `middleware/Mensagem.js`
-- **Estado**: `stateManager.js`
-- **Comprovantes + consulta situação**: `middleware/comprovante.js`
-- **Identificação (nome/CPF/telefone)**: `helpers/identificacao.js` e/ou lógica em `services/fluxoService.js`
-- **Busca no Firestore**: `database/funcoes-firebase.js`
+- `client.on('message')` handler
+- Fluxos de atendimento automático
+- Menus interativos via WhatsApp
+- Identificação automática de clientes por nome/CPF/telefone via WhatsApp
+- Estado de conversa (`stateManager.js`)
+- middleware/Mensagem.js
+- middleware/comprovante.js
+- services/fluxoService.js
+- helpers/identificacao.js
 
-## Checklist de reprodução (sempre coletar)
+## Estado atual
 
-- [ ] Tipo da mensagem: texto, foto, PDF (`msg.type === 'document'`), sem legenda?
-- [ ] O cliente estava em qual fluxo (`state.getFluxo`)?
-- [ ] Existe atendimento humano ativo (`state.isAtendimentoHumano`)?
-- [ ] O problema ocorre após quanto tempo (timer/expiração)?
+O WhatsApp é usado exclusivamente para:
+- **Envio** de mensagens de cobrança (timer automático a cada 2h)
+- **Envio** de notificações de promessas do dia (08h BRT)
+- **Votação** de cobranças entre admins (!sim / !nao via WhatsApp)
+- **Relatórios** pós-cobrança para admins
+- **Notificações** de carnê, boas-vindas, etc.
 
-## Padrões de falha comuns e correções
+## Se precisar diagnosticar problemas
 
-### A) “Menu aparece do nada”
+Para problemas atuais, use:
+- `GET /api/status` — status do bot
+- `GET /api/cobrar/agenda` — cronograma de cobranças
+- `GET /api/logs/cobrancas` — logs de envio
+- `services/cobrancaService.js` — lógica de disparo
+- `services/adminService.js` — verificação automática e votação
+- `middleware/timers.js` — timers em background
 
-Investigar:
-- Mensagem vazia em fluxo ativo (ex.: PDF sem texto/legenda).
-- Fluxo ativo não tratado no roteador e cai no fallback de menu.
+---
 
-Correção típica:
-- Não resetar menu quando `fluxoAtivo` e `texto` vazio; manter fluxo.
-- Adicionar `case`/handler para o fluxo específico no roteador.
-
-### B) Admin assume e bot manda menu
-
-Investigar:
-- Divergência entre tempo de expiração de humano (`StateManager`) e timers no handler admin.
-
-Correção típica:
-- Alinhar expiração (ex.: 2h em ambos), e garantir que mensagens não sejam processadas quando humano ativo.
-
-### C) “Não encontra o nome”
-
-Investigar:
-- Normalização: acentos, conectores (da/de/do), ordem de palavras, nome incompleto.
-
-Correção típica:
-- Match por tokens, ignorar stopwords (`da`, `de`, `do`, `dos`, `das`, `e`).
-- Se houver múltiplos matches, pedir CPF (não mostrar lista pública por padrão).
-
-### D) Consulta de situação sem “segunda chance”
-
-Investigar:
-- Fluxo encerrado cedo demais no roteador.
-
-Correção típica:
-- Implementar etapas: nome/CPF → CPF → telefone → humano.
-- Não encerrar fluxo antes de terminar as tentativas.
-
-## Critério de “pronto”
-
-- PDF sem legenda não quebra fluxo.
-- Nome parcial (ex.: sem “da/de”) encontra cliente com alta taxa de acerto.
-- Admin assumiu: bot não interfere.
-- Consulta situação: pelo menos 2 caminhos de fallback antes de transferir.
-
+**Última atualização**: 2026-04-29
+**Status**: OBSOLETO — não há mais atendimento automático

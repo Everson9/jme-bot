@@ -45,11 +45,14 @@ dispararCobrancaReal: (d, t) => dispararCobrancaReal(client, firebaseDb, d, t, n
 
 ---
 
-## LocalAuth em vez de RemoteAuth
+## RemoteAuth + Firebase Storage (não LocalAuth)
 
-**Decisão**: usar LocalAuth com sessão salva em `/data/.wwebjs_auth` no Railway.
-**Motivo**: RemoteAuth com Firebase Storage foi tentado em 2026-04-13/14 mas causava problemas de estabilidade. LocalAuth é mais simples e funciona bem no Railway com persistência de volume.
-**NÃO voltar para RemoteAuth** a menos que haja um problema específico que só ele resolva.
+**Decisão**: usar RemoteAuth com FirestoreStore customizado — sessão zipada no Firebase Storage.
+**Motivo**: LocalAuth salvava sessão em volume efêmero do Railway — cada deploy recriava o volume e exigia QR novamente. RemoteAuth persiste a sessão como `whatsapp_session/{sessionName}.zip` no Firebase Storage.
+**Storage bucket**: `jmenet.appspot.com` (ou `FIREBASE_STORAGE_BUCKET` se definido)
+**Intervalo de sync**: `backupSyncIntervalMs: 43200000` (12h)
+**Pasta `.wwebjs_auth`**: é temporária — criada pelo RemoteAuth para extração do zip, não é a origem da verdade.
+**Risco**: se o servidor reiniciar antes do próximo sync (12h), a sessão no Storage pode estar desatualizada.
 
 ---
 
@@ -64,7 +67,7 @@ dispararCobrancaReal: (d, t) => dispararCobrancaReal(client, firebaseDb, d, t, n
 
 ## Rotas modularizadas por funcionalidade
 
-**Decisão**: dividir `routes/index.js` em 12 arquivos separados por funcionalidade.
+**Decisão**: dividir `routes/index.js` em 17 arquivos separados por funcionalidade.
 **Motivo**: arquivo único com ~800 linhas é difícil de manter. Modularização facilita encontrar e editar rotas específicas.
-**Arquivos**: bot.js, clientes.js, cobranca.js, dashboard.js, logs.js, chamados.js, cancelamentos.js, instalacoes.js, relatorios.js, admin.js, boas-vindas.js, migracao.js.
+**Arquivos**: admin.js, agendamentos.js, alertas.js, backup.js, boas-vindas.js, bot.js, cancelamentos.js, chamados.js, clientes.js, cobranca.js, dashboard.js, index.js, instalacoes-agendadas.js, instalacoes.js, logs.js, migracao.js, paginacao.js, relatorios.js.
 **NÃO voltar para arquivo único** — mantenha a separação.

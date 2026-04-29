@@ -107,13 +107,16 @@ docs/
 ├── DECISIONS.md   ← decisões técnicas e motivações
 ├── PATTERNS.md    ← padrões obrigatórios de código
 ├── PENDING.md     ← pendências priorizadas (atualizar manualmente)
-├── PROMPTS.md     ← este arquivo
 ├── API.md         ← documentação da API REST
 ├── ARCHITECTURE.md ← arquitetura do sistema
 ├── CHANGELOG.md   ← changelog do projeto
 ├── CONTRIBUTING.md ← guia de contribuição
 ├── FIRESTORE_INDEXES.md ← índices do Firestore
-└── SECURITY.md    ← política de segurança
+├── SECURITY.md    ← política de segurança
+└── skills/
+    ├── firestorecustosperformance.md
+    ├── seguranca-segredos-painel-admin.md
+    └── runbookproducao-jme-bot.md
 ```
 
 ---

@@ -1,51 +1,62 @@
 ---
 name: seguranca-segredos-painel-admin
-description: Hardening de segurança para jme-bot: segredos (Firebase/Groq), rotação de chaves, riscos de expor VITE_ADMIN_API_KEY, proteção de endpoints /api, e recomendações práticas (proxy auth, allowlist IP, sessão). Use quando o usuário mencionar segurança, vazamento, .env, credenciais, API key, painel admin, autenticação, ou deploy.
+description: Hardening de segurança para jme-bot: segredos (Firebase), rotação de chaves, riscos de expor VITE_ADMIN_API_KEY, proteção de endpoints /api, e RemoteAuth session. Use quando o usuário mencionar segurança, vazamento, .env, credenciais, API key, painel admin, autenticação, ou deploy.
 ---
 
 # Segurança — Segredos e Painel Admin (jme-bot)
 
-## Regras rápidas (o que não confundir)
+## Regras rápidas
 
-- **`VITE_*` no frontend NÃO é segredo**: qualquer usuário do painel consegue extrair do bundle.
-- `ADMIN_API_KEY` só é “barreira” se o painel não for público; não substitui login.
+- **`VITE_*` no frontend NÃO é segredo**: qualquer usuário do painel extrai do bundle.
+- `ADMIN_API_KEY` só é barreira se o painel não for público.
+- **GROQ/IA foi removido** — não há mais `GROQ_API_KEY`.
 
 ## Checklist de segredos
 
-- [ ] `.env` não deve ser commitado (ver `.gitignore`)
-- [ ] `FIREBASE_CREDENTIALS_JSON` deve estar só no ambiente (Railway secrets)
-- [ ] `GROQ_API_KEY` idem
-- [ ] `ADMIN_API_KEY` definido em produção (senão API fica aberta)
-- [ ] `ALLOWED_ORIGINS` configurado com as URLs corretas (Vercel + Railway)
+- [ ] `.env` não deve ser commitado (`.gitignore`)
+- [ ] `FIREBASE_CREDENTIALS_JSON` em Railway secrets
+- [ ] `ADMIN_API_KEY` definido em produção
+- [ ] `ALLOWED_ORIGINS` com URLs corretas (Vercel + Railway)
+- [ ] `firebasekey.json` não commitado
 
 ## Rotação (quando suspeitar de vazamento)
 
-1. Gerar novas chaves (Firebase service account + provedor LLM).
-2. Atualizar secrets no provedor de deploy.
-3. Fazer deploy.
-4. Revogar/invalidar chaves antigas.
-5. Verificar logs por uso indevido.
+1. Gerar nova service account no Firebase
+2. Atualizar `FIREBASE_CREDENTIALS_JSON` nos Railway secrets
+3. Deploy
+4. Revogar chave antiga
+5. Verificar logs por uso indevido
 
-## Proteção do painel/API (ordem de custo/benefício)
+## Proteção do painel/API
 
 ### Nível 1 (rápido)
-
-- Proteger o painel e `/api` com **basic auth** no proxy/edge, ou **allowlist IP**.
-- Manter `ADMIN_API_KEY` como camada extra.
+- Basic auth no proxy/edge ou IP allowlist
+- `ADMIN_API_KEY` como camada extra
 
 ### Nível 2 (recomendado)
+- Login com sessão (cookie HttpOnly) + JWT
 
-- Implementar **login** (sessão com cookie HttpOnly) e autorização básica.
+## Riscos específicos
 
-## Sinais de risco no projeto
+### `/qr` — Risco crítico
+Qualquer pessoa com acesso pode assumir o número WhatsApp.
+**Sempre proteger**: IP whitelist, Basic Auth, ou desativar quando não usar.
 
-- API key no frontend.
-- Endpoints administrativos expostos via `/api/*`.
-- QR (`/qr`) público pode permitir takeover de sessão se exposto em produção.
+### Sessão WhatsApp via RemoteAuth
+- Sessão zipada no Firebase Storage (`whatsapp_session/`)
+- Não há segredo nisso — é o funcionamento normal do RemoteAuth
+- Risco real: expor o bucket publicly — garantir que seja privado
+- Em caso de vazamento de sessão: deletar zip do Storage + escanear QR novamente
 
-## Ações recomendadas específicas
+## Variáveis obrigatórias por ambiente
 
-- Em produção, restringir acesso ao `GET /qr`.
-- Garantir `ADMIN_API_KEY` sempre setado em produção.
-- Documentar variáveis obrigatórias por ambiente.
+| Variável | Desenvolvimento | Produção |
+|----------|----------------|----------|
+| `FIREBASE_CREDENTIALS_JSON` | Local .env | Railway secrets |
+| `ADMIN_API_KEY` | Local .env | Railway secrets |
+| `ALLOWED_ORIGINS` | `http://localhost:3001` | URLs Vercel + Railway |
+| `PORT` | 3001 | 8080 (Railway) |
 
+---
+
+**Última atualização**: 2026-04-29
